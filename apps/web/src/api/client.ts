@@ -71,8 +71,9 @@ function post<T>(path: string, body: unknown): Promise<T> {
 	return request<T>(path, { method: "POST", body: JSON.stringify(body) });
 }
 
-/** Field name the server reads the file from — see server middlewares/upload-avatar.ts. */
+/** Field names the server reads files from — see server middlewares/upload-image.ts. */
 const AVATAR_FIELD = "avatar";
+const ATTACHMENT_FIELD = "attachment";
 
 /**
  * One named method per endpoint rather than raw get/post at the call site, so
@@ -132,8 +133,24 @@ export const api = {
 		return get<MessageDTO[]>(`/conversations/${conversationId}/messages?${params.toString()}`);
 	},
 
-	sendMessage(conversationId: string, content: string): Promise<MessageDTO> {
-		return post<MessageDTO>(`/conversations/${conversationId}/messages`, { content });
+	/**
+	 * Sends a message, with an optional image.
+	 *
+	 * Same endpoint either way — JSON when it is only text, multipart when there
+	 * is a file. One write path rather than two, so there is one place where
+	 * membership is checked and one broadcast everyone renders from.
+	 */
+	sendMessage(conversationId: string, content: string, attachment?: File): Promise<MessageDTO> {
+		const path = `/conversations/${conversationId}/messages`;
+		if (!attachment) return post<MessageDTO>(path, { content });
+
+		const body = new FormData();
+		body.append(ATTACHMENT_FIELD, attachment);
+		// Omitted rather than sent empty: an image with no caption is a message
+		// with no text, and the server trims what it gets either way.
+		if (content) body.append("content", content);
+
+		return request<MessageDTO>(path, { method: "POST", body });
 	},
 
 	/**

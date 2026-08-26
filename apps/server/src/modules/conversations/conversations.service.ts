@@ -10,6 +10,7 @@ import { buildAvatarUrl } from "../../lib/avatar-storage.js";
 import { ConflictError, NotFoundError, ValidationError } from "../../lib/errors.js";
 import { prisma } from "../../lib/prisma.js";
 import { getIO, userRoom } from "../../lib/socket-bus.js";
+import { messageSelect, toMessageDTO, type MessageRow } from "../messages/messages.mapper.js";
 import type {
 	AddParticipantInput,
 	CreateConversationInput,
@@ -28,7 +29,7 @@ const conversationInclude = {
 	messages: {
 		take: 1,
 		orderBy: { createdAt: "desc" },
-		select: { id: true, conversationId: true, authorId: true, content: true, createdAt: true },
+		select: messageSelect,
 	},
 } as const;
 
@@ -41,7 +42,7 @@ interface ConversationRow {
 		lastReadMessageId: string | null;
 		user: { id: string; handle: string; displayName: string; avatarUpdatedAt: Date | null; createdAt: Date };
 	}[];
-	messages: { id: string; conversationId: string; authorId: string; content: string; createdAt: Date }[];
+	messages: MessageRow[];
 }
 
 /** Shared by every mapper below, so a participant looks the same everywhere one appears. */
@@ -65,15 +66,10 @@ function toConversationDTO(row: ConversationRow, unreadCount: number): Conversat
 	const participants = mapParticipants(row.participants);
 
 	const latest = row.messages[0];
-	const lastMessage: MessageDTO | null = latest
-		? {
-				id: latest.id,
-				conversationId: latest.conversationId,
-				authorId: latest.authorId,
-				content: latest.content,
-				createdAt: latest.createdAt.toISOString(),
-			}
-		: null;
+	// Mapped by the messages module rather than here, so a message carries the
+	// same fields in the sidebar as it does in the conversation — an attachment
+	// on the newest message is the first thing that would have diverged.
+	const lastMessage: MessageDTO | null = latest ? toMessageDTO(latest) : null;
 
 	return {
 		id: row.id,

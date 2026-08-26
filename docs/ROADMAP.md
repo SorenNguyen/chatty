@@ -116,13 +116,13 @@ Also done along the way:
   em-dashes these docs are full of, and it does not know the Prisma schema language at all
   (`npx prisma format` does). `npx prettier --check .` now exits clean.
 
-## Phase 3 — Group and account management — `next`
+## Phase 3 — Group and account management — `done` except item 10
 
 | # | Item | How it ended up |
 | --- | --- | --- |
 | 8 | Group: add/remove member, leave, rename | `done` — see below |
 | 9 | Edit profile, change password | `done` — see below |
-| 10 | Password reset (needs outbound email) | `next` |
+| 10 | Password reset (needs outbound email) | `deferred` — see below |
 
 ### Item 8: group management
 
@@ -224,11 +224,73 @@ Known, deliberately deferred rather than missed:
   same small race. The unique index is what actually prevents a collision; the loser gets a 500
   rather than a 409.
 
-## Phase 4 — Attachments — `planned`
+### Item 10: why password reset was stepped over
 
-| # | Item |
-| --- | --- |
-| 11 | `Attachment` table, upload, image rendering in the message list |
+It is the only item on this roadmap that cannot be finished inside the repository. A reset link has to
+reach an inbox, which means an email provider, a verified sending domain, and credentials — none of
+which a test can stand in for, and all of which would have to be decided before the first line was
+written. Phase 4 needed none of that, so it went first.
+
+Nothing about the work is blocked otherwise: the token table, single-use and expiry rules, and the
+rate limit are all ordinary. When it is picked up, the shape to aim for is a `Mailer` interface with a
+console transport in development, so the provider is one file rather than a dependency threaded
+through the service.
+
+## Phase 4 — Attachments — `done`
+
+| # | Item | How it ended up |
+| --- | --- | --- |
+| 11 | `Attachment` table, upload, image rendering in the message list | `done` — see below |
+
+### Item 11: image attachments
+
+One image per message, sent through the **same** `POST /conversations/:id/messages` that text goes
+through — JSON when there is no file, multipart when there is. The upload middleware passes a
+non-multipart body straight through, so one route serves both without a branch in front of it, and
+there is still exactly one write path where membership is checked and one broadcast everyone renders
+from.
+
+**Serving them needed a decision avatars did not, and it got an ADR.** A profile picture is public and
+an unguessable URL is enough; a picture inside a conversation is the content, sent to a specific set
+of people. `AttachmentDTO.url` therefore carries a signed token, scoped to that one attachment id,
+minted per response, expiring in an hour — see [ADR 0007](adr/0007-signed-attachment-urls.md). A bad
+token answers **404 rather than 401**, because 401 would confirm the id exists.
+
+**Both kinds of JWT are signed with the same secret, so they had to be told apart.** An attachment
+token presented as a bearer token would otherwise authenticate as a user whose id is an attachment
+id. Attachment tokens carry a `typ` claim and `requireAuth` rejects any token that has one; two tests
+assert each kind is refused where the other belongs. This is the sort of thing that is invisible from
+below — no service test can see it — and it is why the endpoint suite exists.
+
+**The re-encode is the same security control avatars use, and it was verified end to end rather than
+assumed.** A JPEG carrying an EXIF marker was uploaded against a running server and fetched back: the
+marker is in the input file and absent from the stored WebP. For a photo sent into a group chat that
+metadata is a GPS fix.
+
+**`messageSelect` and `toMessageDTO` moved into a fifth file, `messages.mapper.ts`.** The conventions
+describe a module as four files, and this is a deliberate exception with a reason: `conversations`
+selects a `lastMessage` and must produce the same shape, but `messages.service` already imports
+`assertParticipant` from `conversations.service`. Importing back the other way is not merely untidy —
+`conversationSelect` is a module-level const built from `messageSelect`, so whichever module loaded
+second would read it during the other's temporal dead zone and crash on a startup ordering nobody
+chose. Splitting the mapper out breaks the cycle rather than hiding it. Recorded in
+[backend.md](conventions/backend.md).
+
+**One test taught something worth keeping.** An assertion that the same attachment gets a different
+URL on every read failed: a JWT's `iat` has one-second resolution, so two tokens signed in the same
+second are byte-identical. The wire contract had claimed the stronger thing; both it and the test now
+say the true one, which is more useful anyway — the URL is *sometimes* stable, which is the worst
+case for anything keyed on it.
+
+Known, deliberately deferred rather than missed:
+
+- One attachment per message, enforced by a unique on `messageId`. Several would need a gallery in
+  the message list and a decision about what a mixed caption-plus-many-images looks like. Dropping
+  the unique later relaxes this without moving any data; going the other way would not.
+- Images only. The MIME filter and the re-encode both assume it, and a general file type would need
+  a download flow rather than an `<img>`.
+- No lightbox — a picture is shown at up to 320×400 in the bubble and cannot be opened full size.
+- No upload progress. A 10MB photo on a slow connection shows a disabled button and nothing else.
 
 ## Phase 5 — Production readiness — `planned`
 
@@ -255,6 +317,14 @@ Known, deliberately deferred rather than missed:
   mirrored in the socket handshake, and has to disconnect sockets that are already open. That is an
   auth change rather than a profile one, which is why item 9 did not smuggle it in. The UI says so
   out loud after a successful change rather than letting the user assume otherwise.
+- **An attachment URL is bearer proof until it expires.** Copied out of the network tab it works
+  anywhere for up to an hour, and someone removed from a group can still fetch an image whose token
+  they were handed a minute earlier. Inherent to signed URLs rather than an oversight — see
+  [ADR 0007](adr/0007-signed-attachment-urls.md) — and the TTL is the whole mitigation.
+- **Attachment files are not cleaned up.** Deleting a message cascades the row; the file on disk
+  stays, and a send that fails between writing the file and committing the row leaves one nothing
+  ever referenced. Same class as the avatar gap below, and it belongs with whatever deletes messages
+  rather than in the filesystem layer.
 - **No message edit or delete**, no message search.
 - **Avatar files are not cleaned up when a user is deleted.** The database row cascades; the file on
   disk does not. Harmless today (nothing deletes users) and the wrong thing to fix in the filesystem

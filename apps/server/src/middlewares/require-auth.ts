@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env.js";
+import { ATTACHMENT_TOKEN_TYPE } from "../lib/attachment-token.js";
 import { UnauthorizedError } from "../lib/errors.js";
 
 export interface JwtPayload {
@@ -24,7 +25,16 @@ export function requireAuth(req: Request, _res: Response, next: NextFunction): v
 	const token = header.slice("Bearer ".length);
 
 	try {
-		const payload = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
+		const payload = jwt.verify(token, env.JWT_SECRET) as JwtPayload & { typ?: string };
+
+		// Attachment URLs carry a token signed with the same secret, whose `sub` is
+		// an attachment id rather than a user id. Without this check that token
+		// would authenticate as a user who does not exist — the classic
+		// token-confusion bug, and the reason the other kind is marked at all.
+		if (payload.typ === ATTACHMENT_TOKEN_TYPE) {
+			throw new UnauthorizedError("Invalid or expired token");
+		}
+
 		req.userId = payload.sub;
 		next();
 	} catch {

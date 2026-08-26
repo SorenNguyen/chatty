@@ -83,15 +83,17 @@ scripts/
 Working end to end: register, sign in, find people by `@handle`, start a direct chat or a group,
 send messages that arrive in real time over WebSocket, scroll up to load older history, upload an
 avatar, see unread badges, read receipts, typing indicators and who is online, manage a group —
-add or remove a member, rename it, leave it — and edit your own profile or change your password.
+add or remove a member, rename it, leave it — edit your own profile or change your password, and
+send an image with or without a caption.
 
-Verified by 123 server tests (against a real Postgres) and 71 web tests, plus typecheck, lint, the
+Verified by 153 server tests (against a real Postgres) and 89 web tests, plus typecheck, lint, the
 conventions audit, a production build, and an end-to-end run of two live socket clients against the
 running API.
 
 **[docs/ROADMAP.md](docs/ROADMAP.md) is the current source of truth for what is done and what is
-next.** Phases 1 and 2 are complete; phase 3 is in progress — group management, profile editing and
-password change are done, and password reset is next.
+next.** Phases 1, 2 and 4 are complete. Phase 3 is done apart from password reset, which is stepped
+over rather than started: it is the only item that cannot be finished inside the repository, because
+it needs an email provider and a verified sending domain. Phase 5 — production readiness — is next.
 
 Largest known gaps:
 
@@ -99,11 +101,15 @@ Largest known gaps:
   tally. A shared store (Redis) is a prerequisite for running more than one instance.
 - **Presence and unread counts assume one process too.** Presence asks the Socket.io adapter who is
   connected, which only sees this instance until a Redis adapter is added.
-- No attachments, no message edit/delete, no message search.
+- No message edit/delete, no message search.
 - **No admin role for groups** — any participant can add, remove, or rename. See
   [ADR 0006](docs/adr/0006-flat-group-permissions.md).
 - **Changing a password does not sign other sessions out.** Nothing revokes a JWT, so a session
   opened before the change keeps working until the token expires — up to 7 days. Enough for "I want a
   better password", not enough for "someone else has my account".
 - No password reset, and no way to change the email address — both need outbound email.
+- **An attachment URL works for anyone holding it, until it expires.** Signed and scoped to one image
+  with a one-hour life, but bearer proof for that hour — see
+  [ADR 0007](docs/adr/0007-signed-attachment-urls.md). One image per message; no lightbox, no upload
+  progress, and files are not cleaned up when a message is deleted.
 - No deployment setup (Dockerfile, CI).

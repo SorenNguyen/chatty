@@ -73,11 +73,47 @@ export interface ConversationDTO {
 	updatedAt: string;
 }
 
+/**
+ * An image sent with a message.
+ *
+ * `width` and `height` are the stored image's, after the server's re-encode —
+ * not the original's. They are here so the message list can reserve the right
+ * space before the picture has loaded; without them every arriving image shoves
+ * the conversation around as it decodes.
+ */
+export interface AttachmentDTO {
+	id: string;
+	/**
+	 * Absolute, and **signed and short-lived** — unlike `UserDTO.avatarUrl`,
+	 * which is public and cached forever.
+	 *
+	 * An attachment is private content inside a conversation, and an `<img>` tag
+	 * cannot send an Authorization header, so the proof rides in the URL: the
+	 * server mints a token only in a response whose membership it has already
+	 * checked. Two consequences on the client side:
+	 *
+	 * - **Do not persist it.** It expires, and a stored copy becomes a broken
+	 *   image. Re-fetch the message to get a fresh one.
+	 * - **It is not an identity.** The token is re-minted on every read, so the
+	 *   same image can arrive under a different URL each time — though not
+	 *   reliably so, since a JWT's `iat` has one-second resolution and two reads
+	 *   in the same second produce the same string. Sometimes-stable is the worst
+	 *   case for anything keyed on it: a cache, a React `key`, a dedupe. Key on
+	 *   `id`.
+	 */
+	url: string;
+	width: number;
+	height: number;
+	byteSize: number;
+}
+
 export interface MessageDTO {
 	id: string;
 	conversationId: string;
 	authorId: string;
+	/** Empty string for a message that is only an image. */
 	content: string;
+	attachment: AttachmentDTO | null;
 	createdAt: string;
 }
 
@@ -150,6 +186,18 @@ export interface ChangePasswordRequest {
  */
 export interface MarkReadRequest {
 	messageId: string;
+}
+
+/**
+ * Body of `POST /conversations/:conversationId/messages`.
+ *
+ * Sent as JSON for a text message, or as multipart with the file in an
+ * `attachment` field when there is an image — in which case `content` is the
+ * optional caption. One of the two must carry something: the server rejects a
+ * request with neither.
+ */
+export interface SendMessageRequest {
+	content?: string | undefined;
 }
 
 /** Body of `POST /conversations/:id/members`. */

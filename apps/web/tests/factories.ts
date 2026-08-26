@@ -1,4 +1,11 @@
-import type { ConversationDTO, CurrentUserDTO, MessageDTO, ParticipantDTO, UserDTO } from "@chatty/shared-types";
+import type {
+	AttachmentDTO,
+	ConversationDTO,
+	CurrentUserDTO,
+	MessageDTO,
+	ParticipantDTO,
+	UserDTO,
+} from "@chatty/shared-types";
 
 /**
  * Builders for the wire types, shared by every test file.
@@ -35,8 +42,35 @@ export function makeParticipant(
 	return { ...makeUser(id, displayName), lastReadMessageId };
 }
 
-export function makeMessage(id: string, authorId: string, content: string): MessageDTO {
-	return { id, conversationId: "conversation-1", authorId, content, createdAt: "2026-08-23T10:00:00.000Z" };
+export function makeMessage(
+	id: string,
+	authorId: string,
+	content: string,
+	attachment: AttachmentDTO | null = null,
+): MessageDTO {
+	return {
+		id,
+		conversationId: "conversation-1",
+		authorId,
+		content,
+		attachment,
+		createdAt: "2026-08-23T10:00:00.000Z",
+	};
+}
+
+/**
+ * The url is deliberately a throwaway: it carries a signed token in the real
+ * thing, and nothing on the client may treat it as an identity.
+ */
+export function makeAttachment(overrides: Partial<AttachmentDTO> = {}): AttachmentDTO {
+	return {
+		id: "attachment-1",
+		url: "http://api.test/attachments/attachment-1?token=signed",
+		width: 800,
+		height: 400,
+		byteSize: 12_345,
+		...overrides,
+	};
 }
 
 export function makeConversation(overrides: Partial<ConversationDTO> = {}): ConversationDTO {

@@ -1,33 +1,20 @@
+import { randomUUID } from "node:crypto";
 import type { MessageDTO } from "@chatty/shared-types";
+import { saveAttachment } from "../../lib/attachment-storage.js";
 import { prisma } from "../../lib/prisma.js";
 import { getIO } from "../../lib/socket-bus.js";
 import { assertParticipant } from "../conversations/conversations.service.js";
-import type { ListMessagesQuery, SendMessageInput } from "./messages.schema.js";
+import { messageSelect, toMessageDTO } from "./messages.mapper.js";
+import type { ListMessagesQuery } from "./messages.schema.js";
 
-interface MessageRow {
-	id: string;
-	conversationId: string;
-	authorId: string;
+/**
+ * What `sendMessage` takes. Not the Zod type: the image arrives as `req.file`
+ * rather than in the body, so it never passes through a body schema.
+ */
+export interface SendMessageArgs {
+	/** Empty string for a message that is only an image. */
 	content: string;
-	createdAt: Date;
-}
-
-const messageSelect = {
-	id: true,
-	conversationId: true,
-	authorId: true,
-	content: true,
-	createdAt: true,
-} as const;
-
-function toMessageDTO(row: MessageRow): MessageDTO {
-	return {
-		id: row.id,
-		conversationId: row.conversationId,
-		authorId: row.authorId,
-		content: row.content,
-		createdAt: row.createdAt.toISOString(),
-	};
+	attachment?: Buffer | undefined;
 }
 
 // `assertParticipant` is imported from the conversations service rather than
@@ -37,15 +24,27 @@ function toMessageDTO(row: MessageRow): MessageDTO {
 export async function sendMessage(
 	currentUserId: string,
 	conversationId: string,
-	input: SendMessageInput,
+	input: SendMessageArgs,
 ): Promise<MessageDTO> {
 	await assertParticipant(currentUserId, conversationId);
+
+	// The id is generated here, not by the database, so the file can be written
+	// before the row that points at it exists. A crash between the two leaves an
+	// unreferenced file, which costs bytes; the other order leaves a message
+	// showing a broken image forever. Same trade avatar upload makes.
+	const attachmentId = input.attachment ? randomUUID() : null;
+	const stored = input.attachment && attachmentId ? await saveAttachment(attachmentId, input.attachment) : null;
 
 	// One transaction: a conversation whose updatedAt disagrees with its newest
 	// message sorts wrongly in the conversation list forever after.
 	const [message] = await prisma.$transaction([
 		prisma.message.create({
-			data: { conversationId, authorId: currentUserId, content: input.content },
+			data: {
+				conversationId,
+				authorId: currentUserId,
+				content: input.content,
+				...(stored && attachmentId ? { attachment: { create: { id: attachmentId, ...stored } } } : {}),
+			},
 			select: messageSelect,
 		}),
 		prisma.conversation.update({

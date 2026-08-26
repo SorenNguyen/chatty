@@ -11,17 +11,17 @@ datasource db {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
+  id              String    @id @default(cuid())
+  email           String    @unique
   // Public, unique identifier used to find someone. Display names are not
   // unique — two people called "Minh" are indistinguishable in search results —
   // and email is deliberately never returned by search, so without a handle
   // there is no safe way to tell two accounts apart.
   // Always stored lowercase: Postgres unique indexes are case-sensitive, so
   // normalising on write is what makes "Minh" and "minh" the same handle.
-  handle       String   @unique
-  passwordHash String
-  displayName  String
+  handle          String    @unique
+  passwordHash    String
+  displayName     String
   // When the avatar was last replaced — null means there is no picture.
   //
   // Not a URL. The file lives under one key derived from the user id, and the
@@ -54,10 +54,10 @@ model Conversation {
 }
 
 model ConversationParticipant {
-  id             String   @id @default(cuid())
-  conversationId String
-  userId         String
-  joinedAt       DateTime @default(now())
+  id                String   @id @default(cuid())
+  conversationId    String
+  userId            String
+  joinedAt          DateTime @default(now())
   // Newest message this participant has read. Per-participant, so it belongs
   // here and not on Message: "read" is a fact about a person, and a group of
   // ten has ten different answers for the same message.
@@ -77,11 +77,41 @@ model Message {
   id             String   @id @default(cuid())
   conversationId String
   authorId       String
+  // Empty string for a message that is only an image. Nullable would be more
+  // truthful, but every read of this column would then need a null branch to
+  // save one for the write — and "no caption" and "empty caption" are the same
+  // thing to a reader.
   content        String
   createdAt      DateTime @default(now())
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   author       User         @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  attachment   Attachment?
 
   @@index([conversationId, createdAt])
+}
+
+/// An image sent with a message.
+///
+/// One per message, enforced by the unique on `messageId`. Several would need a
+/// gallery in the message list and a decision about what a mixed
+/// caption-plus-many-images looks like; dropping the unique later relaxes this
+/// without moving any data, whereas going the other way would not.
+///
+/// There is no mime type or original filename column. Every upload is decoded
+/// and re-encoded to WebP before anything is written (lib/attachment-storage.ts),
+/// so the type is known and constant, and the name the uploader chose is a
+/// string from a stranger that nothing here needs.
+model Attachment {
+  id        String   @id @default(cuid())
+  messageId String   @unique
+  // Stored so the message list can reserve the right space before the image
+  // has loaded. Without them every arriving picture shoves the conversation
+  // around as it decodes.
+  width     Int
+  height    Int
+  byteSize  Int
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
 }

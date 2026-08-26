@@ -15,6 +15,14 @@ Every feature is a folder under `src/modules/<feature>/` with the same four file
 | `*.controller.ts` | parse input, call one service, shape the response | contain business rules or DB calls |
 | `*.service.ts` | business logic + database access | know it was called over HTTP |
 
+A fifth file is allowed only to break an import cycle, and only when it holds no logic of its own.
+`modules/messages/messages.mapper.ts` is the one instance: `conversations.service` needs the same
+`messageSelect` and `toMessageDTO` that `messages.service` uses, but `messages.service` already
+imports `assertParticipant` from `conversations.service`. Importing back would put a module-level
+const (`conversationSelect`) in the other module's temporal dead zone, so which of the two loaded
+first would decide whether the server started. If you reach for a fifth file for any other reason,
+the thing you are adding probably belongs in `lib/`.
+
 The rule that makes this worth the extra files: **a service must not know what called it.** No `req`, no `res`, no status codes in a service — it takes plain arguments and returns plain data or throws.
 
 That constraint is what lets the WebSocket layer reuse the exact same code path. `sockets/index.ts` handling a `message:send` event and `POST /conversations/:id/messages` both call `messagesService.sendMessage(...)`. If the service took `req`, the socket handler would have to fake one, and the two paths would drift apart until sending a message over the socket behaved differently than over HTTP.

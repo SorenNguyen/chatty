@@ -1,5 +1,6 @@
 import type { MessageDTO, ParticipantDTO } from "@chatty/shared-types";
 import { Avatar } from "@/components/avatar";
+import { MessageAttachment } from "./message-attachment";
 import { cn } from "@/utils/cn";
 import { useMessageScroll } from "../hooks";
 import { formatMessageTime, getReadReceipt } from "../utils";
@@ -72,7 +73,21 @@ export function MessageList({
 												{author.displayName}
 											</p>
 										)}
-										<p className="whitespace-pre-wrap wrap-break-word text-sm">{message.content}</p>
+										{message.attachment && (
+											<div className={cn(message.content && "mb-1.5")}>
+												<MessageAttachment
+													attachment={message.attachment}
+													caption={message.content}
+												/>
+											</div>
+										)}
+										{/* Skipped entirely for an image with no caption, so the
+										    bubble does not carry an empty line under the picture. */}
+										{message.content && (
+											<p className="whitespace-pre-wrap wrap-break-word text-sm">
+												{message.content}
+											</p>
+										)}
 										<p
 											className={cn(
 												"mt-1 text-[10px]",

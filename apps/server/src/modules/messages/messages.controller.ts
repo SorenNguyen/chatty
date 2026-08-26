@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { ValidationError } from "../../lib/errors.js";
 import { listMessagesQuerySchema, sendMessageSchema } from "./messages.schema.js";
 import * as messagesService from "./messages.service.js";
 
@@ -7,7 +8,21 @@ import * as messagesService from "./messages.service.js";
 export async function sendMessageController(req: Request, res: Response): Promise<void> {
 	const input = sendMessageSchema.parse(req.body);
 	const conversationId = req.params.conversationId as string;
-	const message = await messagesService.sendMessage(req.userId!, conversationId, input);
+	// Trimmed here, once, so the emptiness check and the stored value agree — a
+	// caption of three spaces is not a caption.
+	const content = input.content?.trim() ?? "";
+
+	// The one rule that spans body and file, so it cannot live in either schema:
+	// a message has to be something. Without it, posting `{}` stores a row with
+	// no text and no image that renders as an empty bubble nobody can delete.
+	if (!content && !req.file) {
+		throw new ValidationError("A message needs text, an image, or both");
+	}
+
+	const message = await messagesService.sendMessage(req.userId!, conversationId, {
+		content,
+		...(req.file ? { attachment: req.file.buffer } : {}),
+	});
 	res.status(201).json(message);
 }
 
