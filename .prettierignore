@@ -1,0 +1,22 @@
+# Build output and dependencies — nothing here is source.
+node_modules/
+dist/
+build/
+coverage/
+.data/
+
+# Documentation is written by hand and stays that way.
+#
+# Prettier pads markdown table cells to line up, and its column arithmetic is
+# byte-based: the em-dashes and Vietnamese text these docs are full of come out
+# misaligned rather than aligned. It also rewrites *emphasis* to _emphasis_.
+# Both make a table that reads fine in an editor harder to edit by hand, in
+# exchange for nothing a reader ever sees — GitHub renders either identically.
+#
+# So `npm run format` deliberately leaves docs alone. The rule for prose here is
+# the one in CLAUDE.md, not a formatter.
+*.md
+
+# Prisma has its own formatter: `npx prisma format`. Prettier does not know the
+# schema language and would need a plugin to avoid mangling it.
+*.prisma

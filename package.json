@@ -1,0 +1,35 @@
+{
+	"name": "chatty",
+	"private": true,
+	"version": "0.1.0",
+	"workspaces": [
+		"apps/*",
+		"packages/*"
+	],
+	"engines": {
+		"node": ">=22.22.2"
+	},
+	"scripts": {
+		"dev:server": "npm run dev --workspace apps/server",
+		"dev:web": "npm run dev --workspace apps/web",
+		"build": "npm run build --workspaces --if-present",
+		"lint": "eslint .",
+		"format": "prettier --write .",
+		"typecheck": "npm run typecheck --workspaces --if-present",
+		"test": "npm run test --workspaces --if-present",
+		"audit:rules": "bash scripts/audit-rules.sh apps/web/src",
+		"verify": "npm run typecheck && npm run lint && npm run format:check && npm run test && npm run verify:audit",
+		"format:check": "prettier --check .",
+		"verify:audit": "bash scripts/audit-rules.sh apps/web/src --gate",
+		"db:up": "docker compose up -d postgres",
+		"db:down": "docker compose down"
+	},
+	"devDependencies": {
+		"@eslint/js": "^9.15.0",
+		"eslint": "^9.15.0",
+		"eslint-config-prettier": "^9.1.0",
+		"prettier": "^3.3.3",
+		"typescript": "^5.6.3",
+		"typescript-eslint": "^8.14.0"
+	}
+}

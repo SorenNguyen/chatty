@@ -1,0 +1,15 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
+		"outDir": "dist",
+		"rootDir": ".",
+		"types": ["node"]
+	},
+	// Tests are included so `typecheck` covers them. A test that no longer matches
+	// the signature it calls is broken code, and leaving it out of typecheck means
+	// nobody finds out until the suite runs — or never, if the file is skipped.
+	// The build uses tsconfig.build.json, which narrows this to `src`.
+	"include": ["src", "tests", "prisma"]
+}

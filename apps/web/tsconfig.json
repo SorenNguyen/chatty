@@ -1,0 +1,18 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"jsx": "react-jsx",
+		"lib": ["ES2022", "DOM", "DOM.Iterable"],
+		"noEmit": true,
+		// Resolved relative to this file (no `baseUrl`: it is deprecated as of TS 7).
+		// Keep in sync with the `resolve.alias` entry in vite.config.ts.
+		"paths": {
+			"@/*": ["./src/*"]
+		}
+	},
+	// Tests included so `typecheck` covers them too — see apps/server/tsconfig.json
+	// for why. Safe here because this config never emits.
+	"include": ["src", "tests"]
+}

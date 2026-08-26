@@ -1,0 +1,9 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"rootDir": "src"
+	},
+	// Only shipped code. Tests and the seed script are typechecked (see
+	// tsconfig.json) but must never end up in dist/.
+	"include": ["src"]
+}

@@ -1,0 +1,15 @@
+{
+	"semi": true,
+	"singleQuote": false,
+	"printWidth": 120,
+	"tabWidth": 4,
+	"useTabs": true,
+	"trailingComma": "all",
+	"overrides": [
+		{
+			"comment": "YAML cannot contain tabs, so prettier falls back to spaces and would indent these four wide. Two is the convention every YAML example is written in, and without this `npm run format` silently reindents docker-compose.yml.",
+			"files": ["*.yml", "*.yaml"],
+			"options": { "tabWidth": 2 }
+		}
+	]
+}

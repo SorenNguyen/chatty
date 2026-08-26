@@ -1,0 +1,177 @@
+import type {
+	AddParticipantRequest,
+	AuthResponse,
+	ConversationDTO,
+	ConversationReadEvent,
+	CurrentUserDTO,
+	LoginRequest,
+	MarkReadRequest,
+	MessageDTO,
+	RegisterRequest,
+	RenameConversationRequest,
+	UserDTO,
+} from "@chatty/shared-types";
+
+const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+const TOKEN_STORAGE_KEY = "chatty:token";
+
+export function getStoredToken(): string | null {
+	return localStorage.getItem(TOKEN_STORAGE_KEY);
+}
+
+export function storeToken(token: string): void {
+	localStorage.setItem(TOKEN_STORAGE_KEY, token);
+}
+
+export function clearStoredToken(): void {
+	localStorage.removeItem(TOKEN_STORAGE_KEY);
+}
+
+/**
+ * Thin fetch wrapper: attaches the base URL and Authorization header, and
+ * throws on non-2xx so callers can `await` without checking `response.ok`.
+ */
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+	const token = getStoredToken();
+	// FormData sets its own Content-Type, and it has to: the header carries the
+	// multipart boundary the browser generated. Declaring JSON over the top of it
+	// makes the body unparseable on the server.
+	const isFormData = options.body instanceof FormData;
+	const response = await fetch(`${API_URL}${path}`, {
+		...options,
+		headers: {
+			...(isFormData ? {} : { "Content-Type": "application/json" }),
+			...(token ? { Authorization: `Bearer ${token}` } : {}),
+			...options.headers,
+		},
+	});
+
+	if (!response.ok) {
+		// The server's error middleware sends { error, message }; fall back to the
+		// status when the body is empty or not JSON (e.g. a proxy returned the error).
+		const errorBody = await response.json().catch(() => ({}));
+		throw new Error(errorBody.message ?? `Request to ${path} failed with ${response.status}`);
+	}
+
+	// A 204 has no body — removing a group member is the first endpoint that
+	// answers this way. Calling .json() on an empty body throws, so this has to
+	// be checked before every other caller of request<T>() can rely on it.
+	if (response.status === 204) return undefined as T;
+
+	return response.json() as Promise<T>;
+}
+
+function get<T>(path: string): Promise<T> {
+	return request<T>(path);
+}
+
+function post<T>(path: string, body: unknown): Promise<T> {
+	return request<T>(path, { method: "POST", body: JSON.stringify(body) });
+}
+
+/** Field name the server reads the file from — see server middlewares/upload-avatar.ts. */
+const AVATAR_FIELD = "avatar";
+
+/**
+ * One named method per endpoint rather than raw get/post at the call site, so
+ * the URL and its response type are declared once and every screen agrees.
+ */
+export const api = {
+	register(input: RegisterRequest): Promise<AuthResponse> {
+		return post<AuthResponse>("/auth/register", input);
+	},
+
+	login(input: LoginRequest): Promise<AuthResponse> {
+		return post<AuthResponse>("/auth/login", input);
+	},
+
+	getCurrentUser(): Promise<CurrentUserDTO> {
+		return get<CurrentUserDTO>("/users/me");
+	},
+
+	searchUsers(query: string): Promise<UserDTO[]> {
+		return get<UserDTO[]>(`/users?query=${encodeURIComponent(query)}`);
+	},
+
+	listConversations(): Promise<ConversationDTO[]> {
+		return get<ConversationDTO[]>("/conversations");
+	},
+
+	createConversation(participantIds: string[], name?: string): Promise<ConversationDTO> {
+		return post<ConversationDTO>("/conversations", name ? { participantIds, name } : { participantIds });
+	},
+
+	/**
+	 * Returns messages newest-first, so `limit` yields the most recent page.
+	 * Pass `before` — the id of the oldest message already held — to walk further
+	 * back. The cursor message itself is excluded.
+	 */
+	listMessages(conversationId: string, options: { limit: number; before?: string }): Promise<MessageDTO[]> {
+		const params = new URLSearchParams({ limit: String(options.limit) });
+		if (options.before) params.set("before", options.before);
+
+		return get<MessageDTO[]>(`/conversations/${conversationId}/messages?${params.toString()}`);
+	},
+
+	sendMessage(conversationId: string, content: string): Promise<MessageDTO> {
+		return post<MessageDTO>(`/conversations/${conversationId}/messages`, { content });
+	},
+
+	/**
+	 * Replaces the signed-in user's avatar. Returns the refreshed profile, whose
+	 * `avatarUrl` carries a new version — assigning that to the store is what
+	 * makes the picture change on screen rather than staying cached.
+	 */
+	uploadAvatar(file: File): Promise<CurrentUserDTO> {
+		const body = new FormData();
+		body.append(AVATAR_FIELD, file);
+
+		return request<CurrentUserDTO>("/users/me/avatar", { method: "POST", body });
+	},
+
+	deleteAvatar(): Promise<CurrentUserDTO> {
+		return request<CurrentUserDTO>("/users/me/avatar", { method: "DELETE" });
+	},
+
+	/**
+	 * Moves the read marker to `messageId`.
+	 *
+	 * The response says where the marker actually ended up, which is not always
+	 * where it was asked to go — the server refuses to move one backwards.
+	 */
+	markConversationRead(conversationId: string, messageId: string): Promise<ConversationReadEvent> {
+		const body: MarkReadRequest = { messageId };
+
+		return post<ConversationReadEvent>(`/conversations/${conversationId}/read`, body);
+	},
+
+	/**
+	 * Adds someone to a group. Returns the conversation as seen by the caller —
+	 * everyone else, including the new member, learns about it from the
+	 * `conversation:new` / `conversation:updated` socket events instead.
+	 */
+	addParticipant(conversationId: string, userId: string): Promise<ConversationDTO> {
+		const body: AddParticipantRequest = { userId };
+
+		return post<ConversationDTO>(`/conversations/${conversationId}/members`, body);
+	},
+
+	/**
+	 * Removes someone from a group, or — pass your own id — leaves it. No
+	 * return value: the server answers 204 and the UI updates from
+	 * `conversation:updated` / `conversation:left` once the socket event lands,
+	 * the same write-over-HTTP-render-over-socket split used everywhere else.
+	 */
+	removeParticipant(conversationId: string, userId: string): Promise<void> {
+		return request<void>(`/conversations/${conversationId}/members/${userId}`, { method: "DELETE" });
+	},
+
+	renameConversation(conversationId: string, name: string): Promise<ConversationDTO> {
+		const body: RenameConversationRequest = { name };
+
+		return request<ConversationDTO>(`/conversations/${conversationId}`, {
+			method: "PATCH",
+			body: JSON.stringify(body),
+		});
+	},
+};

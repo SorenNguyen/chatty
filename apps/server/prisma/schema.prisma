@@ -1,0 +1,87 @@
+// See docs/ARCHITECTURE.md for why the data model looks like this
+// (in particular: why there's no separate "DM" vs "group" table).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  // Public, unique identifier used to find someone. Display names are not
+  // unique — two people called "Minh" are indistinguishable in search results —
+  // and email is deliberately never returned by search, so without a handle
+  // there is no safe way to tell two accounts apart.
+  // Always stored lowercase: Postgres unique indexes are case-sensitive, so
+  // normalising on write is what makes "Minh" and "minh" the same handle.
+  handle       String   @unique
+  passwordHash String
+  displayName  String
+  // When the avatar was last replaced — null means there is no picture.
+  //
+  // Not a URL. The file lives under one key derived from the user id, and the
+  // URL the client gets is built from this timestamp
+  // (`/users/:id/avatar?v=<ms>`). Storing the URL instead would mean either
+  // rewriting every row to move the files to S3, or keeping the old picture
+  // cached in browsers after an upload — the same reason Mattermost stores
+  // `last_picture_update` and Rocket.Chat an avatar etag.
+  avatarUpdatedAt DateTime?
+  createdAt       DateTime  @default(now())
+
+  participants ConversationParticipant[]
+  messages     Message[]
+}
+
+model Conversation {
+  id        String   @id @default(cuid())
+  // true once a third participant joins; kept explicit rather than derived
+  // from participant count so a 1-1 chat that later becomes a group doesn't
+  // silently change identity.
+  isGroup   Boolean  @default(false)
+  // display name for group chats; null for 1-1 (client derives a name from
+  // the other participant)
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  participants ConversationParticipant[]
+  messages     Message[]
+}
+
+model ConversationParticipant {
+  id             String   @id @default(cuid())
+  conversationId String
+  userId         String
+  joinedAt       DateTime @default(now())
+  // Newest message this participant has read. Per-participant, so it belongs
+  // here and not on Message: "read" is a fact about a person, and a group of
+  // ten has ten different answers for the same message.
+  //
+  // A plain column rather than a relation with a foreign key: SetNull on delete
+  // would silently reset someone's marker to "nothing read" the first time a
+  // message is deleted, which reads as a whole conversation going unread.
+  lastReadMessageId String?
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  authorId       String
+  content        String
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  author       User         @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+}

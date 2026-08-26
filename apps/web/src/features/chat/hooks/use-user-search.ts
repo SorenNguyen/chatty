@@ -1,0 +1,59 @@
+import type { UserDTO } from "@chatty/shared-types";
+import { useState } from "react";
+import { api } from "@/api/client";
+
+interface UserSearch {
+	query: string;
+	setQuery: (query: string) => void;
+	results: UserDTO[];
+	isSearching: boolean;
+	error: string;
+	search: (event: React.FormEvent<HTMLFormElement>) => void;
+	reset: () => void;
+}
+
+/**
+ * The "find someone by name, handle or email" state machine.
+ *
+ * Extracted because it is about to have a second, near-identical caller
+ * (adding a member to an existing group, alongside starting a new
+ * conversation) — searching is a fetch-loading-error state machine either
+ * way, and the two screens would otherwise carry the exact same four
+ * `useState` calls. What differs between them — multi-select-then-confirm
+ * versus click-to-add-immediately — is the interaction, not the search
+ * itself, so only that part stays in each component.
+ *
+ * `excludeUserIds` filters results client-side rather than being sent to the
+ * server: it is "people already in this specific group", a fact this screen
+ * knows and the search endpoint has no reason to.
+ */
+export function useUserSearch(excludeUserIds: string[] = []): UserSearch {
+	// query and results are kept apart on purpose: the query changes on every
+	// keystroke, the results only when a search completes.
+	const [query, setQuery] = useState("");
+	const [results, setResults] = useState<UserDTO[]>([]);
+	const [isSearching, setIsSearching] = useState(false);
+	const [error, setError] = useState("");
+
+	function search(event: React.FormEvent<HTMLFormElement>) {
+		event.preventDefault();
+
+		const trimmed = query.trim();
+		if (!trimmed) return;
+
+		setIsSearching(true);
+		setError("");
+		api.searchUsers(trimmed)
+			.then((found) => setResults(found.filter((user) => !excludeUserIds.includes(user.id))))
+			.catch((searchError: Error) => setError(searchError.message))
+			.finally(() => setIsSearching(false));
+	}
+
+	function reset() {
+		setQuery("");
+		setResults([]);
+		setError("");
+	}
+
+	return { query, setQuery, results, isSearching, error, search, reset };
+}

@@ -1,0 +1,240 @@
+/**
+ * Types that cross the wire between apps/server and apps/web.
+ * Keep these in sync with prisma/schema.prisma by hand — Prisma's generated
+ * types live only in the server; these are the trimmed-down "safe to send
+ * to a client" shapes (e.g. no password hashes).
+ */
+
+/** Another user, as shown to you — a conversation participant, a message author. */
+export interface UserDTO {
+	id: string;
+	/**
+	 * Unique, lowercase, public. Display names are not unique, so this is what
+	 * tells two people with the same name apart in a search result.
+	 */
+	handle: string;
+	displayName: string;
+	/**
+	 * Absolute URL of the user's avatar, or null when they have not set one.
+	 *
+	 * Derived by the server, never stored: the database keeps only
+	 * `avatarUpdatedAt`, and this URL is built from it as
+	 * `{PUBLIC_URL}/users/{id}/avatar?v={timestamp}`. Two consequences worth
+	 * knowing on the client side:
+	 *
+	 * - It is safe to cache hard. The `v` changes the moment the picture does,
+	 *   so a stale image cannot survive an upload.
+	 * - It is stable across storage backends. Moving the files from local disk
+	 *   to S3 changes nothing here, because no row ever held a storage path.
+	 */
+	avatarUrl: string | null;
+	createdAt: string; // ISO 8601
+}
+
+/**
+ * Your own account. Separate from UserDTO because `email` belongs to you and
+ * must never ride along on someone else's profile — keeping them as one type
+ * makes that leak a one-character mistake.
+ */
+export interface CurrentUserDTO extends UserDTO {
+	email: string;
+}
+
+/**
+ * A user seen through their membership of one conversation.
+ *
+ * Extends UserDTO rather than replacing it, so anything that only needs the
+ * profile (a title, an avatar) keeps accepting a participant unchanged.
+ */
+export interface ParticipantDTO extends UserDTO {
+	/**
+	 * The newest message this participant has read, or null if they never have.
+	 *
+	 * Enough to render "Seen" without a second request: a message is read by
+	 * someone when it is at or before their marker. The client compares by
+	 * position in the loaded list rather than by timestamp, because ids are what
+	 * the server commits to.
+	 */
+	lastReadMessageId: string | null;
+}
+
+export interface ConversationDTO {
+	id: string;
+	isGroup: boolean;
+	name: string | null; // null for 1-1 conversations; derived from participants on the client
+	participants: ParticipantDTO[];
+	lastMessage: MessageDTO | null;
+	/**
+	 * Messages in this conversation, written by someone else, newer than the
+	 * viewer's read marker. Computed per viewer, so it is only meaningful in a
+	 * response to the person who asked.
+	 */
+	unreadCount: number;
+	updatedAt: string;
+}
+
+export interface MessageDTO {
+	id: string;
+	conversationId: string;
+	authorId: string;
+	content: string;
+	createdAt: string;
+}
+
+// ---- Auth request/response contracts ----
+//
+// Declared here rather than separately on each side. When these lived only in
+// the client and only in the server's Zod schema, adding a required field to
+// one left the other compiling happily and failing at runtime with a 400.
+
+export interface RegisterRequest {
+	email: string;
+	password: string;
+	handle: string;
+	displayName: string;
+}
+
+export interface LoginRequest {
+	email: string;
+	password: string;
+}
+
+export interface AuthResponse {
+	token: string;
+	user: Pick<CurrentUserDTO, "id" | "email" | "handle" | "displayName">;
+}
+
+/**
+ * Body of `POST /conversations/:id/read`.
+ *
+ * Carries the message id rather than a timestamp: the client already knows
+ * which message is on screen, and a clock it controls is not something the
+ * server should trust to decide what has been read.
+ */
+export interface MarkReadRequest {
+	messageId: string;
+}
+
+/** Body of `POST /conversations/:id/members`. */
+export interface AddParticipantRequest {
+	userId: string;
+}
+
+/** Body of `PATCH /conversations/:id`. Group-only — the server rejects it for a direct conversation. */
+export interface RenameConversationRequest {
+	name: string;
+}
+
+// ---- Socket.io event contracts ----
+//
+// Wired into the Socket.io server as `Server<ClientToServerEvents, ServerToClientEvents>`
+// and into the client as `io<ServerToClientEvents, ClientToServerEvents>`, so a payload
+// that does not match fails to compile on both ends instead of arriving malformed.
+
+/** Someone advanced their read marker in a conversation you are in. */
+export interface ConversationReadEvent {
+	conversationId: string;
+	userId: string;
+	lastReadMessageId: string;
+}
+
+/** Someone started or stopped typing in a conversation you are in. */
+export interface TypingEvent {
+	conversationId: string;
+	userId: string;
+	isTyping: boolean;
+}
+
+/** Someone you share a conversation with connected or dropped their last connection. */
+export interface PresenceEvent {
+	userId: string;
+	isOnline: boolean;
+}
+
+/**
+ * Who is already online, sent once to a socket right after it connects.
+ *
+ * Without it a client only learns about presence when it *changes*, so everyone
+ * who was already online before you opened the app would look offline until
+ * they happened to reconnect.
+ */
+export interface PresenceSnapshotEvent {
+	onlineUserIds: string[];
+}
+
+/** What the client sends to say it is or is no longer typing. */
+export interface TypingSignal {
+	conversationId: string;
+}
+
+/**
+ * Participants or the name changed in a conversation you are in — someone was
+ * added, someone left or was removed, or the group was renamed.
+ *
+ * Carries only the parts of a conversation that are *not* specific to who is
+ * watching. `unreadCount` and `lastMessage` are deliberately absent: they are
+ * per-viewer, and one broadcast to a room cannot correctly answer "unread to
+ * whom?" for every recipient at once — see `ConversationDTO.unreadCount`.
+ * Each participant's own `lastReadMessageId` rides along because that *is* a
+ * fact about them, not about the recipient, the same reasoning `conversation:read`
+ * already relies on.
+ */
+export interface ConversationUpdatedEvent {
+	conversationId: string;
+	name: string | null;
+	participants: ParticipantDTO[];
+}
+
+/**
+ * You were removed from a conversation, or you left it yourself.
+ *
+ * Sent to your personal room rather than the conversation room: by the time
+ * this fires your socket has already been evicted from that room, so it is
+ * the only way left to reach you — and it reaches every tab and device you
+ * have open, the same as `conversation:new`.
+ */
+export interface ConversationLeftEvent {
+	conversationId: string;
+}
+
+/** Events the server pushes down. The client only listens to these. */
+export interface ServerToClientEvents {
+	"message:new": (message: MessageDTO) => void;
+	/**
+	 * Someone started a conversation that includes you.
+	 *
+	 * Needed because joining the room is not enough: a brand-new conversation has
+	 * no messages, so nothing would ever be broadcast into it and it would not
+	 * appear in the sidebar until the other person happened to send something —
+	 * or until a reload.
+	 *
+	 * Sent to the creator too. Their UI already has the conversation from the
+	 * HTTP response, so the client de-duplicates by id; one payload for everyone
+	 * beats a second code path that only the creator exercises.
+	 */
+	"conversation:new": (conversation: ConversationDTO) => void;
+	"conversation:read": (event: ConversationReadEvent) => void;
+	"conversation:updated": (event: ConversationUpdatedEvent) => void;
+	"conversation:left": (event: ConversationLeftEvent) => void;
+	"typing:update": (event: TypingEvent) => void;
+	"presence:update": (event: PresenceEvent) => void;
+	"presence:snapshot": (event: PresenceSnapshotEvent) => void;
+}
+
+/**
+ * Events the client sends up.
+ *
+ * Deliberately short, and typing is the only thing on it. Everything that
+ * *persists* — sending a message, marking a conversation read — goes over HTTP
+ * and comes back to everyone as a server event, so there is one write path to
+ * secure and the sender renders from the same event everyone else does.
+ *
+ * Typing is the exception that proves the rule: it is not written anywhere, it
+ * fires several times a sentence, and it is worthless a few seconds later. Put
+ * on HTTP it would be a request per keystroke, each with its own round trip and
+ * auth check, to update something that expires before it lands.
+ */
+export interface ClientToServerEvents {
+	"typing:start": (signal: TypingSignal) => void;
+	"typing:stop": (signal: TypingSignal) => void;
+}

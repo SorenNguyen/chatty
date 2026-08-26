@@ -1,0 +1,251 @@
+# Roadmap
+
+What is built, what is next, and why in this order. Update this file **in the same commit** as the
+work it describes — a roadmap that lags behind the code is worse than none, because it is believed.
+
+Status: `done` · `next` · `planned`
+
+---
+
+## Phase 1 — Fix what is wrong — `done`
+
+Not new features: three things that were broken or silently incomplete.
+
+| # | Item | Why it came first |
+| --- | --- | --- |
+| 1 | Unique handles (`@minh`) | Display names are not unique and search deliberately hides emails, so two people with the same name were indistinguishable. Touched the schema, so the longer it waited the more data would need migrating. |
+| 2 | `conversation:new` socket event | Joining a room only decides where future messages land. A brand-new conversation has none, so it stayed invisible in the sidebar until someone sent the first message — or until a reload. |
+| 3 | Load older messages on scroll | The API had cursor pagination from the start; the client only ever fetched the newest page, so older history was silently unreachable. |
+
+Also done along the way, each because it was found while doing the above:
+
+- **Rate limiting** on `/auth/register` and `/auth/login` — the mitigation the docs already claimed
+  existed for register's unavoidable "email taken" disclosure.
+- **Tests are typechecked.** `tsconfig.json` used to `include: ["src"]` only. Adding `tests`
+  surfaced 18 pre-existing type errors that nothing had ever reported. Build now uses
+  `tsconfig.build.json` so tests stay out of `dist/`.
+- **Auth request/response types moved to `packages/shared-types`.** The client used to declare its
+  own request shape, so adding a required field server-side compiled fine on both sides and failed
+  at runtime with a 400.
+- **One Vitest version across the monorepo.** Two copies meant two module instances, so
+  `expect.extend` in a setup file landed on one while tests ran on the other and every jest-dom
+  matcher silently vanished. Run `npm dedupe` after adding a workspace.
+- **Seed script** (`npm run db:seed --workspace apps/server`) — e2e scripts had been writing junk
+  into the dev database, leaving a search full of duplicate "Minh" accounts.
+
+---
+
+## Phase 2 — Core chat features — `done`
+
+| # | Item | How it ended up |
+| --- | --- | --- |
+| 4 | Avatars | Upload, re-encode, display. The `avatarUrl` **column was replaced** by `avatarUpdatedAt` — see below. |
+| 5 | Read receipts | `lastReadMessageId` on `ConversationParticipant`, `POST /conversations/:id/read`, `conversation:read` broadcast, per-viewer `unreadCount` on `ConversationDTO`. |
+| 6 | Typing indicator | The first client→server socket events (`typing:start` / `typing:stop`). Nothing persisted. |
+| 7 | Online / offline presence | Derived from connections, never stored. Announced on the first connect and the last disconnect, so extra tabs are not events. |
+
+### Avatars: why the schema changed
+
+The roadmap said `avatarUrl` was "already in the schema". It was, as a free-text column — and storing
+a URL there is wrong for two reasons that only show up later:
+
+- **Browsers cache images hard.** A user who replaces their picture keeps seeing the old one unless
+  the URL changes, so the column would have to hold a new path per upload — which leaves every
+  previous picture on disk forever.
+- **The storage backend is in the URL.** Moving files to S3 in phase 5 would mean rewriting every row.
+
+Rocket.Chat, Mattermost and Slack all avoid both the same way: serve avatars from an app-controlled
+endpoint keyed by user, and cache-bust with a version parameter. So the column is now
+`avatarUpdatedAt` (Mattermost calls it `last_picture_update`), and `UserDTO.avatarUrl` is **derived**
+by the server as `{PUBLIC_URL}/users/:id/avatar?v=<timestamp>`. The wire type did not change.
+
+Also part of item 4:
+
+- **Uploads are re-encoded, not stored.** `lib/avatar-storage.ts` decodes to pixels and writes WebP
+  256×256. The MIME type a client sends proves nothing — the re-encode is what stops a file being
+  served back from this origin as something other than an image. It also strips EXIF, so an avatar
+  cannot publish the GPS coordinates the phone put in it.
+- **`GET /users/:id/avatar` is the one unauthenticated route.** An `<img>` cannot send an
+  Authorization header, and this app keeps its token in localStorage rather than a cookie.
+
+Also done along the way:
+
+- **Typing was echoing back to the typist's own other devices.** Found later, by noticing that typing
+  was the only phase 2 feature with no entry under "Known gaps" and going to look for one.
+  `socket.to(room)` excludes the socket that sent the event, not the *person* — so someone typing on
+  their phone watched their own laptop announce "Minh is typing…" back at them. Fixed with
+  `.except(userRoom(userId))`, the same personal room presence already uses for exactly this. The
+  roadmap had flagged multi-device as the hard part of presence; it was the hard part of typing too,
+  and only presence got the care.
+- **`tests/typing.socket.test.ts`, the first test over a real socket connection.** The bug above was
+  invisible from below: service tests use a fake io, which proves what a service *asks* to broadcast
+  and can say nothing about who receives it. Room membership, exclusions and the handshake all live
+  above that line. Same lesson as the avatar endpoint, one layer up.
+- **One HTTP-level test, in `tests/avatar-endpoint.test.ts`.** Every avatar `GET` returned 500 while
+  all 75 service tests passed: Express's `send` treats a path segment starting with a dot as a hidden
+  file and refuses it, and the upload directory is `.data/uploads`. Nothing that tests a service can
+  see that. The endpoint now has a test that fails without the fix.
+- **`assertParticipant` moved to the conversations service** and is now imported by messages and the
+  socket layer. It had been a private copy in `messages.service.ts`; two copies of an authorization
+  check are two chances for one of them to be relaxed alone.
+- **Unread counts are one raw SQL query**, not one per conversation. Each conversation counts from
+  its own read cursor, which Prisma's `groupBy` cannot express.
+- **Test fixtures moved to `apps/web/tests/factories.ts`.** Adding `unreadCount` and
+  `lastReadMessageId` broke a hand-written fixture in three files at once.
+- **Node 22 is now required** to run the web tests — jsdom 30 declares `>=22.22.2`, and on Node 20 the
+  suite dies inside undici with `markAsUncloneable is not a function`. Recorded in `engines`.
+- **Five convention breaches `scripts/audit-rules.sh` could not see**, found by reading the checklist
+  against the new code rather than trusting the script. It greps for constant *arrays* in feature
+  component files, so `sizeClasses` maps and a bare `MAX_BADGE_COUNT` slipped through; it checks
+  boolean *state* for an `is`/`has` prefix, so a plain `const startsRun` did too. Fixed by moving the
+  constants to `constants/`, their types to `types/`, and renaming.
+- **`npm run verify`, and three new audit sections, so that does not depend on anyone remembering.**
+  Sections 26-28 close exactly the gaps above — any constant in a component file, any non-`Props`
+  type in a component file, any boolean `const` without the prefix. Turning them on found one more
+  breach in code nobody had touched (`prependedOlder` → `didPrependOlder`); a new rule that reports a
+  hit on day one is a rule people learn to ignore, so it was fixed rather than grandfathered.
+  `verify` chains typecheck → lint → format:check → test → audit and runs the audit with a new
+  `--gate` flag that makes a hit fail the command. On its own `audit:rules` stays a report and exits
+  0, because a heuristic that blocks work is a heuristic people route around. The remaining rule is
+  in CLAUDE.md, under "Definition of done": a green `verify` is evidence, not proof — it does not run
+  the app, and it does not read prose.
+- **`npm run format` is now safe to run.** It was not: `tabWidth: 4` is meant for TypeScript, and YAML
+  cannot contain tabs, so prettier would silently reindent `docker-compose.yml` from two spaces to
+  four. A `.prettierrc` override pins YAML to two. Markdown and `.prisma` are in a new
+  `.prettierignore` — prettier pads markdown tables using byte counts, which *misaligns* the
+  em-dashes these docs are full of, and it does not know the Prisma schema language at all
+  (`npx prisma format` does). `npx prettier --check .` now exits clean.
+
+## Phase 3 — Group and account management — `next`
+
+| # | Item | How it ended up |
+| --- | --- | --- |
+| 8 | Group: add/remove member, leave, rename | `done` — see below |
+| 9 | Edit profile, change password | `next` |
+| 10 | Password reset (needs outbound email) | `planned` |
+
+### Item 8: group management
+
+`POST /conversations/:id/members`, `DELETE /conversations/:id/members/:userId`, `PATCH
+/conversations/:id`. All three follow the same shape as everything else in this app: write over HTTP,
+render from a socket event, one source of truth. Two new events carry it —
+`conversation:updated` (participants or name changed) and `conversation:left` (you were removed, or
+you left).
+
+**No admin role — any participant can add, remove, or rename.** Recorded in
+[ADR 0006](adr/0006-flat-group-permissions.md) rather than left as an unstated default, because it is
+the kind of thing that looks like an oversight if it isn't written down. Leaving and being removed are
+the same function call with the target set to yourself; a group is allowed to end up with zero
+participants, the same way a conversation is never deleted.
+
+**`conversation:new` now fires when someone is added to an existing group**, not only at creation —
+this was a known gap on the roadmap since phase 2 and is now closed: `addParticipant` sends it to the
+new member specifically, after joining their live sockets to the room, the same ordering
+`createConversation` already used.
+
+**`conversation:updated` deliberately cannot carry `unreadCount` or `lastMessage`.** Both are
+per-viewer, and one payload broadcast to a whole room cannot correctly answer "unread to whom?" for
+everyone in it at once — sending the actor's own count to the room would have leaked it into every
+other participant's UI. Caught while designing the event, not after shipping it; see the type's doc
+comment in `packages/shared-types` and ADR 0006's consequences section.
+
+**Group management lives inline, not in a modal.** The app has no modal/dialog primitive declared
+anywhere in its conventions; `GroupMembersPanel` follows the same pattern `NewConversationPanel`
+already established — render inline, toggled from a button in `ConversationHeader` — rather than
+introduce one.
+
+**`useUserSearch` extracted from `NewConversationPanel`.** Adding a member needed the exact same
+search-loading-error state machine a second time; per "no duplicate helper," the first copy was
+refactored to use the extracted hook rather than left to drift from the second.
+
+**One flaky-test bug, found and root-caused rather than retried.** The new suite passed repeatedly,
+then the full run started failing 48-61 tests at random across files that had nothing to do with
+group management — "user does not exist", "email already registered". The cause was this file's own
+fixtures: four `register()` calls per test, each a bcrypt hash at cost 12, pushed the slowest tests
+past Vitest's default 5s `testTimeout`. Vitest abandons such a test but cannot stop its promise
+chain, so it kept querying while the *next* test's `TRUNCATE` wiped the tables — and the wreckage
+surfaced in whichever file ran next. Fixed by creating fixture rows directly with `prisma` instead of
+going through `register()` (these tests never sign in): 25-61ms per test instead of 300-1400ms, and
+green on three consecutive full runs at the default timeout. The trap is now documented in
+`tests/setup.ts`, next to the TRUNCATE that springs it.
+
+Known, deliberately deferred rather than missed:
+
+- No confirmation dialog before removing someone or leaving. Nothing else in the app has one either.
+- No system message in the chat log for "X added Y" / "X left" / "renamed to Z". Would need a message
+  with no author, which is a bigger schema decision than this item asked for — see Known gaps.
+- Adding a participant does not backfill their `unreadCount` from before they joined — a newly added
+  member's marker starts null, so the existing read-count query treats all prior history as unread,
+  same as it would for anyone with an unset marker. Not special-cased; see Known gaps.
+
+## Phase 4 — Attachments — `planned`
+
+| # | Item |
+| --- | --- |
+| 11 | `Attachment` table, upload, image rendering in the message list |
+
+## Phase 5 — Production readiness — `planned`
+
+| # | Item | Notes |
+| --- | --- | --- |
+| 12 | Redis-backed rate limiting | **Blocks running more than one instance.** In-memory counters mean each process keeps its own tally. |
+| 13 | Dockerfile + production compose | |
+| 14 | CI running `npm run verify` | The command already exists and gates on the audit; CI is what makes it unskippable. |
+| 15 | Automated e2e (Playwright) | Currently these are throwaway scripts written, run, and deleted by hand. |
+
+---
+
+## Known gaps not on the roadmap yet
+
+- **Handle placement.** Asking for a handle during registration is friction. Alternatives discussed:
+  auto-generate one and let the user change it later (Instagram-style), or move the field into
+  onboarding. Deliberately deferred, not forgotten.
+- **No message edit or delete**, no message search.
+- **Avatar files are not cleaned up when a user is deleted.** The database row cascades; the file on
+  disk does not. Harmless today (nothing deletes users) and the wrong thing to fix in the filesystem
+  layer — it belongs with whatever deletes the account.
+- **Read receipts cannot be turned off.** Every real messenger lets you disable them, and doing so
+  has to be symmetric — if you hide yours, you do not get to see theirs.
+- **A read marker pointing outside the loaded page shows no "Seen".** Correct rather than wrong (the
+  alternative is guessing), but it means a receipt can disappear when you scroll far enough back.
+- **Presence is binary.** No "last seen at", which would need a column and a decision about who is
+  allowed to see it.
+- **Typing is only shown for the conversation you have open.** The event arrives for every
+  conversation you are in — `use-typing-participants` drops the rest on purpose, because a sidebar
+  badge for something that expires in seconds is mostly flicker. Real messengers do show it there,
+  so this is a judgement call rather than a settled answer.
+- **Two test runs against `chatty_test` at once corrupt each other.** `tests/setup.ts` truncates
+  before every test, so a second run — another terminal, another agent, a watch mode left open —
+  deletes the first one's fixtures mid-test. It surfaces as unique-constraint and "participant does
+  not exist" failures scattered across unrelated files, which reads as a broken suite rather than a
+  busy database. The seed script has a guard for pointing at the wrong database; this is the same
+  class of problem and has none.
+- **No system messages for group changes.** "An added Binh", "Chi left", "renamed to Weekend
+  football" appear nowhere in the chat log — only in `conversation:updated`, which a client currently
+  applies silently. Doing this properly needs a message with no author (`Message.authorId` is
+  required, referencing a `User`), which is a schema decision bigger than phase 3's add/remove/rename
+  scope. Deliberately deferred, not missed.
+- **A newly added group member's unread count includes the group's entire prior history.** Their read
+  marker starts null, and the existing unread query treats a null marker as "count everything" — it
+  has no way to distinguish "never read" from "wasn't here yet". `ConversationParticipant.joinedAt`
+  already exists and could bound the query, but doing that for new joiners only (and not everyone
+  else) is a second axis on unread math that was not asked for.
+- **No admin role for groups.** Any participant can rename, add, or remove any other — see
+  [ADR 0006](adr/0006-flat-group-permissions.md). Fine for a learning project; would need real thought
+  before this became a product other people rely on.
+
+## Verification bar
+
+Nothing is "done" here until this passes, **and** an end-to-end run against the real API exercises the
+actual behaviour — not just the types:
+
+```bash
+npm run verify
+```
+
+It chains typecheck → lint → format:check → test → audit, stops at the first failure, and fails on an
+audit hit. Run it on **Node 22 or newer**: on Node 20 the web suite does not fail a test, it fails to
+start, inside jsdom, with an error that looks nothing like a version problem.
+
+The second half of that sentence is not optional. Phase 2 shipped an avatar endpoint that returned
+500 for every request with all 75 server tests green — see CLAUDE.md, "Definition of done".
