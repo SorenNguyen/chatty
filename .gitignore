@@ -10,4 +10,7 @@ build/
 *.log
 .DS_Store
 coverage/
+# Playwright writes these on every run; traces in particular are large.
+test-results/
+playwright-report/
 .turbo/

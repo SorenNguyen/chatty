@@ -26,6 +26,21 @@ const envSchema = z.object({
 	 * Postgres volume in `.data/` and is gitignored with it.
 	 */
 	UPLOAD_DIR: z.string().min(1).default(".data/uploads"),
+	/**
+	 * Where Redis is, if there is one. **Optional, and that is a decision.**
+	 *
+	 * With it, rate-limit counters and Socket.io rooms are shared, so more than
+	 * one instance behaves like one system. Without it both fall back to this
+	 * process's memory, which is correct for a single instance and wrong the
+	 * moment there are two — each keeps its own tally, and a socket in one
+	 * process cannot reach a room in the other.
+	 *
+	 * Required would be the safer-looking choice and the worse one: it would mean
+	 * `npm run verify` and every `npm run dev:server` needed a Redis container to
+	 * start. The guard is instead a warning at boot (see lib/redis.ts) and a
+	 * production compose file that always sets it.
+	 */
+	REDIS_URL: z.string().url().optional(),
 });
 
 export const env = envSchema.parse(process.env);

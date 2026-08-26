@@ -6,9 +6,25 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 	children: ReactNode;
 }
 
-export function Button({ variant = "primary", className, children, ...rest }: ButtonProps) {
+/**
+ * `type` defaults to "button", not to the HTML default of "submit".
+ *
+ * A `<button>` with no type inside a `<form>` submits it, and it also becomes a
+ * candidate for *implicit* submission — pressing Enter in a text field activates
+ * the form's first submit button, whatever that button was actually for. That
+ * shipped as a real bug: attaching an image to a message and pressing Enter
+ * instead of clicking send fired the preview's "Remove attached image" button
+ * first, so the picture was dropped and a text-only message went out. Found by
+ * the e2e suite; invisible to every unit test, because each one clicks the
+ * button it means.
+ *
+ * Every genuine submit in this app already says `type="submit"` explicitly, so
+ * this default costs nothing and closes the same trap in the other three forms.
+ */
+export function Button({ variant = "primary", type = "button", className, children, ...rest }: ButtonProps) {
 	return (
 		<button
+			type={type}
 			// `className` comes last so a caller's utility beats the defaults —
 			// that override is exactly what twMerge inside cn() exists to resolve.
 			className={cn(

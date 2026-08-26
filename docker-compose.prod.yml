@@ -1,0 +1,96 @@
+# Production-shaped stack: two API instances behind nothing in particular, so
+# that the thing phase 5 item 12 fixed is actually exercised rather than
+# asserted. Run with:
+#
+#   JWT_SECRET=$(openssl rand -hex 32) docker compose -f docker-compose.prod.yml up --build
+#
+# This is not a deployment — there is no TLS, no reverse proxy, and the two API
+# instances are on separate ports rather than behind a load balancer. It is the
+# smallest arrangement in which "more than one instance" is a real condition.
+
+# Its own project name, and this line is not cosmetic. Compose derives the
+# project from the directory otherwise, so this file and docker-compose.yml
+# would both own a container called `chatty-postgres-1` — starting one would
+# quietly replace the other's, pointed at a different volume, and `down` on
+# either would take out both.
+name: chatty-prod
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: chatty
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chatty}
+      POSTGRES_DB: chatty
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatty"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api-1: &api
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://chatty:${POSTGRES_PASSWORD:-chatty}@postgres:5432/chatty
+      # Always set here, unlike development: without it each instance would keep
+      # its own rate-limit counters and its own socket rooms, and the two below
+      # would silently behave as two separate systems.
+      REDIS_URL: redis://redis:6379
+      # No default. An unset JWT_SECRET fails env validation at boot, which is
+      # the correct outcome — a hard-coded fallback is a signing key published
+      # in a git repository.
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, e.g. JWT_SECRET=$(openssl rand -hex 32)}
+      CORS_ORIGIN: ${WEB_ORIGIN:-http://localhost:8080}
+      PUBLIC_URL: ${API_PUBLIC_URL:-http://localhost:4000}
+      NODE_ENV: production
+    volumes:
+      # Shared between both instances on purpose: an avatar uploaded through
+      # api-1 has to be servable by api-2. This is the local stand-in for the
+      # object storage that would do the job in a real deployment.
+      - uploads:/data/uploads
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    ports:
+      - "4000:4000"
+
+  # Same image, same everything. Its only job is to make single-instance
+  # assumptions fail loudly during local testing instead of in production.
+  api-2:
+    <<: *api
+    ports:
+      - "4010:4000"
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_API_URL: ${API_PUBLIC_URL:-http://localhost:4000}
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      - api-1
+
+volumes:
+  postgres-data:
+  redis-data:
+  uploads:

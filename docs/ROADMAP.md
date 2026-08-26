@@ -292,14 +292,102 @@ Known, deliberately deferred rather than missed:
 - No lightbox — a picture is shown at up to 320×400 in the bubble and cannot be opened full size.
 - No upload progress. A 10MB photo on a slow connection shows a disabled button and nothing else.
 
-## Phase 5 — Production readiness — `planned`
+## Phase 5 — Production readiness — `done`
 
-| # | Item | Notes |
+| # | Item | How it ended up |
 | --- | --- | --- |
-| 12 | Redis-backed rate limiting | **Blocks running more than one instance.** In-memory counters mean each process keeps its own tally. |
-| 13 | Dockerfile + production compose | |
-| 14 | CI running `npm run verify` | The command already exists and gates on the audit; CI is what makes it unskippable. |
-| 15 | Automated e2e (Playwright) | Currently these are throwaway scripts written, run, and deleted by hand. |
+| 12 | Redis-backed rate limiting | `done` — and the socket adapter with it |
+| 13 | Dockerfile + production compose | `done` |
+| 14 | CI running `npm run verify` | `done` |
+| 15 | Automated e2e (Playwright) | `done` — and it immediately found a real bug |
+
+### Item 12: Redis, for rate limits *and* rooms
+
+The roadmap said "rate limiting", but that was only half of what blocked a second instance. Socket.io
+keeps its room registry in process memory too, so a message broadcast by one instance would reach
+nobody connected to the other — and `fetchSockets()`, which is how presence answers "who is online",
+would only ever see half the users. Both are fixed by `@socket.io/redis-adapter`, and doing one
+without the other would have produced a system that scaled its rate limits and silently lost its
+messages.
+
+**`REDIS_URL` is optional, and that is a decision rather than laziness.** Required would mean
+`npm run verify` and every `npm run dev:server` needed a Redis container to start. Without it both
+mechanisms fall back to process memory — correct for one instance, wrong for two — so
+`docker-compose.prod.yml` always sets it and the server logs a loud warning if it is missing in
+production.
+
+**Verified by running two instances, not by reading the code.** Both pointed at one Redis:
+
+- The register limiter is 10/hour. Six calls to instance A then six to B: the eleventh request
+  overall — the fifth on B — came back 429.
+- A message sent over HTTP to A arrived on a socket connected to B.
+- The presence snapshot B sent to its own client listed a user connected to A.
+
+The same three were then repeated against the containerised stack from item 13.
+
+### Item 13: images and a production compose
+
+`apps/server/Dockerfile` is multi-stage and ships production dependencies only — the build stage's
+`node_modules` holds TypeScript, vitest and every type package, none of it reachable at runtime and
+all of it attack surface. It runs as `node`, not root. Debian slim rather than Alpine, deliberately:
+`sharp` ships prebuilt binaries for glibc and needs libvips compiled from source on musl.
+
+Migrations run at container startup rather than in the image, because they need a database — which
+exists at deploy time, not at build time.
+
+`apps/web/Dockerfile` builds the static bundle and serves it from nginx, with the SPA fallback that
+client-side routes need (`/profile` is not a file on disk) and two cache rules that matter:
+fingerprinted assets forever, `index.html` never — it is the one filename that does not change and
+which points at all the ones that do.
+
+**`docker-compose.prod.yml` runs two API instances on purpose.** Not because two is the right number,
+but because one is the number that hides every assumption item 12 just removed.
+
+**One bug in this file, found by running it.** Both compose files derived their project name from the
+directory, so both owned a container called `chatty-postgres-1`: starting the production stack
+silently replaced the development one, pointed at a different volume. The production file now pins
+`name: chatty-prod`.
+
+### Item 14: CI
+
+`.github/workflows/verify.yml` runs `npm run verify` against a real Postgres service on Node 22.22.2 —
+pinned to the exact minimum, because `engines` requires it and on anything older the web suite does
+not fail a test, it fails to start. A second job builds both images, kept separate so a broken
+Dockerfile cannot hide behind a green suite or the other way round.
+
+CI adds no new checks. `verify` already existed; what did not exist was anything making it
+unskippable.
+
+### Item 15: Playwright, and the bug it found on its first run
+
+Five specs in `e2e/`, driving a real browser against a real server against a real database — its own
+database, `chatty_e2e`, because the global setup truncates it.
+
+The centre of it is a two-context test: Alice and Bob register through the actual sign-up form, Alice
+starts the conversation, **Bob's sidebar gains it over the socket with no reload**, Bob opens it, and
+only then does Alice send. The message cannot have arrived in a page load. Nothing below the browser
+can make that assertion — a service test proves what `sendMessage` asked to broadcast, a component
+test proves what `MessageList` renders given an array.
+
+**It found a real bug within an hour of existing.** Attaching an image and pressing Enter instead of
+clicking send posted a text-only message and silently dropped the picture. The cause was in
+`components/button`: it never set `type`, so the HTML default of `submit` applied, and pressing Enter
+in a text field activates a form's *first* submit button — which in the composer is the preview's
+"Remove attached image". `Button` now defaults to `type="button"`, every real submit already said so
+explicitly, and the same trap was open in three other forms. Three unit tests now cover it too, so it
+does not need a browser to be caught twice.
+
+Known, deliberately deferred rather than missed:
+
+- **The suite is capped at 10 registrations per run.** `NODE_ENV` is left as `development` so the
+  browser meets the same rate limiters a user would, and every spec registers its own accounts. Past
+  the cap, tests fail on a 429 that from inside the browser looks like a form that just does not
+  submit. Documented at the constant; the escape hatch is `NODE_ENV: "test"`.
+- One browser (chromium). Cross-browser matters for a product and not yet for this.
+- `test:e2e` is not part of `verify`. It needs two servers and a browser download, and a definition
+  of done that takes a minute is one people stop running.
+
+---
 
 ---
 

@@ -1,6 +1,8 @@
 import type { Request } from "express";
 import rateLimit, { type RateLimitRequestHandler } from "express-rate-limit";
+import { RedisStore } from "rate-limit-redis";
 import { env } from "../config/env.js";
+import { redis } from "../lib/redis.js";
 
 /**
  * Rate limiters for the auth endpoints.
@@ -12,11 +14,25 @@ import { env } from "../config/env.js";
  * usable to enumerate a whole address list. `docs/conventions/backend.md` names
  * this as the mitigation; this file is it.
  *
- * Counters live in this process's memory. That is correct for a single server
- * and wrong the moment there are two: each would keep its own tally and the
- * effective limit would multiply. Moving to a shared store (Redis) is a
- * prerequisite for running more than one instance, not an optimisation.
+ * Counters live in Redis when `REDIS_URL` is set, and in this process's memory
+ * when it is not. The distinction is not cosmetic: in-memory counters are
+ * correct for a single server and wrong the moment there are two, because each
+ * keeps its own tally and the effective limit multiplies by the instance count.
+ * The production compose file always sets `REDIS_URL`; local development
+ * deliberately need not, so `npm run dev:server` starts with one container.
  */
+
+/**
+ * Prefix on every key, so a Redis shared with anything else — a cache, a queue,
+ * a second copy of this app in staging — cannot collide with these counters or
+ * be flushed along with them.
+ */
+const RATE_LIMIT_KEY_PREFIX = "chatty:rl:";
+
+// Captured out of the nullable module export so the narrowing survives into the
+// callback below — TypeScript cannot prove `redis` is still non-null by the time
+// `sendCommand` runs, and it is right not to try.
+const rateLimitClient = redis?.rateLimit ?? null;
 function createAuthLimiter(options: {
 	windowMs: number;
 	limit: number;
@@ -27,6 +43,14 @@ function createAuthLimiter(options: {
 		windowMs: options.windowMs,
 		limit: options.limit,
 		...(options.keyGenerator ? { keyGenerator: options.keyGenerator } : {}),
+		...(rateLimitClient
+			? {
+					store: new RedisStore({
+						prefix: RATE_LIMIT_KEY_PREFIX,
+						sendCommand: (...args: string[]) => rateLimitClient.sendCommand(args),
+					}),
+				}
+			: {}),
 		standardHeaders: "draft-7",
 		legacyHeaders: false,
 		// Tests run hundreds of registrations in seconds; a limiter would make

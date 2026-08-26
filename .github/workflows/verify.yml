@@ -1,0 +1,78 @@
+# `npm run verify` is the definition of done in CLAUDE.md. Until this file
+# existed it was also entirely optional — a command someone had to remember to
+# run. That is what CI is for here: not new checks, just making the existing one
+# unskippable.
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to the same branch makes the first run's answer irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    services:
+      # The server suite runs against a real Postgres rather than a mock — see
+      # docs/ARCHITECTURE.md. The credentials and database name are not
+      # configurable: tests/test-database-url.ts hard-codes the URL so that a
+      # misconfigured environment cannot point the suite at a real database and
+      # truncate it.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: chatty
+          POSTGRES_PASSWORD: chatty
+          POSTGRES_DB: chatty_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U chatty"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Not "22" alone: package.json's engines field requires >=22.22.2,
+          # because jsdom 30 does — and on an older 22 the web suite does not
+          # fail a test, it fails to start, inside undici.
+          node-version: "22.22.2"
+          cache: npm
+
+      - run: npm ci
+
+      # Prisma's postinstall usually does this, but it is skipped often enough
+      # (cache hits, --ignore-scripts elsewhere) that relying on it makes the
+      # typecheck fail with missing generated types and no obvious cause.
+      - name: Generate Prisma client
+        run: npx prisma generate --schema apps/server/prisma/schema.prisma
+
+      # REDIS_URL is deliberately absent: without it the app falls back to
+      # in-memory counters and rooms, which is exactly the single-instance
+      # configuration the suite is written against.
+      - name: Verify
+        run: npm run verify
+
+  # Item 13's images are not covered by `verify` — a Dockerfile can only be
+  # proved by building it. Kept a separate job so a broken image does not hide
+  # behind a green test suite, or the other way round.
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the server image
+        run: docker build -f apps/server/Dockerfile -t chatty-server:ci .
+
+      - name: Build the web image
+        run: docker build -f apps/web/Dockerfile -t chatty-web:ci .

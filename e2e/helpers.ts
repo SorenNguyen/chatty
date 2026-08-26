@@ -1,0 +1,87 @@
+import type { Page } from "@playwright/test";
+import { expect } from "@playwright/test";
+
+/**
+ * Everything here drives the real UI rather than the API.
+ *
+ * Seeding through HTTP would be faster and would also skip the sign-up form,
+ * the router redirect, and the socket handshake that follows a successful
+ * registration — three of the things most likely to break and least likely to
+ * be caught anywhere else.
+ */
+
+export interface TestUser {
+	displayName: string;
+	handle: string;
+	email: string;
+	password: string;
+}
+
+/**
+ * A user nobody else in this run will collide with.
+ *
+ * The handle column is unique and the database is truncated once per run, not
+ * per test, so two specs registering "minh" would fail the second one — for a
+ * reason that has nothing to do with what it was checking.
+ */
+export function makeUser(name: string): TestUser {
+	const suffix = Math.random().toString(36).slice(2, 8);
+
+	return {
+		displayName: name,
+		handle: `${name.toLowerCase()}_${suffix}`,
+		email: `${name.toLowerCase()}_${suffix}@chatty.test`,
+		password: "SuperSecret123",
+	};
+}
+
+/** Registers through the form and waits until the chat screen is up. */
+export async function register(page: Page, user: TestUser): Promise<void> {
+	await page.goto("/login");
+	await page.getByRole("button", { name: "No account? Create one" }).click();
+
+	await page.getByLabel("Display name").fill(user.displayName);
+	await page.getByLabel("Handle").fill(user.handle);
+	await page.getByLabel("Email").fill(user.email);
+	await page.getByLabel("Password").fill(user.password);
+	await page.getByRole("button", { name: "Create account" }).click();
+
+	// The people search is the one control that is on the chat screen
+	// unconditionally — the message composer is not, because it only renders
+	// once a conversation is selected.
+	await expect(page.getByLabel("Find someone")).toBeVisible({ timeout: 15_000 });
+}
+
+/**
+ * Waits for a conversation to appear in the sidebar and opens it.
+ *
+ * The wait is the interesting half. Nobody reloads: a conversation someone else
+ * just created reaches this browser over the socket as `conversation:new`, and
+ * if that event stopped firing this is the only test that would notice.
+ */
+export async function openConversationWith(page: Page, peer: TestUser): Promise<void> {
+	const row = page.getByRole("button", { name: new RegExp(peer.displayName) });
+	await expect(row).toBeVisible({ timeout: 15_000 });
+	await row.click();
+	await expect(page.getByLabel("Message")).toBeVisible();
+}
+
+/** Text inside the conversation itself, not the sidebar's last-message preview. */
+export function messages(page: Page) {
+	return page.getByRole("main");
+}
+
+/** Starts a direct conversation with someone, found by handle. */
+export async function startDirectChat(page: Page, peer: TestUser): Promise<void> {
+	await page.getByLabel("Find someone").fill(peer.handle);
+	await page.getByLabel("Find someone").press("Enter");
+
+	await page.getByRole("button", { name: `${peer.displayName} @${peer.handle}` }).click();
+	await page.getByRole("button", { name: `Chat with ${peer.displayName}` }).click();
+}
+
+/** Types into the composer and sends. */
+export async function sendMessage(page: Page, text: string): Promise<void> {
+	await page.getByLabel("Message").fill(text);
+	await page.getByLabel("Message").press("Enter");
+}

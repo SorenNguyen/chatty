@@ -73,6 +73,28 @@ Both kinds of token are signed with `JWT_SECRET`, so attachment tokens carry a `
 
 See [ADR 0007](adr/0007-signed-attachment-urls.md) for the alternatives that were rejected and what this costs.
 
+## Running more than one instance
+
+Two things in this app keep state outside the database, and both are per-process by default:
+rate-limit counters, and the Socket.io room registry. Neither is a problem until there is a second
+instance, at which point each keeps its own tally and a message broadcast by one reaches nobody
+connected to the other — including presence, which asks the adapter who is connected.
+
+Setting `REDIS_URL` moves both into Redis: `rate-limit-redis` for the counters,
+`@socket.io/redis-adapter` for the rooms. Everything else is already stateless — the JWT carries the
+session, uploads go to a directory both instances share, and presence is derived rather than stored,
+so there is no per-process state left to reconcile.
+
+It is optional rather than required so that `npm run verify` and a plain `npm run dev:server` need
+one container instead of two. `docker-compose.prod.yml` always sets it, runs two API instances to
+keep the single-instance assumptions from creeping back, and the server logs a warning at boot if it
+is missing in production.
+
+The uploads directory is the remaining shared-filesystem dependency: both instances mount one volume,
+because an avatar uploaded through one has to be servable by the other. Object storage is what
+replaces it, and [ADR 0004](adr/0004-avatar-storage.md) and [ADR 0007](adr/0007-signed-attachment-urls.md)
+are both written so that swap touches one module each.
+
 ## Shared types (`packages/shared-types`)
 
 Both `apps/server` and `apps/web` depend on this workspace package for the shapes that cross the wire (API request/response bodies, socket event payloads). When you change what a message looks like over the wire, you change it in one place and both sides get a compile error if they're out of sync — instead of finding out at runtime.

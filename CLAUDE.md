@@ -116,6 +116,12 @@ Two things `verify` does **not** do, and you are responsible for both:
    server tests passed — Express refuses to serve a path containing a dot segment, and the upload
    directory is `.data/uploads`. Nothing that tests a service can see that. Exercise the real API,
    then add the test that would have caught it.
+
+   `npm run test:e2e` now covers part of this — a real browser, a real server, a real database — and
+   it is not in `verify` on purpose, because it needs two servers and a browser download. Run it for
+   anything touching a flow rather than a function. It is not a substitute for exercising the change
+   by hand: it found that attaching an image and pressing Enter dropped the picture, and it found
+   that only because someone wrote a spec that pressed Enter.
 2. **Update what describes the behaviour.** See the section above. No linter reads prose.
 
 ## The audit is a report, not a verdict

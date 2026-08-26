@@ -32,6 +32,10 @@ npm run dev:server      # API + WebSocket server on :4000
 npm run dev:web         # React app on :5173 (separate terminal)
 ```
 
+Redis is optional in development and the server starts without it. Set `REDIS_URL` (and
+`docker compose up -d redis`) only to exercise the multi-instance path — see
+[docs/ROADMAP.md](docs/ROADMAP.md) phase 5 item 12.
+
 Then seed some accounts to sign in with:
 
 ```bash
@@ -59,6 +63,13 @@ npm run audit:rules     # greps apps/web/src against the conventions — a repor
 npm run format          # rewrites, rather than just reporting
 ```
 
+End-to-end tests are separate, because they need both servers and a browser:
+
+```bash
+npm run e2e:install     # once — downloads chromium
+npm run test:e2e        # starts the API and web on :4100/:5273 against chatty_e2e
+```
+
 `verify` runs the audit with `--gate`, so a hit fails the command. On its own `audit:rules` stays a
 report and always exits 0 — a heuristic that blocks work is a heuristic people learn to skip.
 
@@ -74,9 +85,13 @@ docs/
   ARCHITECTURE.md How the pieces fit together
   conventions/    How to write code here
   adr/            Architecture Decision Records
+e2e/              Playwright specs — a real browser against a real server
 scripts/
   audit-rules.sh  Convention checker (from evondev's Dev Rules, MIT)
 ```
+
+Deployment lives in `apps/*/Dockerfile`, `docker-compose.prod.yml` (two API instances, on purpose)
+and `.github/workflows/verify.yml`.
 
 ## Status
 
@@ -86,21 +101,22 @@ avatar, see unread badges, read receipts, typing indicators and who is online, m
 add or remove a member, rename it, leave it — edit your own profile or change your password, and
 send an image with or without a caption.
 
-Verified by 153 server tests (against a real Postgres) and 89 web tests, plus typecheck, lint, the
-conventions audit, a production build, and an end-to-end run of two live socket clients against the
-running API.
+Verified by 153 server tests (against a real Postgres), 92 web tests, and 5 Playwright specs driving
+a real browser against a real server — plus typecheck, lint, the conventions audit, and a production
+image build. CI runs all of it except the browser suite on every push.
 
 **[docs/ROADMAP.md](docs/ROADMAP.md) is the current source of truth for what is done and what is
-next.** Phases 1, 2 and 4 are complete. Phase 3 is done apart from password reset, which is stepped
-over rather than started: it is the only item that cannot be finished inside the repository, because
-it needs an email provider and a verified sending domain. Phase 5 — production readiness — is next.
+next.** Phases 1, 2, 4 and 5 are complete. Phase 3 is done apart from password reset, which is
+stepped over rather than started: it is the only item on the roadmap that cannot be finished inside
+the repository, because it needs an email provider and a verified sending domain.
 
 Largest known gaps:
 
-- **Rate-limit counters are per process.** Correct for one server, wrong for two — each keeps its own
-  tally. A shared store (Redis) is a prerequisite for running more than one instance.
-- **Presence and unread counts assume one process too.** Presence asks the Socket.io adapter who is
-  connected, which only sees this instance until a Redis adapter is added.
+- **Running more than one instance requires `REDIS_URL`, and nothing enforces it.** With it, rate-limit
+  counters and Socket.io rooms are shared and two instances behave as one system; without it both
+  fall back to process memory and a second instance silently keeps its own tally and loses messages
+  broadcast by the first. `docker-compose.prod.yml` always sets it and the server warns loudly in
+  production when it is missing, but a hand-rolled deployment can still get this wrong.
 - No message edit/delete, no message search.
 - **No admin role for groups** — any participant can add, remove, or rename. See
   [ADR 0006](docs/adr/0006-flat-group-permissions.md).
@@ -112,4 +128,7 @@ Largest known gaps:
   with a one-hour life, but bearer proof for that hour — see
   [ADR 0007](docs/adr/0007-signed-attachment-urls.md). One image per message; no lightbox, no upload
   progress, and files are not cleaned up when a message is deleted.
-- No deployment setup (Dockerfile, CI).
+- **No real deployment.** There are Dockerfiles, a two-instance compose file and CI, but no TLS, no
+  reverse proxy or load balancer, no object storage (uploads are a shared volume), and no hosting.
+- Playwright covers one browser, and `test:e2e` is not part of `verify` — it needs two servers and a
+  browser download.
