@@ -1,5 +1,11 @@
 import type { Request, Response } from "express";
-import { changePasswordSchema, loginSchema, registerSchema } from "./auth.schema.js";
+import {
+	changePasswordSchema,
+	loginSchema,
+	registerSchema,
+	requestPasswordResetSchema,
+	resetPasswordSchema,
+} from "./auth.schema.js";
 import * as authService from "./auth.service.js";
 
 /**
@@ -22,9 +28,27 @@ export async function loginController(req: Request, res: Response): Promise<void
 
 export async function changePasswordController(req: Request, res: Response): Promise<void> {
 	const input = changePasswordSchema.parse(req.body);
-	await authService.changePassword(req.userId!, input);
+	const result = await authService.changePassword(req.userId!, input);
 
-	// 204: the password changed and there is nothing to hand back. See the note
-	// on session lifetime in auth.service.ts#changePassword for why not a token.
+	// A replacement token, because the request that changed the password also
+	// invalidated the one it arrived with.
+	res.status(200).json(result);
+}
+
+export async function requestPasswordResetController(req: Request, res: Response): Promise<void> {
+	const input = requestPasswordResetSchema.parse(req.body);
+	await authService.requestPasswordReset(input);
+
+	// 204 whether or not that address has an account. A 404 for unknown emails
+	// would turn this endpoint into a membership check.
+	res.status(204).send();
+}
+
+export async function resetPasswordController(req: Request, res: Response): Promise<void> {
+	const input = resetPasswordSchema.parse(req.body);
+	await authService.resetPassword(input);
+
+	// No token: reading the mailbox proved the address, not the session. They
+	// sign in with the new password like anyone else.
 	res.status(204).send();
 }

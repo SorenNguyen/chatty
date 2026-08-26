@@ -5,12 +5,12 @@ import type {
 	MessageDTO,
 	ParticipantDTO,
 } from "@chatty/shared-types";
-import { Prisma } from "@prisma/client";
-import { buildAvatarUrl } from "../../lib/avatar-storage.js";
-import { ConflictError, NotFoundError, ValidationError } from "../../lib/errors.js";
+import { Prisma, type ConversationRole as DbConversationRole } from "@prisma/client";
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../../lib/errors.js";
 import { prisma } from "../../lib/prisma.js";
 import { getIO, userRoom } from "../../lib/socket-bus.js";
 import { messageSelect, toMessageDTO, type MessageRow } from "../messages/messages.mapper.js";
+import { toUserDTO, userSelect, type UserRow } from "../users/users.mapper.js";
 import type {
 	AddParticipantInput,
 	CreateConversationInput,
@@ -23,15 +23,16 @@ const conversationInclude = {
 	participants: {
 		select: {
 			lastReadMessageId: true,
-			user: { select: { id: true, handle: true, displayName: true, avatarUpdatedAt: true, createdAt: true } },
+			role: true,
+			user: { select: userSelect },
 		},
 	},
 	messages: {
 		take: 1,
-		orderBy: { createdAt: "desc" },
+		orderBy: [{ createdAt: "desc" }, { id: "desc" }],
 		select: messageSelect,
 	},
-} as const;
+} satisfies Prisma.ConversationInclude;
 
 interface ConversationRow {
 	id: string;
@@ -40,19 +41,17 @@ interface ConversationRow {
 	updatedAt: Date;
 	participants: {
 		lastReadMessageId: string | null;
-		user: { id: string; handle: string; displayName: string; avatarUpdatedAt: Date | null; createdAt: Date };
+		role: DbConversationRole;
+		user: UserRow;
 	}[];
 	messages: MessageRow[];
 }
 
 /** Shared by every mapper below, so a participant looks the same everywhere one appears. */
 function mapParticipants(rows: ConversationRow["participants"]): ParticipantDTO[] {
-	return rows.map(({ user, lastReadMessageId }) => ({
-		id: user.id,
-		handle: user.handle,
-		displayName: user.displayName,
-		avatarUrl: buildAvatarUrl(user.id, user.avatarUpdatedAt),
-		createdAt: user.createdAt.toISOString(),
+	return rows.map(({ user, lastReadMessageId, role }) => ({
+		...toUserDTO(user),
+		role: role === "OWNER" ? "owner" : "member",
 		lastReadMessageId,
 	}));
 }
@@ -111,6 +110,11 @@ interface UnreadCountRow {
  * A conversation with nothing unread produces no row at all (there is nothing
  * to group), which is why callers default a miss to zero rather than trusting
  * the map to be complete.
+ *
+ * System messages are never counted, and that falls out of the SQL rather than
+ * being special-cased: their `authorId` is null, and `null <> $userId` is null,
+ * not true. Deliberate — a badge on the sidebar means "someone said something
+ * to you", and "Chi left the group" is not that.
  */
 async function countUnreadByConversation(userId: string, conversationIds: string[]): Promise<Map<string, number>> {
 	if (conversationIds.length === 0) return new Map();
@@ -141,8 +145,14 @@ async function countUnreadByConversation(userId: string, conversationIds: string
  * NotFoundError, not UnauthorizedError: "you may not see this" confirms the
  * conversation exists, which lets an outsider probe for valid ids.
  */
-export async function assertParticipant(userId: string, conversationId: string): Promise<void> {
-	const participant = await prisma.conversationParticipant.findUnique({
+type ParticipantReader = Pick<Prisma.TransactionClient, "conversationParticipant">;
+
+export async function assertParticipant(
+	userId: string,
+	conversationId: string,
+	database: ParticipantReader = prisma,
+): Promise<void> {
+	const participant = await database.conversationParticipant.findUnique({
 		where: { conversationId_userId: { conversationId, userId } },
 		select: { id: true },
 	});
@@ -292,7 +302,14 @@ export async function createConversation(
 			isGroup,
 			name: isGroup ? (input.name ?? null) : null,
 			participants: {
-				create: participantIds.map((userId) => ({ userId })),
+				// The creator of a group owns it. In a direct conversation everyone
+				// stays a member: the role only decides who may act on *other*
+				// people, and there is nobody to administer between two — see
+				// ADR 0008.
+				create: participantIds.map((userId) => ({
+					userId,
+					...(isGroup && userId === currentUserId ? { role: "OWNER" as const } : {}),
+				})),
 			},
 		},
 		include: conversationInclude,
@@ -401,7 +418,7 @@ export async function listContactIds(userId: string): Promise<string[]> {
 }
 
 /**
- * Confirms a conversation is a group, or throws.
+ * Serialises a group mutation, then confirms its actor and target kind.
  *
  * Shared by every group-only operation below (add, remove, rename). A direct
  * conversation always has exactly its original two participants — the schema
@@ -409,23 +426,166 @@ export async function listContactIds(userId: string): Promise<string[]> {
  * by construction: deriving it from a headcount instead would let a direct
  * chat that gained a third member silently become a group.
  *
- * Callers run `assertParticipant` first, which already confirms the row
- * exists — so a miss here can only mean `isGroup` is false, never "not found".
+ * Membership is checked only after the lock, so a concurrent leave cannot pass
+ * authorization against a row that disappears before the write.
  */
-async function assertGroup(conversationId: string): Promise<void> {
-	const conversation = await prisma.conversation.findUnique({
-		where: { id: conversationId },
-		select: { isGroup: true },
-	});
+async function prepareGroupMutation(
+	transaction: Prisma.TransactionClient,
+	userId: string,
+	conversationId: string,
+): Promise<void> {
+	// Every membership or name mutation takes the same row lock first. It makes
+	// two requests for one group happen in a stable order — most importantly an
+	// owner leaving at the same time as their likely successor. Without it, one
+	// request can promote a participant the other request has just removed.
+	const conversations = await transaction.$queryRaw<{ isGroup: boolean }[]>`
+		SELECT "isGroup"
+		FROM "Conversation"
+		WHERE id = ${conversationId}
+		FOR UPDATE
+	`;
 
-	if (!conversation?.isGroup) {
+	await assertParticipant(userId, conversationId, transaction);
+
+	if (!conversations[0]?.isGroup) {
 		throw new ValidationError("This operation is only available in a group conversation");
 	}
 }
 
+/**
+ * Throws unless `userId` owns `conversationId`.
+ *
+ * Guards the two operations that act on *other* people — renaming the group
+ * everyone sees, and removing someone from it. Leaving is deliberately not one
+ * of them: it acts on yourself, and a group whose owner could trap people in it
+ * would be a worse answer than an ownerless one.
+ *
+ * ForbiddenError, not NotFoundError: unlike `assertParticipant`, the caller is
+ * already known to be in this conversation, so there is nothing left to hide by
+ * pretending it does not exist — and a 404 would leave the UI unable to explain
+ * why the button did nothing.
+ */
+async function assertOwner(
+	transaction: Prisma.TransactionClient,
+	userId: string,
+	conversationId: string,
+): Promise<void> {
+	const participant = await transaction.conversationParticipant.findUnique({
+		where: { conversationId_userId: { conversationId, userId } },
+		select: { role: true },
+	});
+
+	if (participant?.role !== "OWNER") throw new ForbiddenError("Only the group owner can do this");
+}
+
+/**
+ * The display names behind a list of user ids, in the order they were asked for.
+ *
+ * One query for however many names a sentence needs, and positional so the
+ * caller can destructure it — `const [actorName, targetName] = ...` reads as
+ * the sentence it is about to build.
+ *
+ * A missing id falls back to "Someone" rather than throwing. Nothing deletes
+ * users today, so this is unreachable; the day something does, a group log that
+ * says "Someone added Binh" is a better outcome than an add that fails at the
+ * last step with the row already written.
+ */
+async function displayNamesOf(transaction: Prisma.TransactionClient, userIds: string[]): Promise<string[]> {
+	const users = await transaction.user.findMany({
+		where: { id: { in: userIds } },
+		select: { id: true, displayName: true },
+	});
+	const byId = new Map(users.map((user) => [user.id, user.displayName]));
+
+	return userIds.map((userId) => byId.get(userId) ?? "Someone");
+}
+
+/**
+ * Writes one "An added Binh" line inside the caller's transaction.
+ *
+ * A real Message row, not a client-side annotation on `conversation:updated`:
+ * it has to survive a reload, sit in order among the messages around it, and
+ * still be there when someone scrolls back a week. The sentence is rendered
+ * here, once, and stored — see ADR 0009 for why it is a snapshot of the names
+ * rather than ids resolved at read time.
+ *
+ * Written here rather than by calling `messages.service`, which is
+ * where a message-sending function would otherwise belong: that module already
+ * imports `assertParticipant` from this one, and importing it back would close
+ * the cycle `messages.mapper` exists to keep open.
+ */
+async function createSystemMessage(
+	transaction: Prisma.TransactionClient,
+	conversationId: string,
+	content: string,
+): Promise<MessageRow> {
+	const message = await transaction.message.create({
+		data: { conversationId, kind: "SYSTEM", content },
+		select: messageSelect,
+	});
+
+	// Same transaction, and the same reason `sendMessage` uses one: a
+	// conversation whose `updatedAt` disagrees with its newest message sorts
+	// wrongly in every sidebar from then on.
+	await transaction.conversation.update({
+		where: { id: conversationId },
+		data: { updatedAt: new Date() },
+		select: { id: true },
+	});
+
+	return message;
+}
+
+/** Socket effects happen only after the database transaction has committed. */
+function announceSystemMessage(message: MessageRow): void {
+	getIO().to(message.conversationId).emit("message:new", toMessageDTO(message));
+}
+
+/**
+ * Hands a group to its longest-standing remaining member, and says so in the log.
+ *
+ * Called when an owner leaves. Without it the group would be left with nobody
+ * able to rename it or remove anyone, and no path in the app that could ever
+ * grant the role again — every group needs an owner for the same reason it
+ * needed one on day one.
+ *
+ * Oldest membership wins, ties broken by id, which is the same ordering the
+ * backfill in the role migration used. Arbitrary but stable: any rule picks
+ * someone who did not ask for it, and this one at least picks the person who
+ * has been there longest.
+ */
+async function transferOwnership(
+	transaction: Prisma.TransactionClient,
+	conversationId: string,
+): Promise<MessageRow | null> {
+	const successor = await transaction.conversationParticipant.findFirst({
+		where: { conversationId },
+		orderBy: [{ joinedAt: "asc" }, { id: "asc" }],
+		select: { id: true, user: { select: { displayName: true } } },
+	});
+
+	// The last person out of a group leaves nobody to promote. Allowed: nothing
+	// in this app deletes a conversation, and an empty one is simply unreachable.
+	if (!successor) return null;
+
+	await transaction.conversationParticipant.update({
+		where: { id: successor.id },
+		data: { role: "OWNER" },
+		select: { id: true },
+	});
+
+	return createSystemMessage(transaction, conversationId, `${successor.user.displayName} is now the group owner`);
+}
+
 /** Re-reads a conversation after a write, for the two shapes callers below need from it. */
-async function reloadConversation(conversationId: string): Promise<ConversationRow> {
-	return prisma.conversation.findUniqueOrThrow({ where: { id: conversationId }, include: conversationInclude });
+async function reloadConversation(
+	transaction: Prisma.TransactionClient,
+	conversationId: string,
+): Promise<ConversationRow> {
+	return transaction.conversation.findUniqueOrThrow({
+		where: { id: conversationId },
+		include: conversationInclude,
+	});
 }
 
 /**
@@ -439,32 +599,43 @@ async function reloadConversation(conversationId: string): Promise<ConversationR
  * fired when a conversation was first created, so someone added to an
  * existing group never saw it appear in their sidebar until they reloaded.
  * Everyone already in the room gets `conversation:updated`.
+ *
+ * **Any member may do this, owner or not** — unlike renaming and removing.
+ * Inviting is how a group grows, gating it behind one person makes them a
+ * bottleneck for the thing groups exist to do, and the worst case (an unwanted
+ * arrival) is one the owner can undo. See ADR 0008.
  */
 export async function addParticipant(
 	currentUserId: string,
 	conversationId: string,
 	input: AddParticipantInput,
 ): Promise<ConversationDTO> {
-	await assertParticipant(currentUserId, conversationId);
-	await assertGroup(conversationId);
+	const { systemMessage, updated } = await prisma.$transaction(async (transaction) => {
+		await prepareGroupMutation(transaction, currentUserId, conversationId);
 
-	const targetUser = await prisma.user.findUnique({ where: { id: input.userId }, select: { id: true } });
-	if (!targetUser) throw new NotFoundError("User not found");
+		const targetUser = await transaction.user.findUnique({ where: { id: input.userId }, select: { id: true } });
+		if (!targetUser) throw new NotFoundError("User not found");
 
-	const alreadyIn = await prisma.conversationParticipant.findUnique({
-		where: { conversationId_userId: { conversationId, userId: input.userId } },
-		select: { id: true },
+		const alreadyIn = await transaction.conversationParticipant.findUnique({
+			where: { conversationId_userId: { conversationId, userId: input.userId } },
+			select: { id: true },
+		});
+		if (alreadyIn) throw new ConflictError("Already a participant of this conversation");
+
+		await transaction.conversationParticipant.create({ data: { conversationId, userId: input.userId } });
+
+		const [actorName, targetName] = await displayNamesOf(transaction, [currentUserId, input.userId]);
+		const message = await createSystemMessage(transaction, conversationId, `${actorName} added ${targetName}`);
+		const conversation = await reloadConversation(transaction, conversationId);
+
+		return { systemMessage: message, updated: conversation };
 	});
-	if (alreadyIn) throw new ConflictError("Already a participant of this conversation");
 
-	await prisma.conversationParticipant.create({ data: { conversationId, userId: input.userId } });
-
-	// Join first, announce second — same ordering as creating a conversation,
-	// and for the same reason: told before their socket is in the room, the
-	// new member could send a message and never see their own broadcast return.
+	// Database state is committed before socket state changes. Join before any
+	// announcement so the new member receives the same message:new event as the
+	// people who were already in the room.
 	await subscribeParticipantsToRoom([input.userId], conversationId);
-
-	const updated = await reloadConversation(conversationId);
+	announceSystemMessage(systemMessage);
 
 	const newMemberUnread = await countUnreadByConversation(input.userId, [conversationId]);
 	announceNewConversation([input.userId], toConversationDTO(updated, newMemberUnread.get(conversationId) ?? 0));
@@ -488,58 +659,102 @@ export async function addParticipant(
  * The group is allowed to end up with zero participants. Nothing deletes a
  * conversation in this app — an empty group just becomes unreachable, the
  * same way a direct conversation is never destroyed either.
+ *
+ * **Removing someone else is owner-only; removing yourself is always allowed.**
+ * That asymmetry is the whole of what the role does here — see ADR 0008 — and
+ * an owner who walks out hands the group to whoever has been in it longest
+ * rather than leaving it with nobody able to administer it.
  */
 export async function removeParticipant(
 	currentUserId: string,
 	conversationId: string,
 	targetUserId: string,
 ): Promise<void> {
-	await assertParticipant(currentUserId, conversationId);
-	await assertGroup(conversationId);
+	const isLeaving = targetUserId === currentUserId;
+	const { systemMessages, remaining } = await prisma.$transaction(async (transaction) => {
+		await prepareGroupMutation(transaction, currentUserId, conversationId);
+		if (!isLeaving) await assertOwner(transaction, currentUserId, conversationId);
 
-	const target = await prisma.conversationParticipant.findUnique({
-		where: { conversationId_userId: { conversationId, userId: targetUserId } },
-		select: { id: true },
+		const target = await transaction.conversationParticipant.findUnique({
+			where: { conversationId_userId: { conversationId, userId: targetUserId } },
+			select: { id: true, role: true, user: { select: { displayName: true } } },
+		});
+		if (!target) throw new NotFoundError("Not a participant of this conversation");
+
+		await transaction.conversationParticipant.delete({
+			where: { conversationId_userId: { conversationId, userId: targetUserId } },
+		});
+
+		const messages: MessageRow[] = [];
+		if (isLeaving) {
+			messages.push(
+				await createSystemMessage(transaction, conversationId, `${target.user.displayName} left the group`),
+			);
+		} else {
+			const [actorName] = await displayNamesOf(transaction, [currentUserId]);
+			messages.push(
+				await createSystemMessage(
+					transaction,
+					conversationId,
+					`${actorName} removed ${target.user.displayName}`,
+				),
+			);
+		}
+
+		// After the departure line, so the persisted log reads in the order the
+		// transition happened. Both writes still commit or roll back together.
+		if (target.role === "OWNER") {
+			const ownershipMessage = await transferOwnership(transaction, conversationId);
+			if (ownershipMessage) messages.push(ownershipMessage);
+		}
+
+		return {
+			systemMessages: messages,
+			remaining: await reloadConversation(transaction, conversationId),
+		};
 	});
-	if (!target) throw new NotFoundError("Not a participant of this conversation");
 
-	await prisma.conversationParticipant.delete({
-		where: { conversationId_userId: { conversationId, userId: targetUserId } },
-	});
-
-	// Evict before announcing, not after: for the instant between the two
-	// calls the departing socket would still be in the room and would receive
-	// the very broadcast telling everyone else they are gone.
+	// Socket effects follow the commit. Eviction still comes before broadcasts,
+	// so the removed user cannot receive the system lines about their departure.
 	await evictParticipantFromRoom(targetUserId, conversationId);
 	announceParticipantLeft(targetUserId, conversationId);
-
-	const remaining = await reloadConversation(conversationId);
+	for (const message of systemMessages) announceSystemMessage(message);
 	announceConversationUpdated(conversationId, toConversationUpdatedEvent(remaining));
 }
 
 /**
- * Renames a group conversation. Any current participant may do this — see
- * ADR 0006 for why the app has no separate admin role.
+ * Renames a group conversation. **Owner only** — the name is the one piece of
+ * a group everybody sees, and it is what a sidebar row is recognised by. See
+ * ADR 0008.
  */
 export async function renameConversation(
 	currentUserId: string,
 	conversationId: string,
 	input: RenameConversationInput,
 ): Promise<ConversationDTO> {
-	await assertParticipant(currentUserId, conversationId);
-	await assertGroup(conversationId);
+	const { systemMessage, updated } = await prisma.$transaction(async (transaction) => {
+		await prepareGroupMutation(transaction, currentUserId, conversationId);
+		await assertOwner(transaction, currentUserId, conversationId);
 
-	// `@updatedAt` bumps `Conversation.updatedAt` on this write, which moves the
-	// conversation to the top of everyone's sidebar (sorted by that column).
-	// Left as-is rather than overridden: a rename is exactly the kind of change
-	// someone should notice, the same way sending a message bumps it.
-	await prisma.conversation.update({
-		where: { id: conversationId },
-		data: { name: input.name },
-		select: { id: true },
+		// `@updatedAt` bumps `Conversation.updatedAt` on this write, which moves the
+		// conversation to the top of everyone's sidebar (sorted by that column).
+		await transaction.conversation.update({
+			where: { id: conversationId },
+			data: { name: input.name },
+			select: { id: true },
+		});
+
+		const [actorName] = await displayNamesOf(transaction, [currentUserId]);
+		const message = await createSystemMessage(
+			transaction,
+			conversationId,
+			`${actorName} renamed the group to "${input.name}"`,
+		);
+
+		return { systemMessage: message, updated: await reloadConversation(transaction, conversationId) };
 	});
 
-	const updated = await reloadConversation(conversationId);
+	announceSystemMessage(systemMessage);
 	announceConversationUpdated(conversationId, toConversationUpdatedEvent(updated));
 
 	const actorUnread = await countUnreadByConversation(currentUserId, [conversationId]);

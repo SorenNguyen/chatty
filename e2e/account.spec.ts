@@ -41,3 +41,57 @@ test.describe("account", () => {
 		await expect(page.getByLabel("Find someone")).toBeVisible({ timeout: 15_000 });
 	});
 });
+
+test.describe("forgotten password", () => {
+	test("says the same thing whether or not the address has an account", async ({ page }) => {
+		// The assertion worth having a browser for. The server answers 204 either
+		// way; what a user actually sees is this screen, and if it differed between
+		// a registered address and an unregistered one the endpoint's whole
+		// enumeration defence would be undone in the UI.
+		const user = makeUser("Fay");
+		await register(page, user);
+		await page.getByLabel("Sign out").click();
+
+		await page.getByRole("link", { name: "Forgot your password?" }).click();
+		await page.getByLabel("Email").fill(user.email);
+		await page.getByRole("button", { name: "Send reset link" }).click();
+		const forRegistered = await page.getByText(/if an account exists/i).textContent();
+
+		await page.goto("/forgot-password");
+		await page.getByLabel("Email").fill("definitely-nobody@chatty.test");
+		await page.getByRole("button", { name: "Send reset link" }).click();
+		const forUnknown = await page.getByText(/if an account exists/i).textContent();
+
+		// Same sentence, bar the address each one echoes back.
+		expect(forRegistered?.replace(user.email, "")).toBe(forUnknown?.replace("definitely-nobody@chatty.test", ""));
+	});
+
+	test("refuses a made-up reset link", async ({ page }) => {
+		await page.goto("/reset-password?token=not-a-real-token");
+
+		await page.getByLabel("New password", { exact: true }).fill("BrandNewSecret456");
+		await page.getByLabel("Confirm new password").fill("BrandNewSecret456");
+		await page.getByRole("button", { name: "Set new password" }).click();
+
+		await expect(page.getByRole("alert")).toContainText(/invalid or has expired/i);
+	});
+
+	test("has nothing to submit when the link has no token at all", async ({ page }) => {
+		await page.goto("/reset-password");
+
+		await expect(page.getByText(/missing its token/i)).toBeVisible();
+		await expect(page.getByRole("button", { name: "Set new password" })).toHaveCount(0);
+	});
+});
+
+/**
+ * The one step these specs deliberately do not cover: redeeming a real link.
+ *
+ * The token is mailed and only its SHA-256 is stored, so there is no way to read
+ * a usable one out of the database — which is the property that makes the design
+ * worth having, and the reason a browser cannot walk the last step. The
+ * redemption path (single use, expiry, session invalidation, identical errors for
+ * spent/expired/imaginary) is covered by twelve tests in
+ * apps/server/tests/password-reset.service.test.ts, which can read the mail
+ * because it is the process that sent it.
+ */

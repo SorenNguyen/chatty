@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/button";
 import { TextField } from "@/components/text-field";
 import { useAuth } from "@/hooks/use-auth";
@@ -60,6 +61,10 @@ export function LoginForm() {
 			<Button type="submit" disabled={isSubmitting}>
 				{isSubmitting ? "Signing in…" : "Sign in"}
 			</Button>
+
+			<Link to="/forgot-password" className="text-center text-sm font-medium text-slate-500 hover:text-slate-800">
+				Forgot your password?
+			</Link>
 		</form>
 	);
 }

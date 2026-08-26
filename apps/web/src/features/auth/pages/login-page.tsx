@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { MessageCircle } from "lucide-react";
 import { Button } from "@/components/button";
-import { LoginForm } from "../components/login-form";
-import { RegisterForm } from "../components/register-form";
+import { LoginForm, RegisterForm } from "../components";
 
 export function LoginPage() {
 	const [mode, setMode] = useState<"login" | "register">("login");

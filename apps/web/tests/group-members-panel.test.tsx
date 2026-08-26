@@ -18,7 +18,10 @@ vi.mock("@/api/client", () => ({
 	},
 }));
 
-const minh = makeParticipant("minh", "Minh");
+// Minh owns the group in these fixtures, because the owner is who most of this
+// panel is for: the rename field and the remove buttons are theirs alone. A
+// member's view of the same panel gets its own test at the bottom.
+const minh = makeParticipant("minh", "Minh", null, "owner");
 const an = makeParticipant("an", "An");
 const binh = makeParticipant("binh", "Binh");
 
@@ -136,5 +139,50 @@ describe("GroupMembersPanel", () => {
 		await user.click(screen.getByRole("button", { name: "Close group settings" }));
 
 		expect(onClose).toHaveBeenCalledOnce();
+	});
+});
+
+describe("GroupMembersPanel, seen by a member who does not own the group", () => {
+	it("offers no way to remove anyone", () => {
+		render(<GroupMembersPanel conversation={group} currentUserId="an" onClose={vi.fn()} />);
+
+		expect(screen.queryByRole("button", { name: "Remove Binh from the group" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Remove Minh from the group" })).not.toBeInTheDocument();
+	});
+
+	it("locks the name field and says who can change it", () => {
+		// A disabled control with no explanation reads as a bug rather than a rule.
+		render(<GroupMembersPanel conversation={group} currentUserId="an" onClose={vi.fn()} />);
+
+		expect(screen.getByLabelText("Group name")).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+		expect(screen.getByText(/only the group owner can rename/i)).toBeInTheDocument();
+	});
+
+	it("still lets them invite someone", async () => {
+		// Adding is deliberately not owner-only — see ADR 0008.
+		searchUsers.mockResolvedValue([makeUser("chi", "Chi")]);
+		const user = userEvent.setup();
+		render(<GroupMembersPanel conversation={group} currentUserId="an" onClose={vi.fn()} />);
+
+		await user.type(screen.getByLabelText("Add a member"), "chi{Enter}");
+		await user.click(await screen.findByRole("button", { name: "Add Chi @chi" }));
+
+		expect(addParticipant).toHaveBeenCalledWith("group-1", "chi");
+	});
+
+	it("still lets them leave", async () => {
+		const user = userEvent.setup();
+		render(<GroupMembersPanel conversation={group} currentUserId="an" onClose={vi.fn()} />);
+
+		await user.click(screen.getByRole("button", { name: "Leave group" }));
+
+		expect(removeParticipant).toHaveBeenCalledWith("group-1", "an");
+	});
+
+	it("marks the owner's row so it is clear who to ask", () => {
+		render(<GroupMembersPanel conversation={group} currentUserId="an" onClose={vi.fn()} />);
+
+		expect(screen.getByText("Owner")).toBeInTheDocument();
 	});
 });

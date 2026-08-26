@@ -9,6 +9,15 @@ interface MessageListProps {
 	messages: MessageDTO[];
 	currentUserId: string;
 	participants: ParticipantDTO[];
+	/**
+	 * Whether to name the author above each incoming bubble.
+	 *
+	 * Passed in rather than derived from `participants.length`, which is what it
+	 * used to be: a three-person group that loses a member still needs the names
+	 * — the messages of the person who left are exactly the ones that become
+	 * unattributable without them.
+	 */
+	isGroup: boolean;
 	hasMoreOlder: boolean;
 	isLoadingOlder: boolean;
 	onLoadOlder: () => void;
@@ -18,6 +27,7 @@ export function MessageList({
 	messages,
 	currentUserId,
 	participants,
+	isGroup,
 	hasMoreOlder,
 	isLoadingOlder,
 	onLoadOlder,
@@ -26,7 +36,6 @@ export function MessageList({
 	// reads or writes scroll position sits in one component.
 	const { containerRef, handleScroll } = useMessageScroll({ messages, hasMoreOlder, isLoadingOlder, onLoadOlder });
 	const readReceipt = getReadReceipt(messages, participants, currentUserId);
-	const isGroup = participants.length > 2;
 
 	return (
 		<div ref={containerRef} onScroll={handleScroll} className="h-full overflow-y-auto">
@@ -41,12 +50,25 @@ export function MessageList({
 			) : (
 				<div className="flex flex-col gap-2 p-4">
 					{messages.map((message, index) => {
-						const isMine = message.authorId === currentUserId;
-						const author = participants.find((participant) => participant.id === message.authorId);
+						// "An added Binh", "Chi left the group". No author, no bubble, no
+						// side — it is about the conversation rather than from anyone in
+						// it, so it reads centred and out of the two columns.
+						if (message.kind === "system") {
+							return (
+								<p key={message.id} className="py-1 text-center text-xs text-slate-500">
+									{message.content}
+								</p>
+							);
+						}
+
+						const author = message.author;
+						const isMine = author?.id === currentUserId;
 						// One avatar per run of messages from the same person. Repeating it
 						// on every line turns a paragraph typed in three bursts into three
-						// faces stacked down the margin.
-						const isFirstOfRun = messages[index - 1]?.authorId !== message.authorId;
+						// faces stacked down the margin. A system line between two of
+						// someone's messages breaks the run, which is what makes the
+						// avatar reappear underneath it rather than leaving a bare bubble.
+						const isFirstOfRun = messages[index - 1]?.author?.id !== author?.id;
 
 						return (
 							<div key={message.id} className={cn("flex flex-col", isMine ? "items-end" : "items-start")}>

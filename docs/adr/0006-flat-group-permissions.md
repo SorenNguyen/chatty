@@ -2,6 +2,14 @@
 
 ## Status
 
+**Superseded in part by [ADR 0008](0008-group-owner-role.md)**, which gives every group an owner and
+makes renaming and removing other people theirs alone. Kept rather than rewritten: the reasoning that
+follows is why the app shipped without roles for a phase, and ADR 0008 answers it point by point.
+
+What ADR 0008 does **not** change, and what is therefore still current here: leaving and being
+removed are one operation, adding a member is open to any participant, and a group is allowed to end
+up with zero participants.
+
 Accepted
 
 ## Context

@@ -271,6 +271,7 @@ export function ChatPage() {
 								messages={messages}
 								currentUserId={currentUser.id}
 								participants={selectedConversation.participants}
+								isGroup={selectedConversation.isGroup}
 								hasMoreOlder={hasMoreOlder}
 								isLoadingOlder={isLoadingOlder}
 								onLoadOlder={loadOlderMessages}

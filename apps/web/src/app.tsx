@@ -1,6 +1,8 @@
 import { useEffect } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { ForgotPasswordPage } from "@/features/auth/pages/forgot-password-page";
 import { LoginPage } from "@/features/auth/pages/login-page";
+import { ResetPasswordPage } from "@/features/auth/pages/reset-password-page";
 import { ChatPage } from "@/features/chat/pages/chat-page";
 import { ProfilePage } from "@/features/profile/pages/profile-page";
 import { useAuth } from "@/hooks/use-auth";
@@ -28,6 +30,11 @@ export function App() {
 		<BrowserRouter>
 			<Routes>
 				<Route path="/login" element={currentUser ? <Navigate to="/chat" replace /> : <LoginPage />} />
+				{/* Reachable while signed in as well as out. Someone who is still
+				    logged in on this device may well be the person who asked for the
+				    link, and bouncing them to /chat would strand the email. */}
+				<Route path="/forgot-password" element={<ForgotPasswordPage />} />
+				<Route path="/reset-password" element={<ResetPasswordPage />} />
 				<Route path="/chat" element={currentUser ? <ChatPage /> : <Navigate to="/login" replace />} />
 				<Route path="/profile" element={currentUser ? <ProfilePage /> : <Navigate to="/login" replace />} />
 				<Route path="*" element={<Navigate to={currentUser ? "/chat" : "/login"} replace />} />

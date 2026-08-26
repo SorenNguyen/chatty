@@ -1,7 +1,8 @@
 import type { CurrentUserDTO, UserDTO } from "@chatty/shared-types";
-import { buildAvatarUrl, deleteAvatar, findAvatarPath, saveAvatar } from "../../lib/avatar-storage.js";
+import { deleteAvatar, findAvatarPath, saveAvatar } from "../../lib/avatar-storage.js";
 import { ConflictError, NotFoundError } from "../../lib/errors.js";
 import { prisma } from "../../lib/prisma.js";
+import { toUserDTO, userSelect } from "./users.mapper.js";
 import type { SearchUsersQuery, UpdateProfileInput } from "./users.schema.js";
 
 /**
@@ -16,21 +17,17 @@ export async function getUserById(userId: string): Promise<CurrentUserDTO> {
 	const user = await prisma.user.findUnique({
 		where: { id: userId },
 		// `passwordHash` is never selected — see docs/conventions/backend.md.
-		select: { id: true, email: true, handle: true, displayName: true, avatarUpdatedAt: true, createdAt: true },
+		// `email` is added on top of the shared projection rather than being part
+		// of it: this is the one response allowed to carry it, and keeping it out
+		// of `userSelect` is what stops it riding along on somebody else's profile.
+		select: { ...userSelect, email: true },
 	});
 
 	// findUnique + explicit throw, not findUniqueOrThrow: the latter raises a
 	// Prisma error the error middleware would turn into a 500, not a 404.
 	if (!user) throw new NotFoundError("User not found");
 
-	return {
-		id: user.id,
-		email: user.email,
-		handle: user.handle,
-		displayName: user.displayName,
-		avatarUrl: buildAvatarUrl(user.id, user.avatarUpdatedAt),
-		createdAt: user.createdAt.toISOString(),
-	};
+	return { ...toUserDTO(user), email: user.email };
 }
 
 /**
@@ -96,16 +93,10 @@ export async function searchUsers(currentUserId: string, query: SearchUsersQuery
 		},
 		orderBy: { handle: "asc" },
 		take: query.limit,
-		select: { id: true, handle: true, displayName: true, avatarUpdatedAt: true, createdAt: true },
+		select: userSelect,
 	});
 
-	return users.map((user) => ({
-		id: user.id,
-		handle: user.handle,
-		displayName: user.displayName,
-		avatarUrl: buildAvatarUrl(user.id, user.avatarUpdatedAt),
-		createdAt: user.createdAt.toISOString(),
-	}));
+	return users.map(toUserDTO);
 }
 
 /**

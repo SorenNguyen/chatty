@@ -1,21 +1,23 @@
 import { useState } from "react";
-import { api } from "@/api/client";
 import { Button } from "@/components/button";
 import { TextField } from "@/components/text-field";
 import { MIN_PASSWORD_LENGTH } from "@/constants/validation";
+import { useAuth } from "@/hooks/use-auth";
 
 /**
  * Changes the signed-in user's password.
  *
- * Takes no props and reads nothing from the auth store: the server identifies
- * the account from the token, and the current password is typed rather than
- * remembered. Nothing about the signed-in user is needed to render it.
+ * Takes no props: the server identifies the account from the token, and the
+ * current password is typed rather than remembered. It does reach the auth
+ * store, but only for the action — changing a password replaces this session's
+ * token and drops its socket, which is the store's job rather than a form's.
  *
  * The confirmation field never leaves the browser. It exists to catch a typo in
  * a value the user cannot see, which is a client-side problem — sending it would
  * give the server a second copy to validate and nothing to do with it.
  */
 export function ChangePasswordForm() {
+	const changePassword = useAuth((state) => state.changePassword);
 	const [fields, setFields] = useState({ currentPassword: "", newPassword: "", confirmPassword: "" });
 	const [errors, setErrors] = useState({ currentPassword: "", newPassword: "", confirmPassword: "", form: "" });
 	const [isSaving, setIsSaving] = useState(false);
@@ -50,7 +52,7 @@ export function ChangePasswordForm() {
 		setIsSaving(true);
 		setIsChanged(false);
 		try {
-			await api.changePassword({ currentPassword: fields.currentPassword, newPassword: fields.newPassword });
+			await changePassword(fields.currentPassword, fields.newPassword);
 			// Cleared on success, not left filled: the form holds three passwords in
 			// plain text and there is no reason for them to survive the request.
 			setFields({ currentPassword: "", newPassword: "", confirmPassword: "" });
@@ -105,7 +107,7 @@ export function ChangePasswordForm() {
 			)}
 			{isChanged && (
 				<p className="text-sm text-green-700">
-					Password changed. Sessions already signed in elsewhere stay signed in.
+					Password changed. Everywhere else you were signed in has been signed out.
 				</p>
 			)}
 

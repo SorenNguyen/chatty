@@ -1,4 +1,10 @@
-import type { ChangePasswordRequest, LoginRequest, RegisterRequest } from "@chatty/shared-types";
+import type {
+	ChangePasswordRequest,
+	LoginRequest,
+	RegisterRequest,
+	RequestPasswordResetRequest,
+	ResetPasswordRequest,
+} from "@chatty/shared-types";
 import { z } from "zod";
 
 /**
@@ -59,6 +65,22 @@ export const changePasswordSchema = z.object({
 });
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 
+export const requestPasswordResetSchema = z.object({
+	email: z.string().email(),
+});
+export type RequestPasswordResetInput = z.infer<typeof requestPasswordResetSchema>;
+
+/**
+ * The token is only length-checked. Its real validation is whether its hash
+ * matches a row, which is a database question rather than a shape one — but a
+ * bound belongs here so a megabyte of "token" never reaches the hash function.
+ */
+export const resetPasswordSchema = z.object({
+	token: z.string().min(1).max(512),
+	newPassword: passwordSchema,
+});
+export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+
 /**
  * Compile-time proof that what these schemas produce is what the client sends.
  *
@@ -71,3 +93,5 @@ type AssertAssignable<Actual extends Expected, Expected> = Actual;
 export type RegisterContract = AssertAssignable<RegisterInput, RegisterRequest>;
 export type LoginContract = AssertAssignable<LoginInput, LoginRequest>;
 export type ChangePasswordContract = AssertAssignable<ChangePasswordInput, ChangePasswordRequest>;
+export type RequestPasswordResetContract = AssertAssignable<RequestPasswordResetInput, RequestPasswordResetRequest>;
+export type ResetPasswordContract = AssertAssignable<ResetPasswordInput, ResetPasswordRequest>;

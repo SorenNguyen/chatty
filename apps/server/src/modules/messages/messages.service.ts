@@ -17,15 +17,14 @@ export interface SendMessageArgs {
 	attachment?: Buffer | undefined;
 }
 
-// `assertParticipant` is imported from the conversations service rather than
-// defined here: participants belong to that module, and two copies of an
-// authorization check are two chances for one of them to be relaxed alone.
-
 export async function sendMessage(
 	currentUserId: string,
 	conversationId: string,
 	input: SendMessageArgs,
 ): Promise<MessageDTO> {
+	// Fail before decoding/writing an attachment for the ordinary unauthorized
+	// case. This is only a cheap guard; the check inside the locked transaction
+	// below is the authority when membership changes concurrently.
 	await assertParticipant(currentUserId, conversationId);
 
 	// The id is generated here, not by the database, so the file can be written
@@ -35,10 +34,20 @@ export async function sendMessage(
 	const attachmentId = input.attachment ? randomUUID() : null;
 	const stored = input.attachment && attachmentId ? await saveAttachment(attachmentId, input.attachment) : null;
 
-	// One transaction: a conversation whose updatedAt disagrees with its newest
-	// message sorts wrongly in the conversation list forever after.
-	const [message] = await prisma.$transaction([
-		prisma.message.create({
+	const message = await prisma.$transaction(async (transaction) => {
+		// Membership changes take the same conversation lock. Re-checking after it
+		// means a send racing with a kick has one honest order: it either commits
+		// before the removal, or observes the removal and is refused afterwards.
+		await transaction.$queryRaw`
+			SELECT id
+			FROM "Conversation"
+			WHERE id = ${conversationId}
+			FOR UPDATE
+		`;
+
+		await assertParticipant(currentUserId, conversationId, transaction);
+
+		const created = await transaction.message.create({
 			data: {
 				conversationId,
 				authorId: currentUserId,
@@ -46,13 +55,18 @@ export async function sendMessage(
 				...(stored && attachmentId ? { attachment: { create: { id: attachmentId, ...stored } } } : {}),
 			},
 			select: messageSelect,
-		}),
-		prisma.conversation.update({
+		});
+
+		// A conversation whose updatedAt disagrees with its newest message sorts
+		// wrongly in the conversation list forever after.
+		await transaction.conversation.update({
 			where: { id: conversationId },
 			data: { updatedAt: new Date() },
 			select: { id: true },
-		}),
-	]);
+		});
+
+		return created;
+	});
 
 	const messageDTO = toMessageDTO(message);
 
@@ -75,7 +89,7 @@ export async function listMessages(
 		where: { conversationId },
 		// Newest first so `take` returns the most recent page; the client reverses
 		// for display. Backed by @@index([conversationId, createdAt]).
-		orderBy: { createdAt: "desc" },
+		orderBy: [{ createdAt: "desc" }, { id: "desc" }],
 		take: query.limit,
 		// `before` is the id of the oldest message the client already has.
 		// `skip: 1` excludes that message itself from the next page.

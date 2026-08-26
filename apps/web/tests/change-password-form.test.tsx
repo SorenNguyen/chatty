@@ -4,15 +4,29 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ChangePasswordForm } from "@/features/profile/components/change-password-form";
 
 const changePassword = vi.fn();
+const storeToken = vi.fn();
+const closeSocket = vi.fn();
 
 vi.mock("@/api/client", () => ({
 	api: {
 		changePassword: (input: unknown) => changePassword(input),
 	},
+	// `useAuth` reaches for these three as well, and the form now goes through
+	// the store rather than calling the API itself — because a password change
+	// replaces this session's token and drops its socket.
+	storeToken: (token: string) => storeToken(token),
+	getStoredToken: () => null,
+	clearStoredToken: () => undefined,
+}));
+
+vi.mock("@/lib/socket", () => ({
+	closeSocket: () => closeSocket(),
 }));
 
 beforeEach(() => {
-	changePassword.mockReset().mockResolvedValue(undefined);
+	changePassword.mockReset().mockResolvedValue({ token: "replacement-token" });
+	storeToken.mockReset();
+	closeSocket.mockReset();
 });
 
 /** Fills all three fields and submits. */
@@ -69,6 +83,29 @@ describe("ChangePasswordForm", () => {
 
 		expect(screen.getByText(/must be different/i)).toBeInTheDocument();
 		expect(changePassword).not.toHaveBeenCalled();
+	});
+
+	it("stores the replacement token and drops the socket", async () => {
+		// The request that changed the password invalidated the token it was made
+		// with. Without both of these the user is signed out of their own tab and
+		// the socket reconnects forever with a token the server now refuses.
+		const typist = userEvent.setup();
+		render(<ChangePasswordForm />);
+
+		await submit(typist, { current: "SuperSecret123", next: "BrandNewSecret456" });
+
+		expect(await screen.findByText(/password changed/i)).toBeInTheDocument();
+		expect(storeToken).toHaveBeenCalledWith("replacement-token");
+		expect(closeSocket).toHaveBeenCalled();
+	});
+
+	it("says the other sessions were signed out", async () => {
+		const typist = userEvent.setup();
+		render(<ChangePasswordForm />);
+
+		await submit(typist, { current: "SuperSecret123", next: "BrandNewSecret456" });
+
+		expect(await screen.findByText(/signed out/i)).toBeInTheDocument();
 	});
 
 	it("clears the fields once the password has changed", async () => {

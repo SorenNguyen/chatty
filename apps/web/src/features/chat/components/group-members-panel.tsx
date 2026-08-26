@@ -19,8 +19,9 @@ interface GroupMembersPanelProps {
  * declared anywhere in its conventions, and `NewConversationPanel` already
  * establishes the pattern this follows: render inline, don't invent one.
  *
- * Every current participant can rename the group or remove any other member
- * — there is no admin role. See ADR 0006 for why.
+ * What the owner sees and a member does not: the rename field enabled, and a
+ * remove button on everyone else's row. Members can still invite, and can
+ * always leave. See ADR 0008.
  */
 export function GroupMembersPanel({ conversation, currentUserId, onClose }: GroupMembersPanelProps) {
 	const [nameDraft, setNameDraft] = useState(conversation.name ?? "");
@@ -32,6 +33,9 @@ export function GroupMembersPanel({ conversation, currentUserId, onClose }: Grou
 	const [addingUserId, setAddingUserId] = useState<string | null>(null);
 
 	const participantIds = conversation.participants.map((participant) => participant.id);
+	const isOwner = conversation.participants.some(
+		(participant) => participant.id === currentUserId && participant.role === "owner",
+	);
 	const {
 		query,
 		setQuery,
@@ -122,16 +126,21 @@ export function GroupMembersPanel({ conversation, currentUserId, onClose }: Grou
 						label="Group name"
 						value={nameDraft}
 						onChange={(event) => setNameDraft(event.target.value)}
+						disabled={!isOwner}
 						error={nameError}
 					/>
 				</div>
 				<Button
 					onClick={() => void handleSaveName()}
-					disabled={isSavingName || !nameDraft.trim() || nameDraft.trim() === conversation.name}
+					disabled={!isOwner || isSavingName || !nameDraft.trim() || nameDraft.trim() === conversation.name}
 				>
 					Save
 				</Button>
 			</div>
+
+			{/* Said out loud rather than left as a field that silently does
+			    nothing: a disabled control with no explanation reads as a bug. */}
+			{!isOwner && <p className="mt-1 text-xs text-slate-500">Only the group owner can rename this group.</p>}
 
 			{actionError && <p className="mt-2 text-xs text-red-600">{actionError}</p>}
 
@@ -146,13 +155,20 @@ export function GroupMembersPanel({ conversation, currentUserId, onClose }: Grou
 								<span className="w-full truncate text-sm text-slate-900">
 									{participant.displayName}
 									{isSelf && <span className="text-slate-500"> (you)</span>}
+									{/* Who to ask, when the rename field is greyed out and
+									    the remove buttons are not there. */}
+									{participant.role === "owner" && (
+										<span className="ml-1.5 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">
+											Owner
+										</span>
+									)}
 								</span>
 								<span className="w-full truncate text-xs text-slate-500">@{participant.handle}</span>
 							</span>
 							{/* No remove button on your own row — leaving has its own
 							    clearly-labelled action below, so a small × next to your
 							    own name cannot be clicked by accident. */}
-							{!isSelf && (
+							{!isSelf && isOwner && (
 								<Button
 									variant="ghost"
 									onClick={() => void handleRemoveMember(participant.id)}

@@ -52,7 +52,7 @@ Past that line, input is trusted — services take typed arguments and do not re
 
 ## Errors — throw typed, format once
 
-Services throw the typed errors from `lib/errors.ts` (`NotFoundError`, `ValidationError`, `UnauthorizedError`, `ConflictError`). The single `errorHandler` middleware maps each to a status code.
+Services throw the typed errors from `lib/errors.ts` (`NotFoundError`, `ValidationError`, `UnauthorizedError`, `ForbiddenError`, `ConflictError`). The single `errorHandler` middleware maps each to a status code.
 
 - **Handlers never `try/catch` to format an HTTP response.** One place decides what a `NotFoundError` looks like on the wire.
 - **Never leak internals.** An unrecognized error logs the full detail server-side and returns a bare `500` — no stack traces, no driver messages to the client.
@@ -68,9 +68,10 @@ Two constraints to keep in mind:
 
 - **Limiters run before controllers.** A rejected request must not reach the database, or probing
   costs the attacker the same as a real signup.
-- **Counters live in process memory.** Correct for one server, wrong for two — each instance would
-  keep its own tally and the effective limit would multiply. A shared store (Redis) is a
-  prerequisite for running more than one instance, not an optimisation.
+- **Counters use Redis when `REDIS_URL` is set and process memory otherwise.** Memory is correct for
+  one server and wrong for two — each instance keeps its own tally and the effective limit
+  multiplies. A shared store is a prerequisite for running more than one instance, not an
+  optimisation; production Compose always provides it.
 
 ### Choosing the right error is a security decision
 
@@ -98,6 +99,10 @@ Two constraints to keep in mind:
 
 - **Schema changes go through a migration** (`npm run db:migrate --workspace apps/server`), never a manual `psql` edit. The migration files are the history; a hand-edited database is a database nobody else can reproduce.
 - **Multi-write operations use a transaction** (`prisma.$transaction`). Creating a conversation and its participants is one unit — a conversation with no participants is corrupt data.
+- **Custom SQL invariants stay visible.** Prisma 5 cannot model partial indexes or deferred
+  cross-row triggers. The group-owner and message-author constraints therefore live in the phase 7
+  migrations and are called out beside `ConversationParticipant.role` in `schema.prisma`; do not
+  replace them with application-only checks during a schema change.
 - Indexes are part of the schema, not an afterthought: `Message` already has `@@index([conversationId, createdAt])` because "load a conversation's recent messages" is the app's hottest query.
 
 ---
@@ -117,10 +122,34 @@ Not in a middleware, not in the controller. Middleware runs per-route, but servi
 
 Authentication (who you are) is the middleware's job — `requireAuth` for HTTP, the `io.use()` handshake for sockets. Authorization (what you may touch) is the service's.
 
-**Participant is the only role.** Group management (add member, remove member, rename) does not add a
-stricter check on top of the participant one above — any current participant may do any of it. This
-was a deliberate choice, not an oversight: see [ADR 0006](../adr/0006-flat-group-permissions.md)
-before assuming a missing admin check is a bug.
+**Two roles, and only two operations tell them apart.** `assertParticipant` is still the check every
+conversation-scoped operation starts with. On top of it, `assertOwner` guards exactly two things:
+renaming a group, and removing *somebody else*. Adding a member and removing *yourself* are open to
+any participant, deliberately — see [ADR 0008](../adr/0008-group-owner-role.md) before adding a
+stricter check to either, and [ADR 0006](../adr/0006-flat-group-permissions.md) for the phase this
+app spent with no roles at all.
+
+`assertOwner` throws `ForbiddenError` (403), not `NotFoundError` (404). The 404 exists to stop
+outsiders probing for conversation ids; someone already in the group has nothing left to learn, and a
+404 leaves the UI unable to say why the button did nothing.
+
+### Conversation writes are serialised per conversation
+
+Add, remove, rename and send all take a PostgreSQL row lock on `Conversation` with
+`SELECT ... FOR UPDATE`, then re-check membership/role **inside the interactive transaction**. A
+pre-check may still exist to avoid expensive attachment work, but it is never the authority: a user
+can be removed between two statements.
+
+Keep the order the same in every future membership-sensitive operation:
+
+1. open the transaction and lock `Conversation`;
+2. authorize against the locked state;
+3. write every durable part of the transition, including system messages and owner transfer;
+4. return the final rows and let the transaction commit;
+5. only then join/leave socket rooms and emit events.
+
+Do not emit from a helper that writes inside the transaction. PostgreSQL can roll back; Socket.IO
+cannot. See [ADR 0010](../adr/0010-serialize-conversation-writes.md).
 
 ---
 

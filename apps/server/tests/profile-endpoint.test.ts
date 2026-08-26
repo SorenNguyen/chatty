@@ -2,10 +2,11 @@ import { createServer, type Server } from "node:http";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import bcrypt from "bcrypt";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
 import { prisma } from "../src/lib/prisma.js";
 import { login } from "../src/modules/auth/auth.service.js";
+import { installFakeIO } from "./fake-io.js";
 
 /**
  * `PATCH /users/me` and `POST /auth/password` over real HTTP.
@@ -36,6 +37,11 @@ beforeAll(async () => {
 	await once(server, "listening");
 	baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 	passwordHash = await bcrypt.hash(PASSWORD, 12);
+});
+
+// Changing a password disconnects the account's sockets.
+beforeEach(() => {
+	installFakeIO();
 });
 
 afterAll(() => {
@@ -117,7 +123,7 @@ describe("PATCH /users/me", () => {
 });
 
 describe("POST /auth/password", () => {
-	it("204s and changes the password", async () => {
+	it("changes the password and returns a replacement token", async () => {
 		const { token } = await createSignedInUser();
 
 		const response = await fetch(
@@ -125,7 +131,10 @@ describe("POST /auth/password", () => {
 			authed(token, { currentPassword: PASSWORD, newPassword: "BrandNewSecret456" }, "POST"),
 		);
 
-		expect(response.status).toBe(204);
+		expect(response.status).toBe(200);
+		// Not a nicety: this request invalidated the token it was made with, so
+		// without the replacement the caller is signed out of their own tab.
+		expect(((await response.json()) as { token: string }).token).toBeTruthy();
 		await expect(login({ email: "minh_test@chatty.test", password: "BrandNewSecret456" })).resolves.toBeTruthy();
 	});
 

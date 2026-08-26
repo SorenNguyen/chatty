@@ -25,6 +25,21 @@ export class ValidationError extends AppError {
 	}
 }
 
+/**
+ * The caller is who they say they are and still may not do this.
+ *
+ * Distinct from `UnauthorizedError` (401, "sign in") and from `NotFoundError`
+ * (404, "there is nothing here for you"): a group member who is not the owner
+ * can see the group perfectly well, so hiding it behind a 404 would tell them
+ * something they already know and leave the UI unable to say why the button
+ * did nothing.
+ */
+export class ForbiddenError extends AppError {
+	constructor(message = "Forbidden") {
+		super(message, 403);
+	}
+}
+
 export class UnauthorizedError extends AppError {
 	constructor(message = "Unauthorized") {
 		super(message, 401);

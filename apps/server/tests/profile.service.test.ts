@@ -1,9 +1,11 @@
 import bcrypt from "bcrypt";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import { verifyAccessToken } from "../src/lib/access-token.js";
 import { ConflictError, UnauthorizedError, ValidationError } from "../src/lib/errors.js";
 import { changePassword, login } from "../src/modules/auth/auth.service.js";
 import { prisma } from "../src/lib/prisma.js";
 import { updateProfile } from "../src/modules/users/users.service.js";
+import { installFakeIO, type FakeIO } from "./fake-io.js";
 
 const PASSWORD = "SuperSecret123";
 
@@ -17,6 +19,14 @@ const PASSWORD = "SuperSecret123";
  * profiles, not about registration, so the hash only has to be *a* valid one.
  */
 const passwordHash = await bcrypt.hash(PASSWORD, 12);
+
+let fakeIO: FakeIO;
+
+// `changePassword` ends every session on the account, which means reaching for
+// the socket server. getIO() throws when nothing has been installed.
+beforeEach(() => {
+	fakeIO = installFakeIO();
+});
 
 async function createUser(handle: string, displayName = "Minh"): Promise<string> {
 	const user = await prisma.user.create({
@@ -133,6 +143,40 @@ describe("changePassword", () => {
 		// half-applied one.
 		const result = await login({ email: "minh_test@chatty.test", password: PASSWORD });
 		expect(result.user.id).toBe(userId);
+	});
+
+	it("ends every session on the account", async () => {
+		// The whole point of the feature. A password change that leaves other
+		// devices signed in is useless in the case it is most often reached for.
+		const userId = await createUser("minh_test");
+
+		await changePassword(userId, { currentPassword: PASSWORD, newPassword: "BrandNewSecret456" });
+
+		expect(fakeIO.disconnects).toContain(`user:${userId}`);
+	});
+
+	it("hands back a token so the caller is not signed out of their own tab", async () => {
+		const userId = await createUser("minh_test");
+
+		const { token } = await changePassword(userId, {
+			currentPassword: PASSWORD,
+			newPassword: "BrandNewSecret456",
+		});
+
+		expect(await verifyAccessToken(token)).toBe(userId);
+	});
+
+	it("refuses the token the request was made with", async () => {
+		// Issued before the change, so it is exactly what must stop working.
+		const userId = await createUser("minh_test");
+		const { token: before } = await login({ email: "minh_test@chatty.test", password: PASSWORD });
+
+		// A second of daylight, because `iat` is whole seconds and a token minted
+		// inside the same second as the change is deliberately still accepted.
+		await new Promise((resolve) => setTimeout(resolve, 1100));
+		await changePassword(userId, { currentPassword: PASSWORD, newPassword: "BrandNewSecret456" });
+
+		await expect(verifyAccessToken(before)).rejects.toBeInstanceOf(UnauthorizedError);
 	});
 
 	it("rejects reusing the password already set", async () => {

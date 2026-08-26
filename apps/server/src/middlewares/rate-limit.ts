@@ -100,3 +100,31 @@ export const changePasswordRateLimiter = createAuthLimiter({
 	// Non-null because this limiter is only ever mounted after requireAuth.
 	keyGenerator: (request) => request.userId!,
 });
+
+/**
+ * Caps `POST /auth/password-reset`.
+ *
+ * Not primarily an anti-guessing measure — there is nothing to guess. It stops
+ * the endpoint being used as a free mail cannon: it sends an email to any
+ * address someone names, and an uncapped one of those is how a domain's sending
+ * reputation dies. Keyed by IP, because the caller is not signed in.
+ */
+export const passwordResetRequestRateLimiter = createAuthLimiter({
+	windowMs: 60 * 60 * 1000,
+	limit: 10,
+	message: "Too many password reset requests. Try again later.",
+});
+
+/**
+ * Caps `POST /auth/password-reset/confirm`.
+ *
+ * Here there *is* something to guess, even though 32 random bytes make it
+ * hopeless. The limit costs a legitimate user nothing — they click a link once —
+ * and removes the one endpoint that would otherwise accept unlimited attempts
+ * at a credential.
+ */
+export const passwordResetConfirmRateLimiter = createAuthLimiter({
+	windowMs: 15 * 60 * 1000,
+	limit: 20,
+	message: "Too many attempts. Try again later.",
+});

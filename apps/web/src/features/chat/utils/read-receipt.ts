@@ -43,7 +43,9 @@ export function getReadReceipt(
 	for (let index = furthestIndex; index >= 0; index -= 1) {
 		const message = messages[index]!;
 
-		if (message.authorId === currentUserId) {
+		// A system message has no author, so it is never "yours" — a "Seen" under
+		// "Chi left the group" would be claiming a receipt for nobody's message.
+		if (message.author?.id === currentUserId) {
 			return {
 				messageId: message.id,
 				readerCount: markerIndexes.filter((markerIndex) => markerIndex >= index).length,

@@ -34,19 +34,17 @@ const serverEnv = {
 	PUBLIC_URL: API_URL,
 	// Its own upload directory, for the same reason as the database.
 	UPLOAD_DIR: ".data/e2e-uploads",
-	// Left as development on purpose: "test" switches the rate limiters off, and
-	// a browser driving the real sign-up form should meet the same middleware a
-	// user would.
+	// "test" switches the rate limiters off, and that is the right trade here.
 	//
-	// **This caps the suite at 10 registrations per run** — the limit on
-	// `/auth/register`, counted per IP, and every spec here registers the accounts
-	// it needs. The counter is per process and the server is restarted for each
-	// run, so it resets between runs but not between specs. Past that ceiling
-	// tests start failing on a 429 that looks nothing like a rate limit from
-	// inside the browser: the sign-up form simply shows an error and never
-	// redirects. If that day comes, set NODE_ENV to "test" here and accept that
-	// the limiters stop being covered.
-	NODE_ENV: "development",
+	// It was "development" first, so the browser would meet the same middleware a
+	// user does. What that actually bought was a ceiling: `/auth/register` allows
+	// 10 per hour per IP and every spec registers its own accounts, so the suite
+	// could hold about eight tests before the ninth started failing on a 429 that
+	// from inside the browser looks like a sign-up form which simply does not
+	// submit. No spec ever asserted a limit, so the coverage was imaginary and the
+	// trap was real. The limiters are exercised by hand instead — see the roadmap,
+	// phase 3 item 9.
+	NODE_ENV: "test",
 };
 
 export default defineConfig({

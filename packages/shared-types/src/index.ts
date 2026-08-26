@@ -48,6 +48,15 @@ export interface CurrentUserDTO extends UserDTO {
  */
 export interface ParticipantDTO extends UserDTO {
 	/**
+	 * What this participant may do to the *other* members of a group: an owner
+	 * may rename it and remove anyone, a member may only remove themselves.
+	 *
+	 * Present on a direct conversation's participants too, where it is always
+	 * "member" and means nothing — a two-person chat has nothing to administer.
+	 * See ADR 0008.
+	 */
+	role: ConversationRole;
+	/**
 	 * The newest message this participant has read, or null if they never have.
 	 *
 	 * Enough to render "Seen" without a second request: a message is read by
@@ -57,6 +66,15 @@ export interface ParticipantDTO extends UserDTO {
 	 */
 	lastReadMessageId: string | null;
 }
+
+/**
+ * A participant's standing in a group.
+ *
+ * Lowercase on the wire, uppercase in the database (`ConversationRole` in
+ * schema.prisma). The mapper is the one place that knows both spellings, the
+ * same way `createdAt` is a Date on one side and an ISO string on the other.
+ */
+export type ConversationRole = "owner" | "member";
 
 export interface ConversationDTO {
 	id: string;
@@ -107,11 +125,39 @@ export interface AttachmentDTO {
 	byteSize: number;
 }
 
+/**
+ * Who a message came from: a person, or the conversation itself.
+ *
+ * "system" is what a group event looks like in the log — "An added Binh",
+ * "Chi left the group". It is a real Message row rather than a client-side
+ * annotation on `conversation:updated`, so it survives a reload, arrives in
+ * order with the messages around it, and can be scrolled back to.
+ */
+export type MessageKind = "user" | "system";
+
 export interface MessageDTO {
 	id: string;
 	conversationId: string;
-	authorId: string;
-	/** Empty string for a message that is only an image. */
+	kind: MessageKind;
+	/**
+	 * Who wrote it, embedded rather than referenced by id.
+	 *
+	 * The id alone was not enough: the client resolved it against the
+	 * conversation's participant list, so every message written by someone who
+	 * has since left the group lost its name and avatar — the history stayed,
+	 * the person vanished from it. A participant list answers "who is here
+	 * now", which is a different question from "who wrote this".
+	 *
+	 * Null on a system message, which nobody wrote.
+	 */
+	author: UserDTO | null;
+	/**
+	 * Empty string for a message that is only an image.
+	 *
+	 * On a system message this is the whole sentence, rendered by the server
+	 * when the event happened — see ADR 0009 for why the names in it are a
+	 * snapshot rather than looked up live.
+	 */
 	content: string;
 	attachment: AttachmentDTO | null;
 	createdAt: string;
@@ -168,12 +214,39 @@ export interface UpdateProfileRequest {
  * authenticated: a token is proof of a past sign-in, and this endpoint is the
  * one that decides whether every future one still works. Someone who walks up
  * to an unlocked laptop has the token but not the password.
- *
- * There is no response body — see the note on session lifetime in
- * `auth.service.ts#changePassword`.
  */
 export interface ChangePasswordRequest {
 	currentPassword: string;
+	newPassword: string;
+}
+
+/**
+ * A replacement for the token the caller arrived with.
+ *
+ * Changing a password ends every session on the account — that is the point of
+ * the feature — and the caller's own is one of them. Without this they would be
+ * signed out of the tab they are standing in. **Store it**: the old token stops
+ * working on its next request, and any socket open at the time is disconnected,
+ * so the client has to reconnect with this one.
+ */
+export interface ChangePasswordResponse {
+	token: string;
+}
+
+/**
+ * Body of `POST /auth/password-reset`.
+ *
+ * Always answers 204, whether or not the address has an account. Anything else
+ * — a different status, a different message, a noticeably different delay — is
+ * a way to ask whether someone is registered here.
+ */
+export interface RequestPasswordResetRequest {
+	email: string;
+}
+
+/** Body of `POST /auth/password-reset/confirm`. The token comes from the emailed link. */
+export interface ResetPasswordRequest {
+	token: string;
 	newPassword: string;
 }
 

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { ConflictError, NotFoundError, ValidationError } from "../src/lib/errors.js";
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../src/lib/errors.js";
 import { prisma } from "../src/lib/prisma.js";
 import {
 	addParticipant,
@@ -8,6 +8,7 @@ import {
 	removeParticipant,
 	renameConversation,
 } from "../src/modules/conversations/conversations.service.js";
+import { sendMessage } from "../src/modules/messages/messages.service.js";
 import { installFakeIO, type FakeIO } from "./fake-io.js";
 
 let fakeIO: FakeIO;
@@ -66,6 +67,43 @@ async function createGroup(creatorId: string, otherIds: string[], name = "Group"
 	if (otherIds.length < 2) throw new Error("createGroup needs at least two other participants to be a real group");
 
 	return createConversation(creatorId, { participantIds: otherIds, name });
+}
+
+/**
+ * The system lines written into a conversation, oldest first.
+ *
+ * Ordered by id as well as time because two of these can land in the same
+ * millisecond — leaving a group you own writes the departure line and the
+ * ownership line back to back — and `createdAt` alone would then be free to
+ * return them in either order. A cuid embeds a counter after its timestamp, so
+ * it breaks that tie the same way the writes happened.
+ */
+async function systemLines(conversationId: string): Promise<string[]> {
+	const messages = await prisma.message.findMany({
+		where: { conversationId, kind: "SYSTEM" },
+		orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+		select: { content: true, authorId: true },
+	});
+
+	// Nobody wrote a system message; an authorId on one would mean it renders
+	// with a face and a bubble in the message list.
+	for (const message of messages) expect(message.authorId).toBeNull();
+
+	return messages.map((message) => message.content);
+}
+
+const SYSTEM_MESSAGE_FAILURE_CONSTRAINT = "Message_reject_system_messages_for_atomicity_test";
+
+async function rejectSystemMessages(predicate = `"kind" <> 'SYSTEM'`): Promise<void> {
+	await prisma.$executeRawUnsafe(
+		`ALTER TABLE "Message" ADD CONSTRAINT "${SYSTEM_MESSAGE_FAILURE_CONSTRAINT}" CHECK (${predicate});`,
+	);
+}
+
+async function allowSystemMessages(): Promise<void> {
+	await prisma.$executeRawUnsafe(
+		`ALTER TABLE "Message" DROP CONSTRAINT IF EXISTS "${SYSTEM_MESSAGE_FAILURE_CONSTRAINT}";`,
+	);
 }
 
 describe("addParticipant", () => {
@@ -164,6 +202,27 @@ describe("addParticipant", () => {
 		const group = await createGroup(minhId, [anId, binhId]);
 
 		await expect(addParticipant(minhId, group.id, { userId: anId })).rejects.toBeInstanceOf(ConflictError);
+	});
+
+	it("turns two simultaneous adds into one success and one domain conflict", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const chiId = await createUser("chi");
+		const group = await createGroup(minhId, [anId, binhId]);
+
+		const results = await Promise.allSettled([
+			addParticipant(minhId, group.id, { userId: chiId }),
+			addParticipant(anId, group.id, { userId: chiId }),
+		]);
+
+		expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+		expect(results.filter((result) => result.status === "rejected")).toEqual([
+			expect.objectContaining({ reason: expect.any(ConflictError) }),
+		]);
+		await expect(
+			prisma.conversationParticipant.count({ where: { conversationId: group.id, userId: chiId } }),
+		).resolves.toBe(1);
 	});
 
 	it("rejects an actor who is not a participant", async () => {
@@ -336,5 +395,465 @@ describe("renameConversation", () => {
 		const group = await createGroup(minhId, [anId, binhId]);
 
 		await expect(renameConversation(outsiderId, group.id, { name: "Nope" })).rejects.toBeInstanceOf(NotFoundError);
+	});
+});
+
+describe("group ownership", () => {
+	it("makes whoever created a group its owner, and everyone else a member", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+
+		const group = await createGroup(minhId, [anId, binhId]);
+
+		const roles = new Map(group.participants.map((participant) => [participant.id, participant.role]));
+		expect(roles.get(minhId)).toBe("owner");
+		expect(roles.get(anId)).toBe("member");
+		expect(roles.get(binhId)).toBe("member");
+	});
+
+	it("gives a direct conversation no owner at all", async () => {
+		// Two people have nothing to administer between them, and an owner there
+		// would only be a role the UI has to remember not to show.
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+
+		const direct = await createConversation(minhId, { participantIds: [anId] });
+
+		expect(direct.participants.every((participant) => participant.role === "member")).toBe(true);
+	});
+
+	it("lets a member who does not own the group add someone", async () => {
+		// Inviting is how a group grows; gating it behind one person makes them a
+		// bottleneck for the thing groups are for. See ADR 0008.
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const chiId = await createUser("chi");
+		const group = await createGroup(minhId, [anId, binhId]);
+
+		await addParticipant(anId, group.id, { userId: chiId });
+
+		const updated = await conversationAsSeenBy(anId, group.id);
+		expect(updated.participants.map((participant) => participant.id)).toContain(chiId);
+	});
+
+	it("refuses to let a member remove somebody else", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const group = await createGroup(minhId, [anId, binhId]);
+
+		await expect(removeParticipant(anId, group.id, binhId)).rejects.toThrow(ForbiddenError);
+
+		const unchanged = await conversationAsSeenBy(minhId, group.id);
+		expect(unchanged.participants.map((participant) => participant.id)).toContain(binhId);
+	});
+
+	it("lets a member remove themselves", async () => {
+		// The one thing the role must never block: an owner who could keep people
+		// in a group would be worse than a group with no owner.
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const group = await createGroup(minhId, [anId, binhId]);
+
+		await removeParticipant(anId, group.id, anId);
+
+		const remaining = await conversationAsSeenBy(minhId, group.id);
+		expect(remaining.participants.map((participant) => participant.id)).not.toContain(anId);
+	});
+
+	it("refuses to let a member rename the group", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const group = await createGroup(minhId, [anId, binhId], "Weekend football");
+
+		await expect(renameConversation(anId, group.id, { name: "Something else" })).rejects.toThrow(ForbiddenError);
+
+		const unchanged = await conversationAsSeenBy(minhId, group.id);
+		expect(unchanged.name).toBe("Weekend football");
+	});
+
+	it("hands the group to the longest-standing member when the owner leaves", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const group = await createGroup(minhId, [anId, binhId]);
+
+		await removeParticipant(minhId, group.id, minhId);
+
+		const remaining = await conversationAsSeenBy(anId, group.id);
+		const owners = remaining.participants.filter((participant) => participant.role === "owner");
+		// Exactly one, not "at least one": two owners is the state where the rule
+		// "the owner decides" stops meaning anything.
+		expect(owners).toHaveLength(1);
+		expect(owners[0]?.id).toBe(anId);
+	});
+
+	it("lets the new owner do what they could not do a moment ago", async () => {
+		// The transfer is only worth anything if the role it grants is real.
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const group = await createGroup(minhId, [anId, binhId]);
+
+		await removeParticipant(minhId, group.id, minhId);
+		await renameConversation(anId, group.id, { name: "Still on" });
+
+		const renamed = await conversationAsSeenBy(anId, group.id);
+		expect(renamed.name).toBe("Still on");
+	});
+
+	it("survives the last participant leaving, with nobody left to promote", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const group = await createGroup(minhId, [anId, binhId]);
+
+		await removeParticipant(anId, group.id, anId);
+		await removeParticipant(binhId, group.id, binhId);
+		await removeParticipant(minhId, group.id, minhId);
+
+		await expect(prisma.conversationParticipant.count({ where: { conversationId: group.id } })).resolves.toBe(0);
+	});
+
+	it("serialises an owner and their likely successor leaving at the same time", async () => {
+		// Without the conversation row lock, the owner can select `an` for promotion
+		// while the other request deletes `an`, leaving `binh` alone and ownerless.
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const group = await createGroup(minhId, [anId, binhId]);
+
+		await Promise.all([removeParticipant(minhId, group.id, minhId), removeParticipant(anId, group.id, anId)]);
+
+		const remaining = await conversationAsSeenBy(binhId, group.id);
+		expect(remaining.participants).toEqual([expect.objectContaining({ id: binhId, role: "owner" })]);
+	});
+
+	it("has a database constraint against demoting the only owner", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const group = await createGroup(minhId, [anId, binhId]);
+
+		await expect(
+			prisma.conversationParticipant.update({
+				where: { conversationId_userId: { conversationId: group.id, userId: minhId } },
+				data: { role: "MEMBER" },
+			}),
+		).rejects.toThrow(/exactly one owner/);
+
+		const unchanged = await conversationAsSeenBy(minhId, group.id);
+		expect(unchanged.participants.find((participant) => participant.id === minhId)?.role).toBe("owner");
+	});
+
+	it("has a database constraint against promoting a second owner", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const group = await createGroup(minhId, [anId, binhId]);
+
+		await expect(
+			prisma.conversationParticipant.update({
+				where: { conversationId_userId: { conversationId: group.id, userId: anId } },
+				data: { role: "OWNER" },
+			}),
+		).rejects.toMatchObject({ code: "P2002" });
+
+		await expect(
+			prisma.conversationParticipant.count({ where: { conversationId: group.id, role: "OWNER" } }),
+		).resolves.toBe(1);
+	});
+
+	it("has a database constraint against giving a direct conversation an owner", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const direct = await createConversation(minhId, { participantIds: [anId] });
+
+		await expect(
+			prisma.conversationParticipant.update({
+				where: { conversationId_userId: { conversationId: direct.id, userId: minhId } },
+				data: { role: "OWNER" },
+			}),
+		).rejects.toThrow(/cannot have an owner/);
+	});
+});
+
+describe("atomic group mutations", () => {
+	it("rolls an add back and emits nothing when its system message cannot be written", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const chiId = await createUser("chi");
+		const group = await createGroup(minhId, [anId, binhId]);
+		fakeIO.emits.length = 0;
+		fakeIO.joins.length = 0;
+
+		await rejectSystemMessages();
+		try {
+			await expect(addParticipant(minhId, group.id, { userId: chiId })).rejects.toThrow();
+		} finally {
+			await allowSystemMessages();
+		}
+
+		expect(
+			await prisma.conversationParticipant.findUnique({
+				where: { conversationId_userId: { conversationId: group.id, userId: chiId } },
+			}),
+		).toBeNull();
+		expect(fakeIO.joins).toHaveLength(0);
+		expect(fakeIO.emits).toHaveLength(0);
+	});
+
+	it("rolls a kick back and emits nothing when its system message cannot be written", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const group = await createGroup(minhId, [anId, binhId]);
+		fakeIO.emits.length = 0;
+		fakeIO.leaves.length = 0;
+
+		await rejectSystemMessages();
+		try {
+			await expect(removeParticipant(minhId, group.id, anId)).rejects.toThrow();
+		} finally {
+			await allowSystemMessages();
+		}
+
+		expect(
+			await prisma.conversationParticipant.findUnique({
+				where: { conversationId_userId: { conversationId: group.id, userId: anId } },
+			}),
+		).not.toBeNull();
+		expect(fakeIO.leaves).toHaveLength(0);
+		expect(fakeIO.emits).toHaveLength(0);
+	});
+
+	it("rolls a rename back and emits nothing when its system message cannot be written", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const group = await createGroup(minhId, [anId, binhId], "Original");
+		fakeIO.emits.length = 0;
+
+		await rejectSystemMessages();
+		try {
+			await expect(renameConversation(minhId, group.id, { name: "Changed" })).rejects.toThrow();
+		} finally {
+			await allowSystemMessages();
+		}
+
+		await expect(
+			prisma.conversation.findUnique({ where: { id: group.id }, select: { name: true } }),
+		).resolves.toEqual({
+			name: "Original",
+		});
+		expect(fakeIO.emits).toHaveLength(0);
+	});
+
+	it("rolls the whole owner hand-over back when its second system message fails", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const group = await createGroup(minhId, [anId, binhId]);
+		fakeIO.emits.length = 0;
+		fakeIO.leaves.length = 0;
+
+		await rejectSystemMessages(`"kind" <> 'SYSTEM' OR "content" NOT LIKE '% is now the group owner'`);
+		try {
+			await expect(removeParticipant(minhId, group.id, minhId)).rejects.toThrow();
+		} finally {
+			await allowSystemMessages();
+		}
+
+		const unchanged = await conversationAsSeenBy(minhId, group.id);
+		expect(unchanged.participants.find((participant) => participant.id === minhId)?.role).toBe("owner");
+		await expect(systemLines(group.id)).resolves.toEqual([]);
+		expect(fakeIO.leaves).toHaveLength(0);
+		expect(fakeIO.emits).toHaveLength(0);
+	});
+});
+
+describe("membership linearisation", () => {
+	it("refuses a send that was waiting behind the sender's removal", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const group = await createGroup(minhId, [anId, binhId]);
+
+		let signalLockAcquired!: () => void;
+		let releaseRemoval!: () => void;
+		const lockAcquired = new Promise<void>((resolve) => {
+			signalLockAcquired = resolve;
+		});
+		const mayCommitRemoval = new Promise<void>((resolve) => {
+			releaseRemoval = resolve;
+		});
+
+		const removal = prisma.$transaction(async (transaction) => {
+			await transaction.$queryRaw`
+				SELECT id
+				FROM "Conversation"
+				WHERE id = ${group.id}
+				FOR UPDATE
+			`;
+			signalLockAcquired();
+			await mayCommitRemoval;
+			await transaction.conversationParticipant.delete({
+				where: { conversationId_userId: { conversationId: group.id, userId: anId } },
+			});
+		});
+
+		await lockAcquired;
+		const send = sendMessage(anId, group.id, { content: "too late" });
+		releaseRemoval();
+		await removal;
+
+		await expect(send).rejects.toBeInstanceOf(NotFoundError);
+		await expect(prisma.message.count({ where: { conversationId: group.id, content: "too late" } })).resolves.toBe(
+			0,
+		);
+	});
+});
+
+describe("system messages", () => {
+	it("has a database constraint tying kind to whether an author exists", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const group = await createGroup(minhId, [anId, binhId]);
+
+		await expect(
+			prisma.message.create({
+				data: { conversationId: group.id, kind: "USER", content: "missing author" },
+			}),
+		).rejects.toThrow(/Message_kind_author_consistency/);
+		await expect(
+			prisma.message.create({
+				data: { conversationId: group.id, authorId: minhId, kind: "SYSTEM", content: "wrong author" },
+			}),
+		).rejects.toThrow(/Message_kind_author_consistency/);
+	});
+
+	it("records who added whom", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const chiId = await createUser("chi");
+		const group = await createGroup(minhId, [anId, binhId]);
+
+		await addParticipant(minhId, group.id, { userId: chiId });
+
+		await expect(systemLines(group.id)).resolves.toEqual(["minh added chi"]);
+	});
+
+	it("records a departure as leaving rather than as a removal", async () => {
+		// Same function call as a kick, and it must not read like one in the log.
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const group = await createGroup(minhId, [anId, binhId]);
+
+		await removeParticipant(anId, group.id, anId);
+
+		await expect(systemLines(group.id)).resolves.toEqual(["an left the group"]);
+	});
+
+	it("records a kick with the name of whoever did it", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const group = await createGroup(minhId, [anId, binhId]);
+
+		await removeParticipant(minhId, group.id, anId);
+
+		await expect(systemLines(group.id)).resolves.toEqual(["minh removed an"]);
+	});
+
+	it("records a rename with the name that was chosen", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const group = await createGroup(minhId, [anId, binhId]);
+
+		await renameConversation(minhId, group.id, { name: "Weekend football" });
+
+		await expect(systemLines(group.id)).resolves.toEqual(['minh renamed the group to "Weekend football"']);
+	});
+
+	it("records the departure before the handover when an owner leaves", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const group = await createGroup(minhId, [anId, binhId]);
+
+		await removeParticipant(minhId, group.id, minhId);
+
+		await expect(systemLines(group.id)).resolves.toEqual(["minh left the group", "an is now the group owner"]);
+	});
+
+	it("broadcasts each line to the conversation as a message", async () => {
+		// Written but not broadcast would mean the notice only appears on reload,
+		// which is the whole thing this was added to fix.
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const chiId = await createUser("chi");
+		const group = await createGroup(minhId, [anId, binhId]);
+
+		fakeIO.emits.length = 0;
+		await addParticipant(minhId, group.id, { userId: chiId });
+
+		const messageEmit = fakeIO.emits.find((emit) => emit.room === group.id && emit.event === "message:new");
+		expect(messageEmit).toBeDefined();
+		const payload = messageEmit?.payload as { kind: string; author: unknown; content: string };
+		expect(payload.kind).toBe("system");
+		expect(payload.author).toBeNull();
+		expect(payload.content).toBe("minh added chi");
+	});
+
+	it("does not broadcast the departure line until the leaver has been evicted", async () => {
+		// Ordering, not politeness: their sockets are still in the room until the
+		// eviction lands, so a line emitted first arrives on the screen of the
+		// person it is about, in a conversation they have just been told they left.
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const group = await createGroup(minhId, [anId, binhId]);
+
+		fakeIO.emits.length = 0;
+		fakeIO.leaves.length = 0;
+		await removeParticipant(anId, group.id, anId);
+
+		expect(fakeIO.leaves).toContainEqual({ fromRoom: `user:${anId}`, leftRoom: group.id });
+		const messageEmitIndex = fakeIO.emits.findIndex(
+			(emit) => emit.room === group.id && emit.event === "message:new",
+		);
+		const leftEmitIndex = fakeIO.emits.findIndex(
+			(emit) => emit.room === `user:${anId}` && emit.event === "conversation:left",
+		);
+		// conversation:left is sent immediately after the eviction, so anything
+		// after it in this list was emitted with the leaver already out of the room.
+		expect(messageEmitIndex).toBeGreaterThan(leftEmitIndex);
+	});
+
+	it("keeps system lines out of the unread badge", async () => {
+		// "Chi left the group" is not somebody talking to you. The count comes from
+		// a query that compares authors, and a system message has none.
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const group = await createGroup(minhId, [anId, binhId], "Weekend football");
+
+		await renameConversation(minhId, group.id, { name: "Sunday football" });
+
+		const asSeenByAn = await conversationAsSeenBy(anId, group.id);
+		expect(asSeenByAn.unreadCount).toBe(0);
+		// It is still the newest thing in the conversation, so the sidebar shows it.
+		expect(asSeenByAn.lastMessage?.content).toBe('minh renamed the group to "Sunday football"');
+		expect(asSeenByAn.lastMessage?.kind).toBe("system");
 	});
 });

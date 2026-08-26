@@ -1,7 +1,19 @@
 import { Router } from "express";
-import { changePasswordRateLimiter, loginRateLimiter, registerRateLimiter } from "../../middlewares/rate-limit.js";
+import {
+	changePasswordRateLimiter,
+	loginRateLimiter,
+	passwordResetConfirmRateLimiter,
+	passwordResetRequestRateLimiter,
+	registerRateLimiter,
+} from "../../middlewares/rate-limit.js";
 import { requireAuth } from "../../middlewares/require-auth.js";
-import { changePasswordController, loginController, registerController } from "./auth.controller.js";
+import {
+	changePasswordController,
+	loginController,
+	registerController,
+	requestPasswordResetController,
+	resetPasswordController,
+} from "./auth.controller.js";
 
 export const authRouter = Router();
 
@@ -15,3 +27,9 @@ authRouter.post("/login", loginRateLimiter, loginController);
 // spend a real account's budget. The two auth routes above are the other way
 // round because nobody is signed in yet when they run.
 authRouter.post("/password", requireAuth, changePasswordRateLimiter, changePasswordController);
+
+// Unauthenticated, like register and login — someone who has forgotten their
+// password by definition cannot present a token. The limiter therefore runs
+// first here, the way it does for those two and unlike `/password` above.
+authRouter.post("/password-reset", passwordResetRequestRateLimiter, requestPasswordResetController);
+authRouter.post("/password-reset/confirm", passwordResetConfirmRateLimiter, resetPasswordController);

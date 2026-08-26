@@ -11,17 +11,17 @@ datasource db {
 }
 
 model User {
-  id              String    @id @default(cuid())
-  email           String    @unique
+  id                String    @id @default(cuid())
+  email             String    @unique
   // Public, unique identifier used to find someone. Display names are not
   // unique — two people called "Minh" are indistinguishable in search results —
   // and email is deliberately never returned by search, so without a handle
   // there is no safe way to tell two accounts apart.
   // Always stored lowercase: Postgres unique indexes are case-sensitive, so
   // normalising on write is what makes "Minh" and "minh" the same handle.
-  handle          String    @unique
-  passwordHash    String
-  displayName     String
+  handle            String    @unique
+  passwordHash      String
+  displayName       String
   // When the avatar was last replaced — null means there is no picture.
   //
   // Not a URL. The file lives under one key derived from the user id, and the
@@ -30,11 +30,42 @@ model User {
   // rewriting every row to move the files to S3, or keeping the old picture
   // cached in browsers after an upload — the same reason Mattermost stores
   // `last_picture_update` and Rocket.Chat an avatar etag.
-  avatarUpdatedAt DateTime?
-  createdAt       DateTime  @default(now())
+  avatarUpdatedAt   DateTime?
+  /// When the password was last replaced, or null if it never has been.
+  ///
+  /// Read by `requireAuth` and by the socket handshake on every request: a JWT
+  /// issued before this moment is refused. Without it, changing or resetting a
+  /// password would leave every session opened beforehand working until the
+  /// token expired — which is exactly the case a reset is reached for.
+  passwordChangedAt DateTime?
+  createdAt         DateTime  @default(now())
 
-  participants ConversationParticipant[]
-  messages     Message[]
+  participants        ConversationParticipant[]
+  messages            Message[]
+  passwordResetTokens PasswordResetToken[]
+}
+
+/// A one-time link mailed to someone who cannot sign in.
+///
+/// The token itself is never stored — only a SHA-256 of it, the same reasoning
+/// that keeps `passwordHash` out of `User.password`: a leaked database must not
+/// hand over working credentials. SHA-256 rather than bcrypt because the value
+/// being hashed is 32 bytes of `crypto.randomBytes`, and a slow hash defends
+/// against guessing that is already impossible.
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  /// Set the moment the token is redeemed. A used token is kept rather than
+  /// deleted so that a second attempt can be told apart from a made-up one in
+  /// the logs — both still answer the same thing to the caller.
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model Conversation {
@@ -53,11 +84,30 @@ model Conversation {
   messages     Message[]
 }
 
+/// Who may kick and rename inside a group.
+///
+/// Two values, not a permission matrix: the only distinction the app makes is
+/// "may act on other people" versus "may act on yourself". Adding a member is
+/// deliberately not gated by it — see ADR 0008.
+enum ConversationRole {
+  OWNER
+  MEMBER
+}
+
 model ConversationParticipant {
-  id                String   @id @default(cuid())
+  id                String           @id @default(cuid())
   conversationId    String
   userId            String
-  joinedAt          DateTime @default(now())
+  /// Every group has exactly one OWNER while it has anyone in it: the creator
+  /// to begin with, and on their way out the longest-standing member left (see
+  /// `removeParticipant`). Meaningless in a direct conversation, where there is
+  /// nothing to administer — both rows there stay MEMBER.
+  ///
+  /// PostgreSQL enforces the cross-row rule Prisma cannot express: the phase 7
+  /// migration adds an OWNER-only unique index plus a deferred constraint
+  /// trigger, so a non-empty group has exactly one owner at commit time.
+  role              ConversationRole @default(MEMBER)
+  joinedAt          DateTime         @default(now())
   // Newest message this participant has read. Per-participant, so it belongs
   // here and not on Message: "read" is a fact about a person, and a group of
   // ten has ten different answers for the same message.
@@ -73,19 +123,36 @@ model ConversationParticipant {
   @@unique([conversationId, userId])
 }
 
+/// Who wrote a message — a person, or the app itself.
+///
+/// The discriminator for `Message.authorId` being nullable. Reading "authorId
+/// is null" as "system" would work today and break the first time a message
+/// outlives its author, which is precisely what a deleted account produces.
+enum MessageKind {
+  USER
+  SYSTEM
+}
+
 model Message {
-  id             String   @id @default(cuid())
+  id             String      @id @default(cuid())
   conversationId String
-  authorId       String
+  /// Null only on a SYSTEM message, which nobody wrote.
+  /// Enforced together with `kind` by the phase 7 database check constraint.
+  authorId       String?
+  kind           MessageKind @default(USER)
   // Empty string for a message that is only an image. Nullable would be more
   // truthful, but every read of this column would then need a null branch to
   // save one for the write — and "no caption" and "empty caption" are the same
   // thing to a reader.
+  //
+  // On a SYSTEM message this holds the sentence itself, already rendered
+  // ("An added Binh"). The names in it are a snapshot of who people were when
+  // it happened, deliberately — see ADR 0009.
   content        String
-  createdAt      DateTime @default(now())
+  createdAt      DateTime    @default(now())
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  author       User         @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  author       User?        @relation(fields: [authorId], references: [id], onDelete: Cascade)
   attachment   Attachment?
 
   @@index([conversationId, createdAt])

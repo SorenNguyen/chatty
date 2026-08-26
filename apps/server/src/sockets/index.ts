@@ -1,11 +1,10 @@
 import type { Server as HttpServer } from "node:http";
 import { Server } from "socket.io";
-import jwt from "jsonwebtoken";
+import { verifyAccessToken } from "../lib/access-token.js";
 import { env } from "../config/env.js";
 import { logger } from "../lib/logger.js";
 import { prisma } from "../lib/prisma.js";
 import { setIO, userRoom, type ChattyServer, type ChattySocket } from "../lib/socket-bus.js";
-import type { JwtPayload } from "../middlewares/require-auth.js";
 import { announceConnected, announceDisconnected, conversationRoomsOf } from "./presence.js";
 import { registerTypingHandlers } from "./typing.js";
 
@@ -40,14 +39,14 @@ export function initSockets(httpServer: HttpServer): ChattyServer {
 		const token = socket.handshake.auth.token as string | undefined;
 		if (!token) return next(new Error("Missing auth token"));
 
-		try {
-			// Same payload shape as requireAuth — if `sub` changes, both change.
-			const payload = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
-			socket.data.userId = payload.sub;
-			next();
-		} catch {
-			next(new Error("Invalid or expired token"));
-		}
+		// The same function `requireAuth` uses, not a copy of it. The copy that
+		// used to be here missed phase 4's attachment-token guard entirely.
+		verifyAccessToken(token)
+			.then((userId) => {
+				socket.data.userId = userId;
+				next();
+			})
+			.catch(() => next(new Error("Invalid or expired token")));
 	});
 
 	io.on("connection", (socket) => {

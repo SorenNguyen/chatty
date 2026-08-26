@@ -98,17 +98,24 @@ and `.github/workflows/verify.yml`.
 Working end to end: register, sign in, find people by `@handle`, start a direct chat or a group,
 send messages that arrive in real time over WebSocket, scroll up to load older history, upload an
 avatar, see unread badges, read receipts, typing indicators and who is online, manage a group —
-add or remove a member, rename it, leave it — edit your own profile or change your password, and
-send an image with or without a caption.
+invite someone, rename it, remove a member, leave it, with every one of those announced in the chat
+log — edit your own profile, change your password, or reset a forgotten one, and send an image with
+or without a caption.
 
-Verified by 153 server tests (against a real Postgres), 92 web tests, and 5 Playwright specs driving
-a real browser against a real server — plus typecheck, lint, the conventions audit, and a production
-image build. CI runs all of it except the browser suite on every push.
+A group has an owner: the person who created it. Only they can rename it or remove somebody else;
+anyone can invite, and anyone can leave. See [ADR 0008](docs/adr/0008-group-owner-role.md).
+
+Verified by 204 server tests (against a real Postgres), 111 web tests, and 11 Playwright specs
+driving a real browser against a real server — plus typecheck, lint, the conventions audit, and a
+production image build. CI runs all of it except the browser suite on every push.
 
 **[docs/ROADMAP.md](docs/ROADMAP.md) is the current source of truth for what is done and what is
-next.** Phases 1, 2, 4 and 5 are complete. Phase 3 is done apart from password reset, which is
-stepped over rather than started: it is the only item on the roadmap that cannot be finished inside
-the repository, because it needs an email provider and a verified sending domain.
+next.** Phases 1 to 7 are complete. Phase 7 makes group and password-reset transitions safe under
+concurrent requests: one conversation lock orders membership-sensitive writes, PostgreSQL enforces
+the owner/message invariants, and fault-injection tests prove partial writes do not escape. Password
+reset is complete at repository level: the flow, tokens and session invalidation are real, while the
+development mailer logs the link. Production delivery still needs a provider plus the durable
+outbox/worker described under Known gaps.
 
 Largest known gaps:
 
@@ -118,12 +125,15 @@ Largest known gaps:
   broadcast by the first. `docker-compose.prod.yml` always sets it and the server warns loudly in
   production when it is missing, but a hand-rolled deployment can still get this wrong.
 - No message edit/delete, no message search.
-- **No admin role for groups** — any participant can add, remove, or rename. See
-  [ADR 0006](docs/adr/0006-flat-group-permissions.md).
-- **Changing a password does not sign other sessions out.** Nothing revokes a JWT, so a session
-  opened before the change keeps working until the token expires — up to 7 days. Enough for "I want a
-  better password", not enough for "someone else has my account".
-- No password reset, and no way to change the email address — both need outbound email.
+- **A group owner cannot hand over without leaving**, there is no second admin and no demotion, and
+  any member can still invite a stranger. See [ADR 0008](docs/adr/0008-group-owner-role.md).
+- **A system line does not follow a later rename** — "An added Binh" keeps the names people had when
+  it happened, by design. See [ADR 0009](docs/adr/0009-system-messages.md).
+- **No outbound email.** Password reset works, but the link is written to the server log rather than
+  sent. Delivery is detached from the generic 204 so provider failure cannot reveal registered
+  addresses; a real provider therefore also needs a durable outbox/worker with retry, not only an API
+  call. Changing the email address on an account is not built at all — it needs the same machinery to
+  prove the new address is reachable.
 - **An attachment URL works for anyone holding it, until it expires.** Signed and scoped to one image
   with a one-hour life, but bearer proof for that hour — see
   [ADR 0007](docs/adr/0007-signed-attachment-urls.md). One image per message; no lightbox, no upload

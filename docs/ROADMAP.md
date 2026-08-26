@@ -116,13 +116,13 @@ Also done along the way:
   em-dashes these docs are full of, and it does not know the Prisma schema language at all
   (`npx prisma format` does). `npx prettier --check .` now exits clean.
 
-## Phase 3 — Group and account management — `done` except item 10
+## Phase 3 — Group and account management — `done`
 
 | # | Item | How it ended up |
 | --- | --- | --- |
-| 8 | Group: add/remove member, leave, rename | `done` — see below |
+| 8 | Group: add/remove member, leave, rename | `done` — see below, and revisited in phase 6 |
 | 9 | Edit profile, change password | `done` — see below |
-| 10 | Password reset (needs outbound email) | `deferred` — see below |
+| 10 | Password reset (needs outbound email) | `done` — stepped over here, finished last; see below |
 
 ### Item 8: group management
 
@@ -134,7 +134,10 @@ you left).
 
 **No admin role — any participant can add, remove, or rename.** Recorded in
 [ADR 0006](adr/0006-flat-group-permissions.md) rather than left as an unstated default, because it is
-the kind of thing that looks like an oversight if it isn't written down. Leaving and being removed are
+the kind of thing that looks like an oversight if it isn't written down. **Phase 6 changed this**:
+groups now have an owner, and ADR 0006's decision is superseded by
+[ADR 0008](adr/0008-group-owner-role.md). It was not an oversight, and it was still the wrong
+default — the first person to open the panel asked "is everyone the owner?" within a minute. Leaving and being removed are
 the same function call with the target set to yourself; a group is allowed to end up with zero
 participants, the same way a conversation is never deleted.
 
@@ -169,11 +172,11 @@ going through `register()` (these tests never sign in): 25-61ms per test instead
 green on three consecutive full runs at the default timeout. The trap is now documented in
 `tests/setup.ts`, next to the TRUNCATE that springs it.
 
-Known, deliberately deferred rather than missed:
+Known, deliberately deferred rather than missed (the second and third were **closed by phase 6**):
 
 - No confirmation dialog before removing someone or leaving. Nothing else in the app has one either.
-- No system message in the chat log for "X added Y" / "X left" / "renamed to Z". Would need a message
-  with no author, which is a bigger schema decision than this item asked for — see Known gaps.
+- ~~No system message in the chat log for "X added Y" / "X left" / "renamed to Z".~~ Done in phase 6:
+  the schema decision it was waiting on — a message with no author — was made there.
 - Adding a participant does not backfill their `unreadCount` from before they joined — a newly added
   member's marker starts null, so the existing read-count query treats all prior history as unread,
   same as it would for anyone with an unset marker. Not special-cased; see Known gaps.
@@ -182,7 +185,8 @@ Known, deliberately deferred rather than missed:
 
 `PATCH /users/me` changes a display name, a handle, or both. `POST /auth/password` changes a
 password, given the current one. Two endpoints rather than one because they are not the same kind of
-operation: one edits a resource and answers with it, the other verifies a credential and answers 204.
+operation: one edits a resource and answers with it, the other verifies a credential and returns the
+replacement access token required after it invalidates every older session.
 
 **Password change lives in the auth module, not with the rest of the profile.** It is the only place
 besides `register` that may hash a password, and `PASSWORD_HASH_ROUNDS` having one home is what keeps
@@ -213,10 +217,13 @@ importing from `features/profile`, which the frontend conventions rule out.
 **Only the changed field is sent.** The server accepts both, but a request carrying a field nobody
 touched can overwrite an edit made in another tab.
 
-Known, deliberately deferred rather than missed:
+Known at the end of item 9, then closed by item 10:
 
-- **Changing a password does not sign other sessions out** — the largest one, and it is in Known gaps
-  below rather than buried here, because it limits what the feature is good for.
+- ~~Changing a password does not sign other sessions out.~~ Both password-change paths now update
+  `passwordChangedAt`, disconnect live sockets and issue the caller a replacement token.
+
+Still deliberately deferred rather than missed:
+
 - Email cannot be changed. It needs proof that the new address is reachable, which is the same
   outbound-email machinery item 10 is waiting on. Shown read-only on the profile form rather than
   omitted, so nobody goes looking for it elsewhere.
@@ -224,17 +231,26 @@ Known, deliberately deferred rather than missed:
   same small race. The unique index is what actually prevents a collision; the loser gets a 500
   rather than a 409.
 
-### Item 10: why password reset was stepped over
+### Item 10: password reset, stepped over and then finished
 
-It is the only item on this roadmap that cannot be finished inside the repository. A reset link has to
-reach an inbox, which means an email provider, a verified sending domain, and credentials — none of
-which a test can stand in for, and all of which would have to be decided before the first line was
-written. Phase 4 needed none of that, so it went first.
+It was the only item on this roadmap that cannot be *finished* outside a deployment: a reset link has
+to reach an inbox, which means a provider, a verified sending domain and credentials, none of which a
+test can stand in for. So phases 4 and 5 went first, and the flow was then built against the shape
+this file predicted — a `Mailer` interface with a console transport, so the provider is one file
+(`lib/mailer.ts`) rather than a dependency threaded through the service.
 
-Nothing about the work is blocked otherwise: the token table, single-use and expiry rules, and the
-rate limit are all ordinary. When it is picked up, the shape to aim for is a `Mailer` interface with a
-console transport in development, so the provider is one file rather than a dependency threaded
-through the service.
+`POST /auth/password-reset` always answers 204, whether or not the address has an account: a
+different status, message or delay is a way to ask who is registered here. `POST
+/auth/password-reset/confirm` redeems the link — 32 random bytes, stored only as a SHA-256, single
+use, one hour. SHA-256 rather than bcrypt because what is being hashed is already unguessable; a slow
+hash defends against nothing here.
+
+**It also closed the largest gap on this list.** A reset exists for "someone else has my account",
+which is worth nothing if the sessions they opened keep working. `User.passwordChangedAt` is now
+written by both the reset and the ordinary password change, `verifyAccessToken` refuses any JWT whose
+`iat` is older than it, and the same check runs in the socket handshake — with the account's live
+sockets disconnected on the spot. The caller gets a replacement token in the response, because their
+own session is one of the ones that just ended.
 
 ## Phase 4 — Attachments — `done`
 
@@ -360,7 +376,7 @@ unskippable.
 
 ### Item 15: Playwright, and the bug it found on its first run
 
-Five specs in `e2e/`, driving a real browser against a real server against a real database — its own
+Eleven specs in `e2e/`, driving a real browser against a real server against a real database — its own
 database, `chatty_e2e`, because the global setup truncates it.
 
 The centre of it is a two-context test: Alice and Bob register through the actual sign-up form, Alice
@@ -379,10 +395,11 @@ does not need a browser to be caught twice.
 
 Known, deliberately deferred rather than missed:
 
-- **The suite is capped at 10 registrations per run.** `NODE_ENV` is left as `development` so the
-  browser meets the same rate limiters a user would, and every spec registers its own accounts. Past
-  the cap, tests fail on a 429 that from inside the browser looks like a form that just does not
-  submit. Documented at the constant; the escape hatch is `NODE_ENV: "test"`.
+- **The suite runs with the rate limiters off** (`NODE_ENV: "test"`). It ran as `development` first,
+  so the browser would meet the same middleware a user does; what that bought was a ceiling of about
+  eight tests, after which `/auth/register`'s 10-per-hour limit turned every new spec into a sign-up
+  form that silently would not submit. No spec ever asserted a limit, so the coverage was imaginary
+  and the trap was real. The limiters are exercised by hand instead — see phase 3, item 9.
 - One browser (chromium). Cross-browser matters for a product and not yet for this.
 - `test:e2e` is not part of `verify`. It needs two servers and a browser download, and a definition
   of done that takes a minute is one people stop running.
@@ -391,20 +408,162 @@ Known, deliberately deferred rather than missed:
 
 ---
 
+## Phase 6 — What the first real user noticed — `done`
+
+Not planned work. Someone opened a group, watched a member leave, and asked three questions in a row:
+where is the notice, why did that person's messages lose their face, and is everybody the owner here?
+All three were on the list below as known gaps, which is a fair description of what a known gap is —
+a bug somebody has already agreed to be surprised by later.
+
+| # | Item | How it ended up |
+| --- | --- | --- |
+| 16 | A message keeps its author after they leave | `done` — the bug behind the missing avatar |
+| 17 | System messages for group events | `done` — [ADR 0009](adr/0009-system-messages.md) |
+| 18 | A group owner, and what only they may do | `done` — [ADR 0008](adr/0008-group-owner-role.md) |
+
+### Item 16: a message is not a pointer into the participant list
+
+`MessageDTO` carried `authorId`, and the client resolved it against
+`conversation.participants` to find a name and an avatar. That answers "who is in this conversation
+now", which is a different question from "who wrote this" — and the two diverge the moment anyone
+leaves. Their messages stayed in the log with a blank margin where the avatar had been and, in a
+group, no name above the bubble.
+
+`MessageDTO.author` is now the whole `UserDTO`, selected with the message. One join per page of
+messages, in exchange for history that keeps its faces. `authorId` is gone rather than kept
+alongside: two spellings of the same fact is how they drift.
+
+Two smaller things fell out of it, both real:
+
+- **`isGroup` is a prop, not a headcount.** The message list decided whether to print author names
+  with `participants.length > 2`, so a three-person group that lost a member stopped naming
+  anybody — dropping the names from exactly the messages that had just become unattributable.
+- **One projection for a `UserDTO`.** Three modules had grown their own copy of the same five-line
+  mapping (users, conversations, and now messages), and `avatarUrl` — built from a timestamp, with a
+  cache-busting `?v=` — is precisely the field a fourth copy forgets. `users.mapper.ts` now owns it,
+  the way `messages.mapper.ts` owns a message.
+
+### Item 17: the log says what happened
+
+"An added Binh", "Chi left the group", "An renamed the group to Weekend football" — a real `Message`
+row with `kind = SYSTEM` and no author, written with the conversation timestamp and broadcast on the
+same `message:new` everyone already listens to. Phase 7 put the surrounding membership/name change
+in that transaction too. It survives a reload, sits in
+order among the messages around it, and reaches people who were offline when it happened; a notice
+rendered client-side from `conversation:updated` does none of the three.
+
+The sentence is rendered once, when the event happens, and stored. The alternative — ids resolved at
+read time — has to resolve them against the people in a group event, who are exactly the people most
+likely to have left it. That is item 16's bug, wearing a different hat. See
+[ADR 0009](adr/0009-system-messages.md) for the trade-off this accepts: an old line does not follow a
+later rename.
+
+System lines never count towards an unread badge, and that falls out of the SQL rather than being
+special-cased — the unread query compares authors, and `null <> $viewer` is null, not true.
+
+### Item 18: somebody owns the group
+
+The creator owns it. Only the owner renames it or removes anyone else; **anyone may invite, and
+anyone may leave** — an owner who could hold people in a group would be a worse failure than a group
+with no owner. An owner on their way out hands it to the longest-standing member left, because the
+alternative is a group nobody can ever administer again: no code path would exist to grant the role.
+
+Pre-existing groups have no recorded creator, so the migration promotes each group's
+longest-standing participant. Without that backfill every group made before this change would have
+been permanently ownerless.
+
+The UI states the rule rather than enforcing it silently: the rename field is disabled with a line
+saying who can change it, remove buttons are absent for members, and the owner's row carries a badge
+so it is obvious who to ask. `assertOwner` throws a new `ForbiddenError` (403) rather than the 404
+`assertParticipant` uses — there is nothing left to hide from someone who is already in the group,
+and a 404 would leave the UI unable to explain itself.
+
+Known, deliberately deferred rather than missed:
+
+- No manual hand-over: an owner cannot promote someone while staying in the group. One endpoint and
+  one button when it is wanted; the check it needs already exists.
+- No second admin and no demotion. A second tier needs a rule for what an admin may do to another
+  admin, and nothing has asked that question yet.
+- Still no confirmation dialog before a kick or a leave, in line with the rest of the app.
+
+## Phase 7 — Security and consistency under concurrency — `done`
+
+Phase 6 made the visible behaviour right; this phase makes the same behaviour stay right when two
+requests arrive together or one database write fails. The trigger was a review of the uncommitted
+Phase 6/password-reset work before it entered history, not a new product surface.
+
+| # | Item | How it ended up |
+| --- | --- | --- |
+| 19 | Password-reset links under concurrency | A per-user row lock serialises issuance; redeem atomically claims a still-unused, still-live token, so exactly one concurrent request can change the password. |
+| 20 | Password-reset account-enumeration hardening | Known and unknown addresses share a 300ms response floor; mail delivery is detached from the HTTP path, so provider latency/failure cannot change the generic 204. |
+| 21 | Atomic group transitions | Add, kick, leave, rename, owner transfer, system messages and `updatedAt` now commit or roll back together. Socket effects happen only after commit. |
+| 22 | Database and authorization invariants | PostgreSQL enforces one owner per non-empty group and `Message.kind`/author consistency; conversation writes share a row lock and re-check membership after it. |
+
+### Reset means one link, even with two requests
+
+The old sequential test proved that a token failed after one completed redemption. It did not prove
+two requests could not both read `usedAt = null`, hash different passwords and commit in parallel.
+Redemption now claims the token with one conditional update (`usedAt IS NULL`, `expiresAt > now`)
+inside the same transaction as the password update. A zero-row claim is the same invalid-link error
+as an expired or imaginary token. Fault-injection tests also prove a failed password update rolls the
+claim back rather than burning a usable link.
+
+Issuance had the mirror race: two requests could both invalidate the old set before either created a
+replacement, leaving two current links. `SELECT ... FOR UPDATE` on the user makes invalidate + create
+one ordered transition, and a concurrency test asserts only one unspent row survives.
+
+The endpoint's body and status were already generic, but an unknown address returned immediately
+while a known one performed writes and sent mail. Both paths now enter the same transaction and wait
+for a 300ms response floor. Delivery starts after the token commits but is not awaited: a provider
+only runs for a real account, so allowing its latency or failure to affect HTTP would recreate the
+oracle. The current console mailer is process-local; a real provider needs a durable outbox, recorded
+below rather than hidden by this response policy.
+
+### A group transition is one fact
+
+All mutations of one conversation take the same `Conversation` row lock. Permission checks run after
+that lock, then the membership/name change, system messages, owner hand-over and timestamp update run
+inside one interactive Prisma transaction. The result has a clear order under concurrency. If the
+owner and their likely successor leave together, one finishes first and the second chooses from the
+membership that actually remains.
+
+`sendMessage` joins the same protocol. It keeps a cheap membership check before attachment work, but
+re-checks after taking the lock; a send racing a kick either commits before the kick or sees the
+completed removal and fails. It cannot pass authorization in one state and write in another.
+
+Socket.IO is deliberately outside the database transaction and runs only after commit. A realtime
+event can be lost if the process dies in that narrow window, but durable state never lies and reload
+repairs the screen. Guaranteed event delivery would require a transactional outbox — see
+[ADR 0010](adr/0010-serialize-conversation-writes.md).
+
+### The database owns the invariant
+
+Application checks are not enough for imports, maintenance scripts or a future code path. Two raw
+SQL migrations add the pieces Prisma 5 cannot declare:
+
+- an OWNER-only partial unique index: at most one owner per conversation;
+- a deferred constraint trigger: every non-empty group has one owner at commit, direct conversations
+  have none, and an empty group remains allowed;
+- a `Message` check constraint: `SYSTEM` means no author and `USER` means an author exists.
+
+The owner check is deferred because a hand-over briefly passes through zero owners inside an
+otherwise valid transaction. The migration validates existing rows too. Database tests attempt each
+invalid state directly, concurrency tests exercise the races, and fault-injection tests force system
+message writes to fail and prove no membership/name/socket side effect escapes.
+
 ## Known gaps not on the roadmap yet
 
 - **Handle placement.** Asking for a handle during registration is friction. Alternatives discussed:
   auto-generate one and let the user change it later (Instagram-style), or move the field into
   onboarding. Deliberately deferred, not forgotten.
-- **Changing a password does not sign other sessions out.** Nothing is revoked: a JWT stays valid
-  until it expires, and this app has no denylist to add one to, so a session opened before the change
-  survives it for up to the token's 7 days. That makes the feature good for "I want a better
-  password" and **not** sufficient for "someone else has my account" — which is the case a password
-  change is most often reached for. Closing it needs a `passwordChangedAt` column checked against
-  each token's `iat`, which turns `requireAuth` into a database read on every request, has to be
-  mirrored in the socket handshake, and has to disconnect sockets that are already open. That is an
-  auth change rather than a profile one, which is why item 9 did not smuggle it in. The UI says so
-  out loud after a successful change rather than letting the user assume otherwise.
+- **Every authenticated request now reads the user row.** The cost of closing the gap above:
+  `verifyAccessToken` compares each token's `iat` against `passwordChangedAt`, so a JWT is no longer
+  self-contained proof and both HTTP and the socket handshake hit the database. Correct, and the
+  thing to remember before adding a per-request query of your own.
+- **Password-reset delivery has no durable outbox.** It is detached from the HTTP response so a slow
+  or failed provider cannot reveal whether the address exists, and delivery failures are logged
+  without the token. The current console transport completes in-process. A real mail provider needs
+  an outbox/worker with retry before this is reliable across a crash between commit and send.
 - **An attachment URL is bearer proof until it expires.** Copied out of the network tab it works
   anywhere for up to an hour, and someone removed from a group can still fetch an image whose token
   they were handed a minute earlier. Inherent to signed URLs rather than an oversight — see
@@ -433,19 +592,21 @@ Known, deliberately deferred rather than missed:
   not exist" failures scattered across unrelated files, which reads as a broken suite rather than a
   busy database. The seed script has a guard for pointing at the wrong database; this is the same
   class of problem and has none.
-- **No system messages for group changes.** "An added Binh", "Chi left", "renamed to Weekend
-  football" appear nowhere in the chat log — only in `conversation:updated`, which a client currently
-  applies silently. Doing this properly needs a message with no author (`Message.authorId` is
-  required, referencing a `User`), which is a schema decision bigger than phase 3's add/remove/rename
-  scope. Deliberately deferred, not missed.
+- **A system line does not follow a later rename.** "An added Binh" is stored as text when it
+  happens, so it keeps the names people had at the time. Deliberate — see
+  [ADR 0009](adr/0009-system-messages.md) — and recorded here so it is not "fixed" by accident. It is
+  also the one thing localisation would change.
+- **Nothing prunes system lines.** A group with a lot of churn accumulates them in its history, the
+  same way it accumulates messages. Same class as having no message deletion.
 - **A newly added group member's unread count includes the group's entire prior history.** Their read
   marker starts null, and the existing unread query treats a null marker as "count everything" — it
   has no way to distinguish "never read" from "wasn't here yet". `ConversationParticipant.joinedAt`
   already exists and could bound the query, but doing that for new joiners only (and not everyone
   else) is a second axis on unread math that was not asked for.
-- **No admin role for groups.** Any participant can rename, add, or remove any other — see
-  [ADR 0006](adr/0006-flat-group-permissions.md). Fine for a learning project; would need real thought
-  before this became a product other people rely on.
+- **A group's owner cannot hand it over without leaving,** and there is no second admin and no
+  demotion — one owner, until they walk out. See [ADR 0008](adr/0008-group-owner-role.md).
+- **Any member can still add a stranger to a group.** Deliberate (inviting is how a group grows), and
+  the owner can undo it. Every add is now named in the log, which is what makes that acceptable.
 
 ## Verification bar
 

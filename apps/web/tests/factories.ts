@@ -1,6 +1,7 @@
 import type {
 	AttachmentDTO,
 	ConversationDTO,
+	ConversationRole,
 	CurrentUserDTO,
 	MessageDTO,
 	ParticipantDTO,
@@ -38,10 +39,16 @@ export function makeParticipant(
 	id: string,
 	displayName: string,
 	lastReadMessageId: string | null = null,
+	role: ConversationRole = "member",
 ): ParticipantDTO {
-	return { ...makeUser(id, displayName), lastReadMessageId };
+	return { ...makeUser(id, displayName), role, lastReadMessageId };
 }
 
+/**
+ * A message from a person. `authorId` doubles as the author's display name,
+ * which is enough for everything that renders one — a test that cares about
+ * the two differing builds the author itself.
+ */
 export function makeMessage(
 	id: string,
 	authorId: string,
@@ -51,9 +58,28 @@ export function makeMessage(
 	return {
 		id,
 		conversationId: "conversation-1",
-		authorId,
+		kind: "user",
+		author: makeUser(authorId, authorId),
 		content,
 		attachment,
+		createdAt: "2026-08-23T10:00:00.000Z",
+	};
+}
+
+/**
+ * A group event — "An added Binh", "Chi left the group".
+ *
+ * Nobody wrote it, so there is no author to pass: that null is the whole
+ * difference, and it is what the message list branches on.
+ */
+export function makeSystemMessage(id: string, content: string): MessageDTO {
+	return {
+		id,
+		conversationId: "conversation-1",
+		kind: "system",
+		author: null,
+		content,
+		attachment: null,
 		createdAt: "2026-08-23T10:00:00.000Z",
 	};
 }

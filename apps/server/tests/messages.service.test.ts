@@ -44,7 +44,10 @@ describe("sendMessage", () => {
 		const message = await sendMessage(minhId, conversation.id, { content: "Chào An" });
 
 		expect(message.content).toBe("Chào An");
-		expect(message.authorId).toBe(minhId);
+		expect(message.kind).toBe("user");
+		// The whole author, not just an id: a message has to keep its name and
+		// face after its writer leaves the group.
+		expect(message.author?.id).toBe(minhId);
 		expect(message.conversationId).toBe(conversation.id);
 		await expect(prisma.message.count({ where: { conversationId: conversation.id } })).resolves.toBe(1);
 	});

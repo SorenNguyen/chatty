@@ -9,6 +9,17 @@ interface AuthState {
 	isRestoring: boolean;
 	login: (email: string, password: string) => Promise<void>;
 	register: (input: RegisterRequest) => Promise<void>;
+	/**
+	 * Changes the password and keeps this tab signed in.
+	 *
+	 * Here rather than in the form because it is a session operation, not a
+	 * profile one: the server invalidates every token on the account, so the
+	 * replacement has to be stored and the socket — which authenticated with the
+	 * old one and has just been disconnected by the server — has to be dropped so
+	 * the next consumer opens a fresh one. `logout` is in this store for exactly
+	 * the same reason.
+	 */
+	changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
 	logout: () => void;
 	restoreSession: () => Promise<void>;
 	/**
@@ -44,6 +55,16 @@ export const useAuth = create<AuthState>((set) => ({
 
 	setCurrentUser(user) {
 		set({ currentUser: user });
+	},
+
+	async changePassword(currentPassword, newPassword) {
+		const { token } = await api.changePassword({ currentPassword, newPassword });
+		storeToken(token);
+		// The old socket cannot be reused: the server closed it, and socket.io
+		// would reconnect with the token it captured when it was created — the one
+		// that no longer works. Dropping it makes the next getSocket() build one
+		// with the token just stored.
+		closeSocket();
 	},
 
 	logout() {

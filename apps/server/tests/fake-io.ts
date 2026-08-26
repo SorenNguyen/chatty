@@ -20,6 +20,8 @@ export interface FakeIO {
 	emits: CapturedEmit[];
 	joins: CapturedJoin[];
 	leaves: CapturedLeave[];
+	/** Rooms whose sockets were forcibly closed — how ending a session looks from here. */
+	disconnects: string[];
 }
 
 /**
@@ -38,6 +40,7 @@ export function installFakeIO(): FakeIO {
 	const emits: CapturedEmit[] = [];
 	const joins: CapturedJoin[] = [];
 	const leaves: CapturedLeave[] = [];
+	const disconnects: string[] = [];
 
 	const fakeIO = {
 		to(room: string) {
@@ -55,11 +58,14 @@ export function installFakeIO(): FakeIO {
 				socketsLeave(leftRoom: string) {
 					leaves.push({ fromRoom, leftRoom });
 				},
+				disconnectSockets() {
+					disconnects.push(fromRoom);
+				},
 			};
 		},
 	};
 
 	setIO(fakeIO as unknown as ChattyServer);
 
-	return { emits, joins, leaves };
+	return { emits, joins, leaves, disconnects };
 }

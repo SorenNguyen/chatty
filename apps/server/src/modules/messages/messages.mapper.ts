@@ -1,5 +1,7 @@
 import type { MessageDTO } from "@chatty/shared-types";
+import type { MessageKind } from "@prisma/client";
 import { buildAttachmentUrl } from "../../lib/attachment-storage.js";
+import { toUserDTO, userSelect, type UserRow } from "../users/users.mapper.js";
 
 /**
  * How a message row becomes a `MessageDTO`, and which columns that needs.
@@ -31,7 +33,9 @@ interface AttachmentRow {
 export interface MessageRow {
 	id: string;
 	conversationId: string;
-	authorId: string;
+	kind: MessageKind;
+	/** Null on a system message, which nobody wrote. */
+	author: UserRow | null;
 	content: string;
 	createdAt: Date;
 	attachment: AttachmentRow | null;
@@ -40,7 +44,12 @@ export interface MessageRow {
 export const messageSelect = {
 	id: true,
 	conversationId: true,
-	authorId: true,
+	kind: true,
+	// The whole author, not their id. Resolving the id against the conversation's
+	// participants — which is what the client used to do — loses the name and the
+	// avatar of everyone who has since left the group, while their messages stay.
+	// One join per page of messages is the price of history that keeps its faces.
+	author: { select: userSelect },
 	content: true,
 	createdAt: true,
 	attachment: { select: { id: true, width: true, height: true, byteSize: true } },
@@ -50,7 +59,8 @@ export function toMessageDTO(row: MessageRow): MessageDTO {
 	return {
 		id: row.id,
 		conversationId: row.conversationId,
-		authorId: row.authorId,
+		kind: row.kind === "SYSTEM" ? "system" : "user",
+		author: row.author ? toUserDTO(row.author) : null,
 		content: row.content,
 		// The URL is built per response rather than stored: it carries a signed
 		// token that expires, so a cached copy would rot.

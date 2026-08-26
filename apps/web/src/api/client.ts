@@ -2,6 +2,7 @@ import type {
 	AddParticipantRequest,
 	AuthResponse,
 	ChangePasswordRequest,
+	ChangePasswordResponse,
 	ConversationDTO,
 	ConversationReadEvent,
 	CurrentUserDTO,
@@ -10,6 +11,8 @@ import type {
 	MessageDTO,
 	RegisterRequest,
 	RenameConversationRequest,
+	RequestPasswordResetRequest,
+	ResetPasswordRequest,
 	UpdateProfileRequest,
 	UserDTO,
 } from "@chatty/shared-types";
@@ -101,12 +104,29 @@ export const api = {
 	},
 
 	/**
-	 * Sets a new password. Answers 204, so there is nothing to return — and
-	 * nothing to store: the token in hand keeps working, because changing a
-	 * password does not revoke sessions. See auth.service.ts#changePassword.
+	 * Sets a new password and returns a replacement token.
+	 *
+	 * The replacement is not optional. Changing a password ends every session on
+	 * the account, the caller's included, so the token this request was made with
+	 * stops working the moment it returns. `useAuth.changePassword` is what
+	 * stores it and reopens the socket — call that rather than this.
 	 */
-	changePassword(input: ChangePasswordRequest): Promise<void> {
-		return post<void>("/auth/password", input);
+	changePassword(input: ChangePasswordRequest): Promise<ChangePasswordResponse> {
+		return post<ChangePasswordResponse>("/auth/password", input);
+	},
+
+	/**
+	 * Asks for a reset link. Answers 204 whether or not the address has an
+	 * account, so a caller learns nothing about who is registered — which means
+	 * the UI must not claim the mail was sent, only that it would have been.
+	 */
+	requestPasswordReset(input: RequestPasswordResetRequest): Promise<void> {
+		return post<void>("/auth/password-reset", input);
+	},
+
+	/** Redeems a link from the email. One use, one hour. */
+	resetPassword(input: ResetPasswordRequest): Promise<void> {
+		return post<void>("/auth/password-reset/confirm", input);
 	},
 
 	searchUsers(query: string): Promise<UserDTO[]> {

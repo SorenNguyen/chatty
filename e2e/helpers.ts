@@ -63,7 +63,7 @@ export async function openConversationWith(page: Page, peer: TestUser): Promise<
 	const row = page.getByRole("button", { name: new RegExp(peer.displayName) });
 	await expect(row).toBeVisible({ timeout: 15_000 });
 	await row.click();
-	await expect(page.getByLabel("Message")).toBeVisible();
+	await expect(page.getByLabel("Message", { exact: true })).toBeVisible();
 }
 
 /** Text inside the conversation itself, not the sidebar's last-message preview. */
@@ -80,8 +80,37 @@ export async function startDirectChat(page: Page, peer: TestUser): Promise<void>
 	await page.getByRole("button", { name: `Chat with ${peer.displayName}` }).click();
 }
 
+/**
+ * Starts a group with two or more people, found by handle, and names it.
+ *
+ * Two is not a typo: the app decides `isGroup` from how many *other* people are
+ * in the conversation, so a "group" of one other person is a direct chat with a
+ * name nobody sees.
+ */
+export async function startGroupChat(page: Page, peers: TestUser[], name: string): Promise<void> {
+	if (peers.length < 2) throw new Error("a group needs at least two other people");
+
+	for (const peer of peers) {
+		await page.getByLabel("Find someone").fill(peer.handle);
+		await page.getByLabel("Find someone").press("Enter");
+		await page.getByRole("button", { name: `${peer.displayName} @${peer.handle}` }).click();
+	}
+
+	await page.getByLabel("Group name (optional)").fill(name);
+	await page.getByRole("button", { name: `Create group with ${peers.length} people` }).click();
+	await expect(page.getByRole("heading", { name })).toBeVisible({ timeout: 15_000 });
+}
+
+/** Opens a conversation from the sidebar by its title. */
+export async function openConversationNamed(page: Page, name: string): Promise<void> {
+	const row = page.getByRole("button", { name: new RegExp(name) });
+	await expect(row).toBeVisible({ timeout: 15_000 });
+	await row.click();
+	await expect(page.getByLabel("Message", { exact: true })).toBeVisible();
+}
+
 /** Types into the composer and sends. */
 export async function sendMessage(page: Page, text: string): Promise<void> {
-	await page.getByLabel("Message").fill(text);
-	await page.getByLabel("Message").press("Enter");
+	await page.getByLabel("Message", { exact: true }).fill(text);
+	await page.getByLabel("Message", { exact: true }).press("Enter");
 }
