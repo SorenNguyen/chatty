@@ -121,8 +121,8 @@ Also done along the way:
 | # | Item | How it ended up |
 | --- | --- | --- |
 | 8 | Group: add/remove member, leave, rename | `done` — see below |
-| 9 | Edit profile, change password | `next` |
-| 10 | Password reset (needs outbound email) | `planned` |
+| 9 | Edit profile, change password | `done` — see below |
+| 10 | Password reset (needs outbound email) | `next` |
 
 ### Item 8: group management
 
@@ -178,6 +178,52 @@ Known, deliberately deferred rather than missed:
   member's marker starts null, so the existing read-count query treats all prior history as unread,
   same as it would for anyone with an unset marker. Not special-cased; see Known gaps.
 
+### Item 9: profile and password
+
+`PATCH /users/me` changes a display name, a handle, or both. `POST /auth/password` changes a
+password, given the current one. Two endpoints rather than one because they are not the same kind of
+operation: one edits a resource and answers with it, the other verifies a credential and answers 204.
+
+**Password change lives in the auth module, not with the rest of the profile.** It is the only place
+besides `register` that may hash a password, and `PASSWORD_HASH_ROUNDS` having one home is what keeps
+the cost factor from quietly differing between the two.
+
+**Its error message is specific — "Current password is incorrect" — where `login`'s is deliberately
+vague.** Vagueness there exists to stop an attacker learning which emails have accounts; by the time
+this endpoint runs the caller has already proved they hold the account's token, so there is nothing
+left to enumerate and precision is what a user needs to try again.
+
+**Its rate limiter is keyed by user id, not IP,** which is why `createAuthLimiter` grew a
+`keyGenerator` option. `requireAuth` runs first, so every counted request belongs to a known account:
+an attacker cannot spend a victim's budget from somewhere else, and an office behind one NAT does not
+share one. Verified by hand against a running server — the limiter's `skip` turns it off when
+`NODE_ENV` is "test", so no test in the suite can see it.
+
+**Three rules that two forms both needed were lifted rather than copied.** `displayNameSchema` and
+`passwordSchema` came out of `registerSchema` so a profile edit cannot validate a name differently
+from a signup; on the web side `constants/validation.ts` moved from `features/auth` to `src/`, and
+`CurrentUserAvatar` from `features/chat/components` to `src/components`, because the profile screen
+needs both and features may not import from each other.
+
+**Profile settings are a route (`/profile`), not an inline panel.** Everything else secondary in this
+app renders inline — starting a conversation, managing a group — but those act on the conversation on
+screen. This one edits the account, and putting it in the chat sidebar would mean `features/chat`
+importing from `features/profile`, which the frontend conventions rule out.
+
+**Only the changed field is sent.** The server accepts both, but a request carrying a field nobody
+touched can overwrite an edit made in another tab.
+
+Known, deliberately deferred rather than missed:
+
+- **Changing a password does not sign other sessions out** — the largest one, and it is in Known gaps
+  below rather than buried here, because it limits what the feature is good for.
+- Email cannot be changed. It needs proof that the new address is reachable, which is the same
+  outbound-email machinery item 10 is waiting on. Shown read-only on the profile form rather than
+  omitted, so nobody goes looking for it elsewhere.
+- The handle uniqueness check is read-then-write, the same shape `register` uses, and carries the
+  same small race. The unique index is what actually prevents a collision; the loser gets a 500
+  rather than a 409.
+
 ## Phase 4 — Attachments — `planned`
 
 | # | Item |
@@ -200,6 +246,15 @@ Known, deliberately deferred rather than missed:
 - **Handle placement.** Asking for a handle during registration is friction. Alternatives discussed:
   auto-generate one and let the user change it later (Instagram-style), or move the field into
   onboarding. Deliberately deferred, not forgotten.
+- **Changing a password does not sign other sessions out.** Nothing is revoked: a JWT stays valid
+  until it expires, and this app has no denylist to add one to, so a session opened before the change
+  survives it for up to the token's 7 days. That makes the feature good for "I want a better
+  password" and **not** sufficient for "someone else has my account" — which is the case a password
+  change is most often reached for. Closing it needs a `passwordChangedAt` column checked against
+  each token's `iat`, which turns `requireAuth` into a database read on every request, has to be
+  mirrored in the socket handshake, and has to disconnect sockets that are already open. That is an
+  auth change rather than a profile one, which is why item 9 did not smuggle it in. The UI says so
+  out loud after a successful change rather than letting the user assume otherwise.
 - **No message edit or delete**, no message search.
 - **Avatar files are not cleaned up when a user is deleted.** The database row cascades; the file on
   disk does not. Harmless today (nothing deletes users) and the wrong thing to fix in the filesystem

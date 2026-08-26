@@ -1,0 +1,111 @@
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ProfileForm } from "@/features/profile/components/profile-form";
+import { useAuth } from "@/hooks/use-auth";
+import { makeCurrentUser } from "./factories";
+
+const updateProfile = vi.fn();
+
+vi.mock("@/api/client", () => ({
+	api: {
+		updateProfile: (input: unknown) => updateProfile(input),
+	},
+}));
+
+const user = makeCurrentUser({ displayName: "Minh", handle: "minh" });
+
+beforeEach(() => {
+	updateProfile.mockReset().mockResolvedValue(makeCurrentUser({ displayName: "Minh Nguyen", handle: "minh" }));
+	// The real store, not a mock: ProfileForm's only job after a save is to write
+	// the refreshed profile into it, and a mock would prove nothing about that.
+	useAuth.setState({ currentUser: user });
+});
+
+describe("ProfileForm", () => {
+	it("cannot be submitted until something changes", () => {
+		render(<ProfileForm user={user} />);
+
+		expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+	});
+
+	it("sends only the field that changed", async () => {
+		const typist = userEvent.setup();
+		render(<ProfileForm user={user} />);
+
+		await typist.type(screen.getByLabelText("Display name"), " Nguyen");
+		await typist.click(screen.getByRole("button", { name: "Save changes" }));
+
+		// No `handle` key at all — sending an untouched field is how a second tab's
+		// edit gets overwritten.
+		expect(updateProfile).toHaveBeenCalledWith({ displayName: "Minh Nguyen" });
+	});
+
+	it("lowercases the handle before sending it", async () => {
+		const typist = userEvent.setup();
+		render(<ProfileForm user={user} />);
+
+		const handleField = screen.getByLabelText("Handle");
+		await typist.clear(handleField);
+		await typist.type(handleField, "Minh_Nguyen");
+		await typist.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(updateProfile).toHaveBeenCalledWith({ handle: "minh_nguyen" });
+	});
+
+	it("treats a case-only edit of your own handle as no change", async () => {
+		const typist = userEvent.setup();
+		render(<ProfileForm user={user} />);
+
+		const handleField = screen.getByLabelText("Handle");
+		await typist.clear(handleField);
+		await typist.type(handleField, "MINH");
+
+		expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+	});
+
+	it("rejects a handle the server would reject, without asking it", async () => {
+		const typist = userEvent.setup();
+		render(<ProfileForm user={user} />);
+
+		const handleField = screen.getByLabelText("Handle");
+		await typist.clear(handleField);
+		await typist.type(handleField, "1nope");
+		await typist.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(screen.getByText(/start with a letter/i)).toBeInTheDocument();
+		expect(updateProfile).not.toHaveBeenCalled();
+	});
+
+	it("shows the server's message when the handle is taken", async () => {
+		updateProfile.mockRejectedValue(new Error("Handle already taken"));
+		const typist = userEvent.setup();
+		render(<ProfileForm user={user} />);
+
+		const handleField = screen.getByLabelText("Handle");
+		await typist.clear(handleField);
+		await typist.type(handleField, "an_test");
+		await typist.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(await screen.findByRole("alert")).toHaveTextContent("Handle already taken");
+	});
+
+	it("writes the refreshed profile back into the auth store", async () => {
+		// Without this the sidebar keeps rendering the old name until a reload.
+		const typist = userEvent.setup();
+		render(<ProfileForm user={user} />);
+
+		await typist.type(screen.getByLabelText("Display name"), " Nguyen");
+		await typist.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(await screen.findByText("Profile saved")).toBeInTheDocument();
+		expect(useAuth.getState().currentUser?.displayName).toBe("Minh Nguyen");
+	});
+
+	it("shows the email but does not let it be edited", async () => {
+		render(<ProfileForm user={user} />);
+
+		expect(screen.getByLabelText("Email")).toHaveValue("minh@chatty.test");
+		expect(screen.getByLabelText("Email")).toBeDisabled();
+	});
+});

@@ -6,14 +6,15 @@ import type {
 	MessageDTO,
 } from "@chatty/shared-types";
 import { useCallback, useEffect, useState } from "react";
-import { LogOut } from "lucide-react";
+import { Link } from "react-router-dom";
+import { LogOut, Settings } from "lucide-react";
 import { api } from "@/api/client";
 import { Button } from "@/components/button";
+import { CurrentUserAvatar } from "@/components/current-user-avatar";
 import { useAuth } from "@/hooks/use-auth";
 import {
 	ConversationHeader,
 	ConversationList,
-	CurrentUserAvatar,
 	GroupMembersPanel,
 	MessageInput,
 	MessageList,
@@ -215,6 +216,14 @@ export function ChatPage() {
 						<p className="truncate text-sm font-semibold text-slate-900">{currentUser.displayName}</p>
 						<p className="truncate text-xs text-slate-500">@{currentUser.handle}</p>
 					</div>
+
+					<Link
+						to="/profile"
+						aria-label="Account settings"
+						className="rounded-lg px-2 py-2 text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
+					>
+						<Settings className="size-4" />
+					</Link>
 
 					<Button variant="ghost" onClick={logout} aria-label="Sign out" className="px-2">
 						<LogOut className="size-4" />

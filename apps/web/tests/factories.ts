@@ -1,4 +1,4 @@
-import type { ConversationDTO, MessageDTO, ParticipantDTO, UserDTO } from "@chatty/shared-types";
+import type { ConversationDTO, CurrentUserDTO, MessageDTO, ParticipantDTO, UserDTO } from "@chatty/shared-types";
 
 /**
  * Builders for the wire types, shared by every test file.
@@ -16,6 +16,15 @@ const FIXED_DATE = "2026-01-01T00:00:00.000Z";
 
 export function makeUser(id: string, displayName: string): UserDTO {
 	return { id, handle: id, displayName, avatarUrl: null, createdAt: FIXED_DATE };
+}
+
+/**
+ * You, rather than someone else. Separate from `makeUser` for the same reason
+ * the wire types are separate: `email` belongs only to your own profile, and a
+ * builder that adds it to everyone makes leaking it into a `UserDTO` easy.
+ */
+export function makeCurrentUser(overrides: Partial<CurrentUserDTO> = {}): CurrentUserDTO {
+	return { ...makeUser("minh", "Minh"), email: "minh@chatty.test", ...overrides };
 }
 
 export function makeParticipant(

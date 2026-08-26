@@ -1,5 +1,5 @@
 import type { Request, Response } from "express";
-import { loginSchema, registerSchema } from "./auth.schema.js";
+import { changePasswordSchema, loginSchema, registerSchema } from "./auth.schema.js";
 import * as authService from "./auth.service.js";
 
 /**
@@ -18,4 +18,13 @@ export async function loginController(req: Request, res: Response): Promise<void
 	const input = loginSchema.parse(req.body);
 	const result = await authService.login(input);
 	res.status(200).json(result);
+}
+
+export async function changePasswordController(req: Request, res: Response): Promise<void> {
+	const input = changePasswordSchema.parse(req.body);
+	await authService.changePassword(req.userId!, input);
+
+	// 204: the password changed and there is nothing to hand back. See the note
+	// on session lifetime in auth.service.ts#changePassword for why not a token.
+	res.status(204).send();
 }

@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { ValidationError } from "../../lib/errors.js";
-import { avatarParamsSchema, searchUsersQuerySchema } from "./users.schema.js";
+import { avatarParamsSchema, searchUsersQuerySchema, updateProfileSchema } from "./users.schema.js";
 import * as usersService from "./users.service.js";
 
 // req.userId is always set here: requireAuth runs before these controllers
@@ -15,6 +15,13 @@ const AVATAR_CACHE_CONTROL = "public, max-age=31536000, immutable";
 
 export async function getMeController(req: Request, res: Response): Promise<void> {
 	const user = await usersService.getUserById(req.userId!);
+
+	res.status(200).json(user);
+}
+
+export async function updateProfileController(req: Request, res: Response): Promise<void> {
+	const input = updateProfileSchema.parse(req.body);
+	const user = await usersService.updateProfile(req.userId!, input);
 
 	res.status(200).json(user);
 }

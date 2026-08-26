@@ -1,6 +1,7 @@
 import type {
 	AddParticipantRequest,
 	AuthResponse,
+	ChangePasswordRequest,
 	ConversationDTO,
 	ConversationReadEvent,
 	CurrentUserDTO,
@@ -9,6 +10,7 @@ import type {
 	MessageDTO,
 	RegisterRequest,
 	RenameConversationRequest,
+	UpdateProfileRequest,
 	UserDTO,
 } from "@chatty/shared-types";
 
@@ -87,6 +89,23 @@ export const api = {
 
 	getCurrentUser(): Promise<CurrentUserDTO> {
 		return get<CurrentUserDTO>("/users/me");
+	},
+
+	/**
+	 * Changes your own display name, handle, or both, and returns the refreshed
+	 * profile. Send only what changed — the server rejects a body with neither.
+	 */
+	updateProfile(input: UpdateProfileRequest): Promise<CurrentUserDTO> {
+		return request<CurrentUserDTO>("/users/me", { method: "PATCH", body: JSON.stringify(input) });
+	},
+
+	/**
+	 * Sets a new password. Answers 204, so there is nothing to return — and
+	 * nothing to store: the token in hand keeps working, because changing a
+	 * password does not revoke sessions. See auth.service.ts#changePassword.
+	 */
+	changePassword(input: ChangePasswordRequest): Promise<void> {
+		return post<void>("/auth/password", input);
 	},
 
 	searchUsers(query: string): Promise<UserDTO[]> {

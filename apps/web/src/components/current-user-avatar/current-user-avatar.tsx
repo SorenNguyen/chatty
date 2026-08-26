@@ -11,11 +11,11 @@ interface CurrentUserAvatarProps {
 }
 
 /**
- * Your own avatar, and the only place to change it.
+ * Your own avatar, and the only control that changes it.
  *
- * Clicking the picture opens the file dialog — there is no separate "upload"
- * button, because a full profile screen is phase 3 work and one control is
- * enough to make the feature usable before then.
+ * Clicking the picture opens the file dialog; the small x removes it. Shared
+ * rather than owned by `features/chat` because the profile screen shows the
+ * same control, and features must not import from each other.
  */
 export function CurrentUserAvatar({ user }: CurrentUserAvatarProps) {
 	const setCurrentUser = useAuth((state) => state.setCurrentUser);

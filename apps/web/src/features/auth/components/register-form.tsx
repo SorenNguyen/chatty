@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/button";
 import { TextField } from "@/components/text-field";
 import { useAuth } from "@/hooks/use-auth";
-import { HANDLE_PATTERN, MAX_HANDLE_LENGTH, MIN_HANDLE_LENGTH, MIN_PASSWORD_LENGTH } from "../constants/validation";
+import { HANDLE_PATTERN, MAX_HANDLE_LENGTH, MIN_HANDLE_LENGTH, MIN_PASSWORD_LENGTH } from "@/constants/validation";
 
 export function RegisterForm() {
 	const register = useAuth((state) => state.register);

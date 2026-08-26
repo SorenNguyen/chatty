@@ -82,16 +82,16 @@ scripts/
 
 Working end to end: register, sign in, find people by `@handle`, start a direct chat or a group,
 send messages that arrive in real time over WebSocket, scroll up to load older history, upload an
-avatar, see unread badges, read receipts, typing indicators and who is online, and manage a group —
-add or remove a member, rename it, leave it.
+avatar, see unread badges, read receipts, typing indicators and who is online, manage a group —
+add or remove a member, rename it, leave it — and edit your own profile or change your password.
 
-Verified by 101 server tests (against a real Postgres) and 57 web tests, plus typecheck, lint, the
+Verified by 123 server tests (against a real Postgres) and 71 web tests, plus typecheck, lint, the
 conventions audit, a production build, and an end-to-end run of two live socket clients against the
 running API.
 
 **[docs/ROADMAP.md](docs/ROADMAP.md) is the current source of truth for what is done and what is
-next.** Phases 1 and 2 are complete; phase 3 is in progress — group management is done, edit profile
-and password reset are next.
+next.** Phases 1 and 2 are complete; phase 3 is in progress — group management, profile editing and
+password change are done, and password reset is next.
 
 Largest known gaps:
 
@@ -102,5 +102,8 @@ Largest known gaps:
 - No attachments, no message edit/delete, no message search.
 - **No admin role for groups** — any participant can add, remove, or rename. See
   [ADR 0006](docs/adr/0006-flat-group-permissions.md).
-- No profile editing beyond the avatar, no password change or reset.
+- **Changing a password does not sign other sessions out.** Nothing revokes a JWT, so a session
+  opened before the change keeps working until the token expires — up to 7 days. Enough for "I want a
+  better password", not enough for "someone else has my account".
+- No password reset, and no way to change the email address — both need outbound email.
 - No deployment setup (Dockerfile, CI).

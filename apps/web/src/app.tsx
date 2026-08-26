@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { LoginPage } from "@/features/auth/pages/login-page";
 import { ChatPage } from "@/features/chat/pages/chat-page";
+import { ProfilePage } from "@/features/profile/pages/profile-page";
 import { useAuth } from "@/hooks/use-auth";
 
 export function App() {
@@ -28,6 +29,7 @@ export function App() {
 			<Routes>
 				<Route path="/login" element={currentUser ? <Navigate to="/chat" replace /> : <LoginPage />} />
 				<Route path="/chat" element={currentUser ? <ChatPage /> : <Navigate to="/login" replace />} />
+				<Route path="/profile" element={currentUser ? <ProfilePage /> : <Navigate to="/login" replace />} />
 				<Route path="*" element={<Navigate to={currentUser ? "/chat" : "/login"} replace />} />
 			</Routes>
 		</BrowserRouter>

@@ -1,3 +1,4 @@
+import type { Request } from "express";
 import rateLimit, { type RateLimitRequestHandler } from "express-rate-limit";
 import { env } from "../config/env.js";
 
@@ -16,10 +17,16 @@ import { env } from "../config/env.js";
  * effective limit would multiply. Moving to a shared store (Redis) is a
  * prerequisite for running more than one instance, not an optimisation.
  */
-function createAuthLimiter(options: { windowMs: number; limit: number; message: string }): RateLimitRequestHandler {
+function createAuthLimiter(options: {
+	windowMs: number;
+	limit: number;
+	message: string;
+	keyGenerator?: (request: Request) => string;
+}): RateLimitRequestHandler {
 	return rateLimit({
 		windowMs: options.windowMs,
 		limit: options.limit,
+		...(options.keyGenerator ? { keyGenerator: options.keyGenerator } : {}),
 		standardHeaders: "draft-7",
 		legacyHeaders: false,
 		// Tests run hundreds of registrations in seconds; a limiter would make
@@ -50,4 +57,22 @@ export const loginRateLimiter = createAuthLimiter({
 	windowMs: 15 * 60 * 1000,
 	limit: 20,
 	message: "Too many sign-in attempts. Try again later.",
+});
+
+/**
+ * Caps attempts at `POST /auth/password`, which is a password guess with a
+ * better prize than login: it is reached with a token someone may have picked
+ * up from an unlocked screen, and getting it right rewrites the credential.
+ *
+ * Keyed by user id, not IP, and that is the point of the option existing.
+ * `requireAuth` runs first, so every request counted here belongs to a known
+ * account: an attacker cannot spend a victim's budget from elsewhere, and a
+ * whole office behind one NAT does not share one.
+ */
+export const changePasswordRateLimiter = createAuthLimiter({
+	windowMs: 15 * 60 * 1000,
+	limit: 10,
+	message: "Too many password change attempts. Try again later.",
+	// Non-null because this limiter is only ever mounted after requireAuth.
+	keyGenerator: (request) => request.userId!,
 });

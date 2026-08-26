@@ -1,8 +1,8 @@
 import type { CurrentUserDTO, UserDTO } from "@chatty/shared-types";
 import { buildAvatarUrl, deleteAvatar, findAvatarPath, saveAvatar } from "../../lib/avatar-storage.js";
-import { NotFoundError } from "../../lib/errors.js";
+import { ConflictError, NotFoundError } from "../../lib/errors.js";
 import { prisma } from "../../lib/prisma.js";
-import type { SearchUsersQuery } from "./users.schema.js";
+import type { SearchUsersQuery, UpdateProfileInput } from "./users.schema.js";
 
 /**
  * Loads the signed-in user's own profile.
@@ -31,6 +31,45 @@ export async function getUserById(userId: string): Promise<CurrentUserDTO> {
 		avatarUrl: buildAvatarUrl(user.id, user.avatarUpdatedAt),
 		createdAt: user.createdAt.toISOString(),
 	};
+}
+
+/**
+ * Changes the signed-in user's own display name, handle, or both.
+ *
+ * Only the fields that were sent are written. Prisma would read an `undefined`
+ * in `data` as "leave this column alone", but `exactOptionalPropertyTypes`
+ * refuses to let one be written there at all, so each field is spread in only
+ * when it is present — same effect, and the compiler stays able to tell a
+ * missing key from a cleared one.
+ *
+ * The handle uniqueness check is read-then-write, the same shape `register`
+ * uses, and carries the same small race: two people claiming one handle in the
+ * same instant both pass the read. The database's unique index is what actually
+ * prevents it, and the loser gets a 500 rather than a 409. Worth a better error
+ * one day; not worth a transaction for a name nobody is racing for.
+ */
+export async function updateProfile(userId: string, input: UpdateProfileInput): Promise<CurrentUserDTO> {
+	if (input.handle !== undefined) {
+		const owner = await prisma.user.findUnique({ where: { handle: input.handle }, select: { id: true } });
+
+		// Re-submitting your own handle is a no-op, not a conflict — the edit form
+		// posts every field it shows, so this is the common case rather than a
+		// strange one.
+		if (owner && owner.id !== userId) throw new ConflictError("Handle already taken");
+	}
+
+	await prisma.user.update({
+		where: { id: userId },
+		data: {
+			...(input.displayName !== undefined && { displayName: input.displayName }),
+			...(input.handle !== undefined && { handle: input.handle }),
+		},
+		select: { id: true },
+	});
+
+	// Re-read rather than mapping the update's own result, so there is exactly one
+	// place that knows how a row becomes a CurrentUserDTO.
+	return getUserById(userId);
 }
 
 /**

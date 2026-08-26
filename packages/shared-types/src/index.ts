@@ -105,6 +105,43 @@ export interface AuthResponse {
 }
 
 /**
+ * Body of `PATCH /users/me`.
+ *
+ * Both fields are optional and the server requires at least one — a PATCH that
+ * changes nothing is a mistake worth reporting, not a no-op to absorb quietly.
+ * Sending only the field that changed is also what keeps two tabs from
+ * overwriting each other's edit of the other field.
+ *
+ * `email` is deliberately not here. Changing it has to prove the new address is
+ * reachable, which needs the same outbound-email machinery as password reset —
+ * see the roadmap's phase 3 item 10.
+ */
+export interface UpdateProfileRequest {
+	// `| undefined` is required, not noise: the server compiles with
+	// `exactOptionalPropertyTypes`, under which `displayName?: string` means the
+	// key may be absent but must never hold `undefined` — and that is exactly
+	// what a Zod `.partial()` produces for a field the client left out.
+	displayName?: string | undefined;
+	handle?: string | undefined;
+}
+
+/**
+ * Body of `POST /auth/password`.
+ *
+ * `currentPassword` is required even though the request is already
+ * authenticated: a token is proof of a past sign-in, and this endpoint is the
+ * one that decides whether every future one still works. Someone who walks up
+ * to an unlocked laptop has the token but not the password.
+ *
+ * There is no response body — see the note on session lifetime in
+ * `auth.service.ts#changePassword`.
+ */
+export interface ChangePasswordRequest {
+	currentPassword: string;
+	newPassword: string;
+}
+
+/**
  * Body of `POST /conversations/:id/read`.
  *
  * Carries the message id rather than a timestamp: the client already knows

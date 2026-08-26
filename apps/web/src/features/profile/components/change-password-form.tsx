@@ -1,0 +1,117 @@
+import { useState } from "react";
+import { api } from "@/api/client";
+import { Button } from "@/components/button";
+import { TextField } from "@/components/text-field";
+import { MIN_PASSWORD_LENGTH } from "@/constants/validation";
+
+/**
+ * Changes the signed-in user's password.
+ *
+ * Takes no props and reads nothing from the auth store: the server identifies
+ * the account from the token, and the current password is typed rather than
+ * remembered. Nothing about the signed-in user is needed to render it.
+ *
+ * The confirmation field never leaves the browser. It exists to catch a typo in
+ * a value the user cannot see, which is a client-side problem — sending it would
+ * give the server a second copy to validate and nothing to do with it.
+ */
+export function ChangePasswordForm() {
+	const [fields, setFields] = useState({ currentPassword: "", newPassword: "", confirmPassword: "" });
+	const [errors, setErrors] = useState({ currentPassword: "", newPassword: "", confirmPassword: "", form: "" });
+	const [isSaving, setIsSaving] = useState(false);
+	const [isChanged, setIsChanged] = useState(false);
+
+	function validate() {
+		const nextErrors = { currentPassword: "", newPassword: "", confirmPassword: "", form: "" };
+
+		if (!fields.currentPassword) nextErrors.currentPassword = "Current password is required";
+
+		if (fields.newPassword.length < MIN_PASSWORD_LENGTH) {
+			nextErrors.newPassword = `Password must be at least ${MIN_PASSWORD_LENGTH} characters`;
+		} else if (fields.newPassword === fields.currentPassword) {
+			// The server rejects this too; catching it here saves a round trip and
+			// a bcrypt comparison.
+			nextErrors.newPassword = "New password must be different from the current one";
+		}
+
+		if (fields.confirmPassword !== fields.newPassword) {
+			nextErrors.confirmPassword = "Passwords do not match";
+		}
+
+		setErrors(nextErrors);
+
+		return !nextErrors.currentPassword && !nextErrors.newPassword && !nextErrors.confirmPassword;
+	}
+
+	async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+		event.preventDefault();
+		if (!validate()) return;
+
+		setIsSaving(true);
+		setIsChanged(false);
+		try {
+			await api.changePassword({ currentPassword: fields.currentPassword, newPassword: fields.newPassword });
+			// Cleared on success, not left filled: the form holds three passwords in
+			// plain text and there is no reason for them to survive the request.
+			setFields({ currentPassword: "", newPassword: "", confirmPassword: "" });
+			setIsChanged(true);
+		} catch (error) {
+			setErrors((current) => ({ ...current, form: (error as Error).message }));
+		} finally {
+			setIsSaving(false);
+		}
+	}
+
+	return (
+		<form onSubmit={handleSubmit} className="flex flex-col gap-4">
+			<TextField
+				label="Current password"
+				type="password"
+				autoComplete="current-password"
+				value={fields.currentPassword}
+				error={errors.currentPassword}
+				onChange={(event) => {
+					setIsChanged(false);
+					setFields((current) => ({ ...current, currentPassword: event.target.value }));
+				}}
+			/>
+			<TextField
+				label="New password"
+				type="password"
+				autoComplete="new-password"
+				value={fields.newPassword}
+				error={errors.newPassword}
+				onChange={(event) => {
+					setIsChanged(false);
+					setFields((current) => ({ ...current, newPassword: event.target.value }));
+				}}
+			/>
+			<TextField
+				label="Confirm new password"
+				type="password"
+				autoComplete="new-password"
+				value={fields.confirmPassword}
+				error={errors.confirmPassword}
+				onChange={(event) => {
+					setIsChanged(false);
+					setFields((current) => ({ ...current, confirmPassword: event.target.value }));
+				}}
+			/>
+
+			{errors.form && (
+				<p role="alert" className="text-sm text-red-600">
+					{errors.form}
+				</p>
+			)}
+			{isChanged && (
+				<p className="text-sm text-green-700">
+					Password changed. Sessions already signed in elsewhere stay signed in.
+				</p>
+			)}
+
+			<Button type="submit" disabled={isSaving}>
+				{isSaving ? "Changing…" : "Change password"}
+			</Button>
+		</form>
+	);
+}

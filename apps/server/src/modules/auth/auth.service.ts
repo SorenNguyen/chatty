@@ -2,10 +2,10 @@ import type { AuthResponse } from "@chatty/shared-types";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { env } from "../../config/env.js";
-import { ConflictError, UnauthorizedError } from "../../lib/errors.js";
+import { ConflictError, UnauthorizedError, ValidationError } from "../../lib/errors.js";
 import { prisma } from "../../lib/prisma.js";
 import type { JwtPayload } from "../../middlewares/require-auth.js";
-import type { LoginInput, RegisterInput } from "./auth.schema.js";
+import type { ChangePasswordInput, LoginInput, RegisterInput } from "./auth.schema.js";
 
 /**
  * Alias of the shared contract, so a change to what the client expects fails to
@@ -117,4 +117,50 @@ export async function login(input: LoginInput): Promise<AuthResult> {
 		token: signAccessToken(user.id),
 		user: { id: user.id, email: user.email, handle: user.handle, displayName: user.displayName },
 	};
+}
+
+/**
+ * Replaces the signed-in user's password, given the current one.
+ *
+ * Lives in the auth module rather than with the rest of the profile, because
+ * this is the only other place that may hash a password. `PASSWORD_HASH_ROUNDS`
+ * and the bcrypt call have one home; a second copy in the users service is how
+ * the cost factor ends up different in two places.
+ *
+ * Unlike `login`, the failure message here is specific. Vague errors exist to
+ * stop an attacker learning which emails have accounts, and the caller has
+ * already proved they hold this account's token — there is nothing left to
+ * enumerate, and "incorrect" is what a user needs to know to try again.
+ *
+ * **Existing tokens keep working.** Nothing is revoked: a JWT is valid until it
+ * expires, and this app has no denylist to add one to, so a session opened
+ * before the change survives it for up to the token's 7 days. That makes this
+ * useful for "I want a better password" and *not* sufficient for "someone else
+ * has my account" — the case a password change is most often reached for.
+ * Closing it needs a `passwordChangedAt` column checked against each token's
+ * `iat`, which turns `requireAuth` into a database read on every request and
+ * has to be mirrored in the socket handshake and applied to already-open
+ * sockets. That is an auth change, not a profile one, so it is recorded as a
+ * known gap in docs/ROADMAP.md rather than smuggled in here.
+ *
+ * Returns nothing for the same reason: a fresh token would imply the old ones
+ * had stopped working.
+ */
+export async function changePassword(userId: string, input: ChangePasswordInput): Promise<void> {
+	const user = await prisma.user.findUnique({ where: { id: userId }, select: { passwordHash: true } });
+
+	// Reachable only if the account was deleted between the token being issued
+	// and this request — requireAuth proves the token, not that the row survives.
+	if (!user) throw new UnauthorizedError("Invalid or expired token");
+
+	const isCurrentPasswordCorrect = await bcrypt.compare(input.currentPassword, user.passwordHash);
+	if (!isCurrentPasswordCorrect) throw new UnauthorizedError("Current password is incorrect");
+
+	// Checked against the stored hash rather than against `currentPassword`, so
+	// it still holds if the two were sent with different surrounding whitespace.
+	const isSamePassword = await bcrypt.compare(input.newPassword, user.passwordHash);
+	if (isSamePassword) throw new ValidationError("New password must be different from the current one");
+
+	const passwordHash = await bcrypt.hash(input.newPassword, PASSWORD_HASH_ROUNDS);
+	await prisma.user.update({ where: { id: userId }, data: { passwordHash }, select: { id: true } });
 }

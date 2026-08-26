@@ -6,6 +6,7 @@ import {
 	getAvatarController,
 	getMeController,
 	searchUsersController,
+	updateProfileController,
 	uploadAvatarController,
 } from "./users.controller.js";
 
@@ -27,6 +28,7 @@ usersRouter.get("/:userId/avatar", getAvatarController);
 usersRouter.use(requireAuth);
 // Declared before "/" would be, and distinct from it, so "@me" is never read as a search term.
 usersRouter.get("/me", getMeController);
+usersRouter.patch("/me", updateProfileController);
 usersRouter.post("/me/avatar", uploadAvatar, uploadAvatarController);
 usersRouter.delete("/me/avatar", deleteAvatarController);
 usersRouter.get("/", searchUsersController);
