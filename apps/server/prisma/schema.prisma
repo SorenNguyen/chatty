@@ -242,12 +242,26 @@ model Message {
   /// makes that the database's rule rather than the service's promise — a
   /// deleted message must not still be carrying its text.
   deletedAt      DateTime?
+  /// What search matches against: `to_tsvector('simple', content)`, maintained
+  /// by PostgreSQL as a GENERATED column.
+  ///
+  /// `Unsupported` because Prisma has no tsvector type, and that is fine here —
+  /// Prisma leaves such fields out of the generated client entirely, which is
+  /// exactly the behaviour a generated column needs. Nothing may write to it,
+  /// and nothing can: search reads it through raw SQL.
+  ///
+  /// Declared at all only so `prisma db pull` and a future `migrate dev` do not
+  /// see the column as drift and offer to drop it.
+  searchVector   Unsupported("tsvector")?
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   author       User?        @relation(fields: [authorId], references: [id], onDelete: Cascade)
   attachment   Attachment?
 
   @@index([conversationId, createdAt])
+  // The GIN index on `searchVector` lives in the phase 12 migration: Prisma
+  // cannot express an index method, and an `@@index` here would create a second,
+  // useless btree one alongside it.
 }
 
 /// An image sent with a message.

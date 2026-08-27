@@ -17,6 +17,7 @@ import {
 	GroupMembersPanel,
 	MessageInput,
 	MessageList,
+	MessageSearchPanel,
 	NewConversationPanel,
 } from "../components";
 import { useConversationMessages, useMarkRead, usePresence, useSocketEvent, useTypingParticipants } from "../hooks";
@@ -174,6 +175,8 @@ export function ChatPage() {
 						<LogOut className="size-4" />
 					</Button>
 				</header>
+
+				<MessageSearchPanel currentUserId={currentUser.id} onSelectResult={setSelectedConversationId} />
 
 				<NewConversationPanel onConversationStarted={handleConversationStarted} />
 

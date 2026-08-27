@@ -7,5 +7,6 @@ export { MessageAttachment } from "./message-attachment";
 export { MessageEditor } from "./message-editor";
 export { MessageInput } from "./message-input";
 export { MessageList } from "./message-list";
+export { MessageSearchPanel } from "./message-search-panel";
 export { NewConversationPanel } from "./new-conversation-panel";
 export { SelectedParticipants } from "./selected-participants";

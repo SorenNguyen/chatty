@@ -10,6 +10,7 @@ import type {
 	LoginRequest,
 	MarkReadRequest,
 	MessageDTO,
+	MessageSearchResultDTO,
 	RegisterRequest,
 	RenameConversationRequest,
 	RequestPasswordResetRequest,
@@ -172,6 +173,22 @@ export const api = {
 		if (content) body.append("content", content);
 
 		return request<MessageDTO>(path, { method: "POST", body });
+	},
+
+	/**
+	 * Finds messages across every conversation you are in.
+	 *
+	 * Not scoped to one conversation on purpose — the point is not knowing which
+	 * one the answer is in. Each result carries enough of its conversation to be
+	 * labelled without a second request.
+	 *
+	 * Two characters minimum, enforced by the server: a one-character search
+	 * matches most of the table and is never what anyone meant.
+	 */
+	searchMessages(query: string, limit = 20): Promise<MessageSearchResultDTO[]> {
+		const params = new URLSearchParams({ query, limit: String(limit) });
+
+		return get<MessageSearchResultDTO[]>(`/search/messages?${params.toString()}`);
 	},
 
 	/**

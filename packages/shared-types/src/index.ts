@@ -182,6 +182,32 @@ export interface MessageDTO {
 	deletedAt: string | null;
 }
 
+/**
+ * A message that matched a search, with just enough of its conversation to say
+ * where it was.
+ *
+ * The whole `ConversationDTO` is deliberately not embedded: it carries a
+ * participant list and a per-viewer unread count, and a page of thirty results
+ * from five conversations would repeat all of that five times over for a line of
+ * text and a name.
+ */
+export interface MessageSearchResultDTO {
+	message: MessageDTO;
+	conversation: {
+		id: string;
+		isGroup: boolean;
+		/** Null for a direct conversation — the client derives a title from the participants. */
+		name: string | null;
+		/**
+		 * The other people in it, so a direct conversation can be given a name
+		 * without a second request. Only ever the people who are in it *now*, which
+		 * is a different question from who wrote the matching message — that is on
+		 * `message.author`, and it is why the two are separate.
+		 */
+		participants: UserDTO[];
+	};
+}
+
 // ---- Auth request/response contracts ----
 //
 // Declared here rather than separately on each side. When these lived only in

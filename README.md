@@ -110,7 +110,8 @@ send messages that arrive in real time over WebSocket, scroll up to load older h
 avatar, see unread badges, read receipts, typing indicators and who is online, manage a group —
 invite someone, rename it, remove a member, leave it, with every one of those announced in the chat
 log — edit your own profile, change your password, or reset a forgotten one, send an image with
-or without a caption, and rewrite or delete a message you sent.
+or without a caption, rewrite or delete a message you sent, and search every conversation you are
+in for a message you half remember.
 
 Deleting leaves a marked-out placeholder rather than a hole: the text is emptied and the image and its
 file are removed, but the row stays so that other people's read markers and the paging cursor still
@@ -119,12 +120,12 @@ have something to point at. See [docs/ROADMAP.md](docs/ROADMAP.md) phase 8.
 A group has an owner: the person who created it. Only they can rename it or remove somebody else;
 anyone can invite, and anyone can leave. See [ADR 0008](docs/adr/0008-group-owner-role.md).
 
-Verified by 251 server tests (against a real Postgres), 127 web tests, and 14 Playwright specs
+Verified by 277 server tests (against a real Postgres), 136 web tests, and 14 Playwright specs
 driving a real browser against a real server — plus typecheck, lint, the conventions audit, and a
 production image build. CI runs all of it except the browser suite on every push.
 
 **[docs/ROADMAP.md](docs/ROADMAP.md) is the current source of truth for what is done and what is
-next.** Phases 1 to 10 are complete. Phase 7 makes group and password-reset transitions safe under
+next.** Phases 1 to 12 are complete. Phase 7 makes group and password-reset transitions safe under
 concurrent requests: one conversation lock orders membership-sensitive writes, PostgreSQL enforces
 the owner/message invariants, and fault-injection tests prove partial writes do not escape. Phase 8
 adds editing and deleting your own messages, on the same lock, with the deletion kept as a tombstone
@@ -134,15 +135,19 @@ with backoff, claiming rows in a way that is safe to run on every instance — s
 [ADR 0011](docs/adr/0011-transactional-outbox-for-mail.md). Phase 10 gave it a real SMTP transport,
 so a reset link now leaves the process and lands in an inbox; the configuration has no silent
 fallback, and five ways of getting it wrong stop the server booting rather than degrading to a log
-file.
+file. Phase 11 makes a misconfigured production refuse to start at all and proves the two-instance
+path for the first time; phase 12 adds full-text search.
 
 Largest known gaps:
 
 - **No real deployment yet, and it is blocked on purchases rather than code** — a domain, a host and
   an SMTP account. The cost of each, the two host options and what changes between them are worked
   out in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
-- **No message search**, no edit history, and no time limit on editing — a message can be rewritten
-  years later and the only trace is the word "edited". Deleting is for everybody, never just for you.
+- **Search does not ignore diacritics.** Finding a message works (phase 12), but `hen gap` does not
+  match `hẹn gặp` — closing that needs the `unaccent` extension, which is a dependency not worth
+  taking on before the host is chosen. The phase 12 migration spells out the exact change.
+- **No edit history and no time limit on editing** — a message can be rewritten years later and the
+  only trace is the word "edited". Deleting is for everybody, never just for you.
 - **A group owner cannot hand over without leaving**, there is no second admin and no demotion, and
   any member can still invite a stranger. See [ADR 0008](docs/adr/0008-group-owner-role.md).
 - **A system line does not follow a later rename** — "An added Binh" keeps the names people had when

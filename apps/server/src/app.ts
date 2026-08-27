@@ -8,6 +8,7 @@ import { attachmentsRouter } from "./modules/attachments/attachments.routes.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
 import { conversationsRouter } from "./modules/conversations/conversations.routes.js";
 import { messagesRouter } from "./modules/messages/messages.routes.js";
+import { searchRouter } from "./modules/search/search.routes.js";
 import { usersRouter } from "./modules/users/users.routes.js";
 
 /**
@@ -65,6 +66,7 @@ export function createApp() {
 	app.use("/auth", authRouter);
 	app.use("/attachments", attachmentsRouter);
 	app.use("/users", usersRouter);
+	app.use("/search", searchRouter);
 	app.use("/conversations", conversationsRouter);
 	app.use("/conversations/:conversationId/messages", messagesRouter);
 

@@ -761,6 +761,66 @@ run: two API containers on separate ports, one Postgres, one Redis.
   a good sign. The script reported it as ten unrelated failures, which was the script's fault: it now
   detects that case and exits 2, distinct from 1.
 
+## Phase 12 — Finding a message — `done`
+
+Editing and deleting were phase 8; finding was the half left over. A chat app without search stops
+being useful at exactly the point its history becomes worth keeping.
+
+| # | Item | How it ended up |
+| --- | --- | --- |
+| 38 | `Message.searchVector` | A **GENERATED** column, `to_tsvector('simple', content)`, with a GIN index. |
+| 39 | `GET /search/messages` | Global across every conversation you are in, newest first, cursor-paged. |
+| 40 | Search panel in the sidebar | Debounced as you type; a result opens its conversation. |
+
+### A generated column, not a trigger
+
+PostgreSQL keeps `searchVector` in step with `content` by construction. That is not a tidiness
+preference — it removes a whole class of bug. There is no backfill for existing rows, no trigger for a
+future write path to forget, and no way for the index to disagree with the message it points at.
+Phase 8 gets two behaviours for free as a result: an edit changes what the message matches, and a
+delete empties `content` so the tombstone stops matching, without either code path knowing search
+exists. Both have a test.
+
+### `simple`, and the diacritics it keeps
+
+The `english` text search configuration stems and strips stop words for one language. This app's
+messages are mostly Vietnamese, where that is wrong: it would discard "a", "the" and "is" as noise
+and do nothing useful to anything else. `simple` lowercases and splits on word boundaries — exactly
+right for Vietnamese, and merely unambitious for English, where "running" will not match "run".
+
+What it does **not** do is ignore diacritics, so `hen gap` does not find `hẹn gặp`. That is a real gap
+for the people most likely to use this, and the fix is written out in full in the migration: the
+`unaccent` extension plus an IMMUTABLE wrapper, because a generated column may only call immutable
+functions and `unaccent` is declared STABLE. Not taken on, for the same reason object storage was
+not: it is a host-level dependency, and the host is not chosen. A test pins the current behaviour so
+the change is noticed rather than assumed.
+
+### Authorization is a join, not a filter
+
+The membership check is inside the query — `JOIN "ConversationParticipant" ... AND p."userId" = $1` —
+rather than a pass over the results afterwards. Filtering afterwards means the database handed back
+rows the caller may not see, with one line of application code standing between that and a response.
+
+The consequence is that leaving a group removes its messages from your search, which is the same rule
+the sidebar already follows: a group you left disappears from it entirely. That is deliberate, and it
+is the one place where "your history" and "what you can search" differ.
+
+### Two queries, on purpose
+
+The match runs in raw SQL, because `@@ websearch_to_tsquery` is not something Prisma's query builder
+can express. It returns ids only; a second, ordinary Prisma read turns those into DTOs using the same
+`messageSelect` every other message response shares. Hand-writing the join in SQL would mean a second
+mapper to keep in step with `messages.mapper.ts`, which is the divergence that mapper exists to
+prevent.
+
+`websearch_to_tsquery`, not `to_tsquery`, and the difference is a 500: `to_tsquery` throws a syntax
+error on a bare space, so the first person to search for two words would have got one. Punctuation
+soup is a test case for the same reason.
+
+Results are newest-first rather than ranked. In a chat the thing being looked for is almost always
+the recent one, and a relevance score would put a three-year-old message above this morning's for
+saying the word twice.
+
 ## Known gaps not on the roadmap yet
 
 - **Handle placement.** Asking for a handle during registration is friction. Alternatives discussed:
@@ -791,7 +851,11 @@ run: two API containers on separate ports, one Postgres, one Redis.
   that fails between writing the file and committing the row leaves one nothing ever referenced, and
   so does a crash between the delete commit and the unlink. Both cost bytes rather than correctness,
   and closing them needs a sweep over the upload directory rather than another line in either service.
-- **No message search.** Editing and deleting are done (phase 8); finding is not.
+- **Search keeps diacritics.** `hen gap` does not find `hẹn gặp`. The fix is the `unaccent`
+  extension plus an IMMUTABLE wrapper, written out in full in the phase 12 migration — deliberately
+  not taken on, because it is a host-level dependency and the host is not chosen.
+- **Search jumps to a conversation, not to the message.** Scrolling to a hit a thousand messages
+  back means paging until it is loaded, which is its own feature rather than a detail of this one.
 - **No edit history and no time limit on editing.** A message can be rewritten years later and the
   only trace is the word "edited" — a reader cannot see what it used to say, and nothing stops someone
   rewriting their half of an old argument. Every real messenger draws a line somewhere; this one has
