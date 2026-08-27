@@ -138,11 +138,9 @@ file.
 
 Largest known gaps:
 
-- **Running more than one instance requires `REDIS_URL`, and nothing enforces it.** With it, rate-limit
-  counters and Socket.io rooms are shared and two instances behave as one system; without it both
-  fall back to process memory and a second instance silently keeps its own tally and loses messages
-  broadcast by the first. `docker-compose.prod.yml` always sets it and the server warns loudly in
-  production when it is missing, but a hand-rolled deployment can still get this wrong.
+- **No real deployment yet, and it is blocked on purchases rather than code** — a domain, a host and
+  an SMTP account. The cost of each, the two host options and what changes between them are worked
+  out in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 - **No message search**, no edit history, and no time limit on editing — a message can be rewritten
   years later and the only trace is the word "edited". Deleting is for everybody, never just for you.
 - **A group owner cannot hand over without leaving**, there is no second admin and no demotion, and
@@ -161,7 +159,11 @@ Largest known gaps:
   [ADR 0007](docs/adr/0007-signed-attachment-urls.md). One image per message; no lightbox and no upload
   progress. Deleting a message now removes its file, but a send that fails midway — or a crash between
   the delete committing and the unlink — still leaves one nothing references.
-- **No real deployment.** There are Dockerfiles, a two-instance compose file and CI, but no TLS, no
-  reverse proxy or load balancer, no object storage (uploads are a shared volume), and no hosting.
+- **Still no TLS, reverse proxy, load balancer or object storage.** The two API instances sit on
+  separate ports rather than behind anything, and uploads are a shared volume — which works on one
+  machine and does not survive per-machine disks. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+- **The web app has no Content-Security-Policy.** The API's headers are set (phase 11); the static
+  server's are not, and a CSP added without a browser exercising it is a CSP that breaks the first
+  image.
 - Playwright covers one browser, and `test:e2e` is not part of `verify` — it needs two servers and a
   browser download.

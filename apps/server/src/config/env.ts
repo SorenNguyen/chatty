@@ -37,10 +37,30 @@ const envSchema = z.object({
 	 *
 	 * Required would be the safer-looking choice and the worse one: it would mean
 	 * `npm run verify` and every `npm run dev:server` needed a Redis container to
-	 * start. The guard is instead a warning at boot (see lib/redis.ts) and a
-	 * production compose file that always sets it.
+	 * start. In production the guard is `SINGLE_INSTANCE` below — say which shape
+	 * you are, or do not start.
 	 */
 	REDIS_URL: z.string().url().optional(),
+	/**
+	 * States that this deployment is deliberately one process, and that running
+	 * without Redis is therefore correct.
+	 *
+	 * The README's largest known gap was that more than one instance *requires*
+	 * `REDIS_URL` and nothing enforced it: without Redis each process keeps its
+	 * own rate-limit counters and its own socket rooms, so a second instance
+	 * silently loses every message the first one broadcasts. A warning at boot
+	 * was the old guard, and a warning is a thing people scroll past.
+	 *
+	 * It cannot simply be required in production, because a single instance in
+	 * production is a legitimate shape — it is the first deployment this project
+	 * will have. So the rule is a declaration rather than a dependency: in
+	 * production, either point at Redis or say out loud that there is only one of
+	 * you. Getting neither is the case that used to fail silently.
+	 */
+	SINGLE_INSTANCE: z
+		.enum(["true", "false"])
+		.optional()
+		.transform((value) => value === "true"),
 	/**
 	 * Which mail transport to use. **Explicit, and there is no default.**
 	 *
@@ -92,6 +112,19 @@ const parsed = envSchema
 					});
 				}
 			}
+		}
+
+		// Shared state, or a signed statement that none is needed. Two instances
+		// without Redis do not fail — they quietly behave as two separate apps,
+		// and a message sent to one never reaches anyone connected to the other.
+		if (value.NODE_ENV === "production" && !value.REDIS_URL && !value.SINGLE_INSTANCE) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["REDIS_URL"],
+				message:
+					"In production, set REDIS_URL so instances share rate limits and socket rooms — " +
+					'or set SINGLE_INSTANCE="true" to state that this deployment is one process.',
+			});
 		}
 
 		// The one that matters. A production deployment that forgets to configure

@@ -702,6 +702,65 @@ deduplicates, and nothing more — a crash after the SMTP server accepted but be
 sent still produces a second copy for a receiver that does not. Removing that needs provider-side
 idempotency, which SMTP does not define.
 
+## Phase 11 — Refuse to start wrong, and prove two instances — `done`
+
+Everything here is host-independent, which is the point: it was done while the hosting decision was
+still open (see [DEPLOYMENT.md](DEPLOYMENT.md)), because none of it depends on the answer.
+
+| # | Item | How it ended up |
+| --- | --- | --- |
+| 32 | `SINGLE_INSTANCE` declaration | In production, either `REDIS_URL` or `SINGLE_INSTANCE="true"`. Neither, and the server does not boot. |
+| 33 | Readiness split from liveness | `/health` says the process answers; `/ready` says the database and Redis do, and returns 503 when they do not. |
+| 34 | Security headers | Helmet on the API, with the one default that had to change. |
+| 35 | WebSocket-only socket transport | Long-polling cannot survive two instances without session affinity. |
+| 36 | `scripts/smoke.sh` | 17 checks against a running deployment, safe to point at production. |
+| 37 | The two-instance path, actually run | Not asserted — run, for the first time. |
+
+### The README's largest gap, closed by asking rather than requiring
+
+"Running more than one instance requires `REDIS_URL`, and nothing enforces it" had been the top item
+under Known gaps since phase 5. Without Redis, two instances do not fail — they behave as two
+separate apps, and a message sent to one never reaches anyone connected to the other. The guard was a
+log warning, and a warning is a thing people scroll past.
+
+Requiring Redis in production would have been wrong: a single instance in production is a legitimate
+shape, and it is the shape of this project's first deployment. So the rule is a **declaration**, not a
+dependency — in production, point at Redis or say out loud that there is only one of you. Both are
+fine; saying neither is the case that used to fail silently. Verified through the real
+`config/env.ts` in five configurations, not against a copy of the schema.
+
+### Helmet's default that would have broken every picture
+
+`Cross-Origin-Resource-Policy: same-origin` is the right default for a server that renders its own
+pages. This one does not: avatars and attachments are served from the API into an `<img>` on the web
+app's origin, which is a different origin in every environment this app has. Left alone, every image
+in the product stops loading — and the response is still a perfectly good 200, so nothing that
+asserts on a response body can see it. Set to `cross-origin`, with a test on the header and a
+cross-instance fetch of a real uploaded avatar to prove it.
+
+A CSP is deliberately *not* set on the API: it is a JSON and image server with no pages to govern,
+and setting one there would read as though the web app were covered when it is not. The web app's own
+CSP is still missing, and is listed under Known gaps rather than half-done.
+
+### What the two-instance run found
+
+`docker-compose.prod.yml` has claimed since phase 5 that two instances behave as one system. Nothing
+had ever checked it — the test suite is one process and Playwright talks to one server. Built and
+run: two API containers on separate ports, one Postgres, one Redis.
+
+- A socket connected to **api-2** receives a message written through **api-1**. So do edits, deletes
+  and presence. The Redis adapter is genuinely carrying broadcasts across processes.
+- **Both containers run `prisma migrate deploy` at startup**, which is a race. It resolved correctly —
+  one applied every migration, the other reported "No pending migrations to apply" — because Prisma
+  takes an advisory lock. Worth knowing rather than assuming; on a host with a release phase, that is
+  where migrations belong regardless.
+- An avatar uploaded through api-1 is served by api-2, because they share a volume. This is the exact
+  behaviour that per-machine disks would break, and it is why object storage is a prerequisite for
+  some hosts and not others.
+- `smoke.sh` run twice in a minute got a 429 — the shared rate limiter working across instances, and
+  a good sign. The script reported it as ten unrelated failures, which was the script's fault: it now
+  detects that case and exits 2, distinct from 1.
+
 ## Known gaps not on the roadmap yet
 
 - **Handle placement.** Asking for a handle during registration is friction. Alternatives discussed:
