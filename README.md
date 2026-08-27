@@ -36,6 +36,16 @@ Redis is optional in development and the server starts without it. Set `REDIS_UR
 `docker compose up -d redis`) only to exercise the multi-instance path — see
 [docs/ROADMAP.md](docs/ROADMAP.md) phase 5 item 12.
 
+Mail is **not** optional: `MAIL_TRANSPORT` has no default and the server will not boot without it.
+`.env.example` points at Mailpit, which is the recommended way to work —
+
+```bash
+docker compose up -d mailpit     # SMTP on :1025, web inbox on http://localhost:8025
+```
+
+— so a password reset link arrives as an email you open, rather than a line you grep for. Setting
+`MAIL_TRANSPORT=console` instead logs the message and is refused outright when `NODE_ENV=production`.
+
 Then seed some accounts to sign in with:
 
 ```bash
@@ -99,23 +109,32 @@ Working end to end: register, sign in, find people by `@handle`, start a direct 
 send messages that arrive in real time over WebSocket, scroll up to load older history, upload an
 avatar, see unread badges, read receipts, typing indicators and who is online, manage a group —
 invite someone, rename it, remove a member, leave it, with every one of those announced in the chat
-log — edit your own profile, change your password, or reset a forgotten one, and send an image with
-or without a caption.
+log — edit your own profile, change your password, or reset a forgotten one, send an image with
+or without a caption, and rewrite or delete a message you sent.
+
+Deleting leaves a marked-out placeholder rather than a hole: the text is emptied and the image and its
+file are removed, but the row stays so that other people's read markers and the paging cursor still
+have something to point at. See [docs/ROADMAP.md](docs/ROADMAP.md) phase 8.
 
 A group has an owner: the person who created it. Only they can rename it or remove somebody else;
 anyone can invite, and anyone can leave. See [ADR 0008](docs/adr/0008-group-owner-role.md).
 
-Verified by 204 server tests (against a real Postgres), 111 web tests, and 11 Playwright specs
+Verified by 251 server tests (against a real Postgres), 127 web tests, and 14 Playwright specs
 driving a real browser against a real server — plus typecheck, lint, the conventions audit, and a
 production image build. CI runs all of it except the browser suite on every push.
 
 **[docs/ROADMAP.md](docs/ROADMAP.md) is the current source of truth for what is done and what is
-next.** Phases 1 to 7 are complete. Phase 7 makes group and password-reset transitions safe under
+next.** Phases 1 to 10 are complete. Phase 7 makes group and password-reset transitions safe under
 concurrent requests: one conversation lock orders membership-sensitive writes, PostgreSQL enforces
-the owner/message invariants, and fault-injection tests prove partial writes do not escape. Password
-reset is complete at repository level: the flow, tokens and session invalidation are real, while the
-development mailer logs the link. Production delivery still needs a provider plus the durable
-outbox/worker described under Known gaps.
+the owner/message invariants, and fault-injection tests prove partial writes do not escape. Phase 8
+adds editing and deleting your own messages, on the same lock, with the deletion kept as a tombstone
+so that read markers and paging cursors still have a row to point at. Phase 9 makes outbound mail
+durable: it is queued in the same transaction as the thing that promised it, and a worker retries
+with backoff, claiming rows in a way that is safe to run on every instance — see
+[ADR 0011](docs/adr/0011-transactional-outbox-for-mail.md). Phase 10 gave it a real SMTP transport,
+so a reset link now leaves the process and lands in an inbox; the configuration has no silent
+fallback, and five ways of getting it wrong stop the server booting rather than degrading to a log
+file.
 
 Largest known gaps:
 
@@ -124,20 +143,24 @@ Largest known gaps:
   fall back to process memory and a second instance silently keeps its own tally and loses messages
   broadcast by the first. `docker-compose.prod.yml` always sets it and the server warns loudly in
   production when it is missing, but a hand-rolled deployment can still get this wrong.
-- No message edit/delete, no message search.
+- **No message search**, no edit history, and no time limit on editing — a message can be rewritten
+  years later and the only trace is the word "edited". Deleting is for everybody, never just for you.
 - **A group owner cannot hand over without leaving**, there is no second admin and no demotion, and
   any member can still invite a stranger. See [ADR 0008](docs/adr/0008-group-owner-role.md).
 - **A system line does not follow a later rename** — "An added Binh" keeps the names people had when
   it happened, by design. See [ADR 0009](docs/adr/0009-system-messages.md).
-- **No outbound email.** Password reset works, but the link is written to the server log rather than
-  sent. Delivery is detached from the generic 204 so provider failure cannot reveal registered
-  addresses; a real provider therefore also needs a durable outbox/worker with retry, not only an API
-  call. Changing the email address on an account is not built at all — it needs the same machinery to
-  prove the new address is reachable.
+- **Mail sends, but no production account is signed up for.** Phase 10 added a real SMTP transport
+  and development runs against Mailpit; a deployment still needs a provider, a verified sending
+  domain and SPF/DKIM/DMARC records, without which mail is accepted and then filed as spam. Delivery
+  is at-least-once — `Message-ID` makes a retry recognisable, nothing more — and bounces are
+  invisible, because the outbox records that the server *accepted* the message rather than that it
+  arrived. Changing the email address on an account is not built at all, and needs this same
+  machinery to prove the new address is reachable.
 - **An attachment URL works for anyone holding it, until it expires.** Signed and scoped to one image
   with a one-hour life, but bearer proof for that hour — see
-  [ADR 0007](docs/adr/0007-signed-attachment-urls.md). One image per message; no lightbox, no upload
-  progress, and files are not cleaned up when a message is deleted.
+  [ADR 0007](docs/adr/0007-signed-attachment-urls.md). One image per message; no lightbox and no upload
+  progress. Deleting a message now removes its file, but a send that fails midway — or a crash between
+  the delete committing and the unlink — still leaves one nothing references.
 - **No real deployment.** There are Dockerfiles, a two-instance compose file and CI, but no TLS, no
   reverse proxy or load balancer, no object storage (uploads are a shared volume), and no hosting.
 - Playwright covers one browser, and `test:e2e` is not part of `verify` — it needs two servers and a

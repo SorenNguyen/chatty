@@ -1,20 +1,25 @@
+import nodemailer, { type Transporter } from "nodemailer";
 import { env } from "../config/env.js";
 import { logger } from "./logger.js";
 
 /**
- * Outbound email, behind an interface with one implementation.
+ * Outbound email: the contract, and the two transports behind it.
  *
- * The interface is the point. Password reset is the only feature in this project
- * that cannot be finished inside the repository — it needs a provider, an API
- * key and a verified sending domain, none of which a test can stand in for. So
- * the flow is built against this contract and the provider stays a single file:
- * writing a `ResendMailer` or an `SmtpMailer` and swapping `mailer` below is the
- * whole change, and nothing in `auth.service.ts` moves.
+ * The interface has always been the point — `auth.service.ts` knows nothing
+ * about how a message leaves the building, and `outbox.ts` owns whether it
+ * eventually does. What changed in phase 10 is that one of the implementations
+ * now actually sends.
  *
- * The console transport is not a mock. It is what development uses, and it
- * prints the link so the flow can actually be walked end to end without an
- * inbox — the same role `console.log` plays for a Stripe webhook nobody can
- * receive locally.
+ * SMTP rather than a provider's HTTP API, and that is a deliberate narrowing:
+ * every provider worth using speaks it (Resend, Postmark, SendGrid, SES, a
+ * company relay), so the choice of provider becomes a connection string rather
+ * than a dependency and a client to maintain. The cost is no provider-specific
+ * features — templates, webhooks, per-message analytics — none of which this
+ * app has any use for.
+ *
+ * The console transport stays, and is not a mock: it is what development uses,
+ * printing the link so the flow can be walked without an inbox. What it no
+ * longer is, is reachable by accident — see `MAIL_TRANSPORT` in config/env.ts.
  */
 
 export interface Mail {
@@ -22,6 +27,19 @@ export interface Mail {
 	subject: string;
 	/** Plain text. HTML mail is a provider concern, not this interface's. */
 	body: string;
+	/**
+	 * A stable identifier for this message, used as the SMTP `Message-ID`.
+	 *
+	 * The outbox row's id, passed through. Delivery is at-least-once — a crash
+	 * after the server accepted but before the row is marked sent retries — and
+	 * this is the only thing that makes the duplicate *recognisable*: a resend
+	 * arrives with the `Message-ID` the first attempt had, which is the header
+	 * receiving servers and clients already use to collapse duplicates.
+	 *
+	 * Not a guarantee. Deduplication is the receiver's choice, and some do not.
+	 * It is, however, the SMTP-native answer, and it costs one header.
+	 */
+	id?: string | undefined;
 }
 
 export interface Mailer {
@@ -41,14 +59,60 @@ class ConsoleMailer implements Mailer {
 }
 
 /**
- * The one instance the app uses.
+ * Hands a message to an SMTP server.
  *
- * A real deployment replaces this line. It deliberately does not branch on an
- * env var: a half-configured provider that silently falls back to the console
- * is how a password reset appears to work in production and reaches nobody.
- * Making the swap a code change means it is reviewed.
+ * The connection is built once and reused. Nodemailer pools and reconnects
+ * underneath, and the alternative — a transport per message — spends a TLS
+ * handshake on every password reset.
+ *
+ * `Message-ID` is set from the outbox row rather than left to nodemailer's
+ * random default, so a retried message is recognisably the same message. The
+ * domain half is taken from the sender's, because a `Message-ID` whose domain
+ * belongs to nobody is a small but real spam signal.
  */
-export const mailer: Mailer = new ConsoleMailer();
+class SmtpMailer implements Mailer {
+	private readonly transporter: Transporter;
+
+	constructor(
+		private readonly url: string,
+		private readonly from: string,
+	) {
+		this.transporter = nodemailer.createTransport(this.url);
+	}
+
+	async send(mail: Mail): Promise<void> {
+		await this.transporter.sendMail({
+			from: this.from,
+			to: mail.to,
+			subject: mail.subject,
+			text: mail.body,
+			...(mail.id ? { messageId: `<${mail.id}@${this.from.split("@")[1]}>` } : {}),
+		});
+	}
+}
+
+/**
+ * The transport this process will use, chosen once at startup.
+ *
+ * The choice comes from `MAIL_TRANSPORT`, which has no default and is validated
+ * with its settings before this module is imported — so by the time this line
+ * runs, "smtp without a server" and "console in production" have already failed
+ * the boot. That is what makes reading an env var here safe: the danger was
+ * never the variable, it was a misconfiguration that starts anyway and writes
+ * reset links to a log file nobody reads.
+ */
+function createMailer(): Mailer {
+	if (env.MAIL_TRANSPORT === "smtp") {
+		// Non-null assertions, and they are earned: config/env.ts refuses to parse
+		// `smtp` without both of these. Reaching here with either missing is
+		// impossible without editing that schema.
+		return new SmtpMailer(env.SMTP_URL!, env.MAIL_FROM!);
+	}
+
+	return new ConsoleMailer();
+}
+
+export const mailer: Mailer = createMailer();
 
 /** The link a reset email carries, pointed at the web app rather than the API. */
 export function buildPasswordResetUrl(token: string): string {

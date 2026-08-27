@@ -45,6 +45,11 @@ const serverEnv = {
 	// trap was real. The limiters are exercised by hand instead — see the roadmap,
 	// phase 3 item 9.
 	NODE_ENV: "test",
+	// No SMTP container is required to run this suite, and no spec reads a
+	// mailbox. `console` keeps the browser tests independent of whether Mailpit
+	// happens to be up — and `MAIL_TRANSPORT` has no default, so leaving it out
+	// would stop the server booting at all.
+	MAIL_TRANSPORT: "console",
 };
 
 export default defineConfig({

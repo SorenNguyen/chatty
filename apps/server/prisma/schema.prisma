@@ -68,6 +68,77 @@ model PasswordResetToken {
   @@index([userId])
 }
 
+/// Where an outbox message is in its life.
+///
+/// Three values, and only one of them means "there is still work here": the
+/// worker claims PENDING rows and nothing else ever moves back into it. SENT and
+/// FAILED are both terminal, and both redact the body — see the model below.
+enum OutboxStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+/// An email this app has promised to send but has not sent yet.
+///
+/// A transactional outbox. The row is written **inside the same transaction as
+/// the thing that caused it** — for a password reset, the same transaction that
+/// creates the token — so "this link is live" and "we owe this person the link"
+/// commit or roll back together. Before this table the send was fired after the
+/// commit and forgotten: a crash in that window, or a provider having a bad
+/// minute, lost the mail with nothing left to say it had ever been owed.
+///
+/// It is not a general job queue and should not become one. Everything here is
+/// shaped by mail: a recipient, a rendered body, and the fact that sending twice
+/// is worse than sending late.
+model OutboxMessage {
+  id      String       @id @default(cuid())
+  status  OutboxStatus @default(PENDING)
+  to      String
+  subject String
+  /// The rendered message, and **emptied the moment there is nothing left to
+  /// send** — on success and on final failure alike.
+  ///
+  /// This is the one uncomfortable part of an outbox for password reset: the
+  /// body contains the live link, so between commit and delivery a working key
+  /// to an account sits in a table in plaintext. There is no way around holding
+  /// it — the mail cannot be sent without it — so the mitigations are that the
+  /// window is one poll interval rather than an hour, that the token's own TTL
+  /// bounds the worst case, and that the check constraint below makes the
+  /// redaction a property of the data rather than a habit of the worker. Same
+  /// argument, and the same shape, as `Message.deletedAt`.
+  body    String
+  /// How many times delivery has been tried. Attempt zero is a row nobody has
+  /// picked up yet, not a row that failed once.
+  attempts      Int      @default(0)
+  /// The earliest the worker may try again — now for a new row, then pushed out
+  /// by exponential backoff after each failure. Also what makes a claim query
+  /// cheap: due rows are an index range rather than a scan.
+  ///
+  /// `dbgenerated`, not `now()`, and the difference is a bug rather than a
+  /// preference. Prisma evaluates `@default(now())` in the client, using the
+  /// application's clock, while the worker's claim compares this column against
+  /// PostgreSQL's `NOW()`. Two clocks. A machine a few milliseconds ahead of the
+  /// database writes a row that is not yet due the instant it is created, and on
+  /// a real deployment — app and database on different hosts — the skew is not
+  /// milliseconds. It showed up here as a test suite that passed four times in
+  /// five; it would have shipped as mail that sometimes just sits there.
+  ///
+  /// Everything that is *compared* against the database clock is therefore
+  /// written by the database. `createdAt` and `sentAt` are only ever read by
+  /// people, so they stay ordinary.
+  nextAttemptAt DateTime @default(dbgenerated("CURRENT_TIMESTAMP"))
+  /// Why the last attempt failed, kept for the person reading the table at 3am.
+  /// Never contains the body, so it is safe to log and to keep after redaction.
+  lastError     String?
+  sentAt        DateTime?
+  createdAt     DateTime  @default(now())
+
+  // The worker's only query: due PENDING rows, oldest first. Ordering the index
+  // this way means it serves both the filter and the sort.
+  @@index([status, nextAttemptAt])
+}
+
 model Conversation {
   id        String   @id @default(cuid())
   // true once a third participant joins; kept explicit rather than derived

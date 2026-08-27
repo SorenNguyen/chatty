@@ -1,13 +1,14 @@
 import { createHash, randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import type { AuthResponse } from "@chatty/shared-types";
+import type { Prisma } from "@prisma/client";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { env } from "../../config/env.js";
 import type { JwtPayload } from "../../lib/access-token.js";
 import { ConflictError, UnauthorizedError, ValidationError } from "../../lib/errors.js";
-import { buildPasswordResetUrl, mailer } from "../../lib/mailer.js";
-import { logger } from "../../lib/logger.js";
+import { buildPasswordResetUrl } from "../../lib/mailer.js";
+import { enqueueMail } from "../../lib/outbox.js";
 import { prisma } from "../../lib/prisma.js";
 import { getIO, userRoom } from "../../lib/socket-bus.js";
 import type {
@@ -163,27 +164,38 @@ async function waitForPasswordResetResponseFloor(startedAt: number): Promise<voi
 	if (remainingMs > 0) await delay(remainingMs);
 }
 
-function dispatchPasswordResetMail(recipient: string, token: string): void {
-	// Delivery must not sit on the request path. A slow or failing provider only
-	// runs for a real account, so awaiting it would turn latency or a 500 into an
-	// account-enumeration oracle. The current console transport completes in this
-	// process; a real deployment needs the durable outbox recorded in Known gaps.
-	void Promise.resolve()
-		.then(() =>
-			mailer.send({
-				to: recipient,
-				subject: "Reset your Chatty password",
-				body: [
-					"Someone asked to reset the password on your Chatty account.",
-					"",
-					`Open this link within the hour to choose a new one:`,
-					buildPasswordResetUrl(token),
-					"",
-					"If it was not you, nothing has changed and you can ignore this.",
-				].join("\n"),
-			}),
-		)
-		.catch((error: unknown) => logger.error({ err: error }, "password reset email delivery failed"));
+/**
+ * Records the reset mail, in the transaction that mints the token.
+ *
+ * The transaction argument is the whole point. Delivery still must not sit on
+ * the request path — a slow or failing provider only runs for a real account, so
+ * awaiting it would turn latency or a 500 into an account-enumeration oracle —
+ * but the old answer to that was `void promise.catch(log)`, which bought the
+ * timing property by giving up on the mail entirely. A crash between the commit
+ * and the send left a live token whose owner was never told, which reads to them
+ * as a reset that silently did nothing.
+ *
+ * Writing the row here makes "this link is live" and "we owe this person the
+ * link" one commit, and hands the sending to the outbox worker, which retries.
+ * The request path gains one local INSERT and never waits on a network.
+ */
+async function enqueuePasswordResetMail(
+	transaction: Prisma.TransactionClient,
+	recipient: string,
+	token: string,
+): Promise<void> {
+	await enqueueMail(transaction, {
+		to: recipient,
+		subject: "Reset your Chatty password",
+		body: [
+			"Someone asked to reset the password on your Chatty account.",
+			"",
+			`Open this link within the hour to choose a new one:`,
+			buildPasswordResetUrl(token),
+			"",
+			"If it was not you, nothing has changed and you can ignore this.",
+		].join("\n"),
+	});
 }
 
 /**
@@ -263,7 +275,7 @@ export async function requestPasswordReset(input: RequestPasswordResetInput): Pr
 	const token = randomBytes(32).toString("base64url");
 
 	try {
-		const recipient = await prisma.$transaction(async (transaction) => {
+		await prisma.$transaction(async (transaction) => {
 			// The row lock serialises requests for the same account. Without it, two
 			// requests can both burn the old set before either creates its replacement,
 			// leaving two live links after both commits.
@@ -274,7 +286,7 @@ export async function requestPasswordReset(input: RequestPasswordResetInput): Pr
 				FOR UPDATE
 			`;
 			const user = users[0];
-			if (!user) return null;
+			if (!user) return;
 
 			await transaction.passwordResetToken.updateMany({
 				where: { userId: user.id, usedAt: null },
@@ -290,10 +302,10 @@ export async function requestPasswordReset(input: RequestPasswordResetInput): Pr
 				select: { id: true },
 			});
 
-			return user.email;
+			// Inside the transaction, deliberately — see the function's own comment.
+			// If the token write above rolls back, so does the promise to mail it.
+			await enqueuePasswordResetMail(transaction, user.email, token);
 		});
-
-		if (recipient) dispatchPasswordResetMail(recipient, token);
 	} finally {
 		// Applied on success and failure so the fast path cannot identify an
 		// unknown address. A future network mailer must keep its own latency below

@@ -16,6 +16,25 @@ services:
       timeout: 5s
       retries: 5
 
+  # A real SMTP server that never delivers anywhere, plus a web inbox to read
+  # what it caught — http://localhost:8025.
+  #
+  # Worth a container rather than leaving development on MAIL_TRANSPORT=console:
+  # the console transport proves the outbox ran, and nothing else. It cannot show
+  # that the connection string parses, that the sender is accepted, that the
+  # Message-ID is well formed, or that the link survives whatever the transport
+  # does to the body. Those are the things that break, and this is the cheapest
+  # place to see them break.
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # web inbox
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+
   # Optional in development: leave REDIS_URL unset and the server keeps its
   # rate-limit counters and socket rooms in memory, which is correct for one
   # instance. Start this and set REDIS_URL to exercise the multi-instance path.

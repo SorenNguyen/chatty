@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { verifyAccessToken } from "../src/lib/access-token.js";
 import { UnauthorizedError, ValidationError } from "../src/lib/errors.js";
 import { mailer } from "../src/lib/mailer.js";
+import { processOutboxOnce } from "../src/lib/outbox.js";
 import { prisma } from "../src/lib/prisma.js";
 import { login, requestPasswordReset, resetPassword } from "../src/modules/auth/auth.service.js";
 import { installFakeIO, type FakeIO } from "./fake-io.js";
@@ -42,11 +43,27 @@ async function createUser(): Promise<string> {
 }
 
 /**
+ * Asks for a reset, then runs the worker until the mail has actually gone.
+ *
+ * `requestPasswordReset` no longer calls the provider — it writes a row to the
+ * outbox in the same transaction as the token, and a worker pass is what turns
+ * that into a send. Driving the worker by hand rather than waiting on its timer
+ * keeps these tests fast and keeps them asserting through the provider, which is
+ * still the only thing that matches what a user actually receives.
+ */
+async function requestResetAndDeliver(email = EMAIL): Promise<void> {
+	await requestPasswordReset({ email });
+	await processOutboxOnce();
+}
+
+/**
  * The token out of the emailed body.
  *
- * Pulled from the mail rather than the database on purpose: the database only
- * ever holds a hash, so a test that could read a usable token out of it would be
- * proving the wrong thing.
+ * Pulled from the mail rather than from the database, and that is still the
+ * point even though the outbox briefly holds the token in plaintext: what is in
+ * `PasswordResetToken` is only ever a hash, and the outbox body is emptied the
+ * moment the mail is delivered. A test that could read a usable token out of a
+ * settled database would be proving the wrong thing.
  */
 function tokenFromMail(callIndex = 0): string {
 	const body = (sent.mock.calls[callIndex]![0] as { body: string }).body;
@@ -59,7 +76,7 @@ describe("requestPasswordReset", () => {
 	it("mails a link with a usable token", async () => {
 		await createUser();
 
-		await requestPasswordReset({ email: EMAIL });
+		await requestResetAndDeliver();
 
 		expect(sent).toHaveBeenCalledOnce();
 		expect((sent.mock.calls[0]![0] as { to: string }).to).toBe(EMAIL);
@@ -69,22 +86,30 @@ describe("requestPasswordReset", () => {
 	it("stores only a hash, never the token itself", async () => {
 		// A leaked database must not hand over working reset links.
 		await createUser();
-		await requestPasswordReset({ email: EMAIL });
+		await requestResetAndDeliver();
 		const token = tokenFromMail();
 
 		const stored = await prisma.passwordResetToken.findFirst({ select: { tokenHash: true } });
 
 		expect(stored!.tokenHash).not.toBe(token);
 		expect(stored!.tokenHash).toBe(createHash("sha256").update(token).digest("hex"));
+		// And the outbox, which did hold the live link between the commit and the
+		// send, is not still holding it afterwards.
+		const queued = await prisma.outboxMessage.findFirstOrThrow({ select: { status: true, body: true } });
+		expect(queued.status).toBe("SENT");
+		expect(queued.body).toBe("");
 	});
 
 	it("says nothing and does nothing for an address with no account", async () => {
-		// No throw, no mail, no row — the endpoint must not become a way to ask
-		// who is registered here.
+		// No throw, no mail, no token, and nothing queued — the endpoint must not
+		// become a way to ask who is registered here, and an outbox row would be
+		// exactly that for anyone who could read the table.
 		await expect(requestPasswordReset({ email: "nobody@chatty.test" })).resolves.toBeUndefined();
+		await processOutboxOnce();
 
 		expect(sent).not.toHaveBeenCalled();
 		expect(await prisma.passwordResetToken.count()).toBe(0);
+		expect(await prisma.outboxMessage.count()).toBe(0);
 	});
 
 	it("does not expose the unknown-address fast path through an immediate response", async () => {
@@ -101,10 +126,10 @@ describe("requestPasswordReset", () => {
 		// Otherwise a link someone obtained earlier stays live after the real
 		// owner requests their own — two keys, one of them forgotten about.
 		await createUser();
-		await requestPasswordReset({ email: EMAIL });
+		await requestResetAndDeliver();
 		const first = tokenFromMail();
 
-		await requestPasswordReset({ email: EMAIL });
+		await requestResetAndDeliver();
 
 		await expect(resetPassword({ token: first, newPassword: "BrandNewSecret456" })).rejects.toBeInstanceOf(
 			ValidationError,
@@ -115,7 +140,11 @@ describe("requestPasswordReset", () => {
 		const userId = await createUser();
 
 		await Promise.all([requestPasswordReset({ email: EMAIL }), requestPasswordReset({ email: EMAIL })]);
+		await processOutboxOnce();
 
+		// Both requests are answered and both mails go out — the caller of the
+		// losing one is not left waiting for a link that never arrives. Only one
+		// of the two links still works, which is the next assertion.
 		expect(sent).toHaveBeenCalledTimes(2);
 		await expect(
 			prisma.passwordResetToken.count({ where: { userId, usedAt: null, expiresAt: { gt: new Date() } } }),
@@ -126,7 +155,7 @@ describe("requestPasswordReset", () => {
 describe("resetPassword", () => {
 	async function requestLink(): Promise<{ userId: string; token: string }> {
 		const userId = await createUser();
-		await requestPasswordReset({ email: EMAIL });
+		await requestResetAndDeliver();
 
 		return { userId, token: tokenFromMail() };
 	}

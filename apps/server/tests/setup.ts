@@ -29,8 +29,12 @@ if (!databaseUrl.endsWith("_test")) {
  * directly with `prisma` unless a test is actually about authentication.
  */
 beforeEach(async () => {
+	// `OutboxMessage` is listed explicitly because CASCADE cannot reach it: it has
+	// no foreign key to anything here on purpose — a queued mail outlives the row
+	// that caused it, and a user deleted mid-flight must not silently cancel the
+	// message already promised to their address.
 	await prisma.$executeRawUnsafe(
-		`TRUNCATE TABLE "Message", "ConversationParticipant", "Conversation", "User" RESTART IDENTITY CASCADE;`,
+		`TRUNCATE TABLE "OutboxMessage", "Message", "ConversationParticipant", "Conversation", "User" RESTART IDENTITY CASCADE;`,
 	);
 });
 

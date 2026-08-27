@@ -551,6 +551,157 @@ otherwise valid transaction. The migration validates existing rows too. Database
 invalid state directly, concurrency tests exercise the races, and fault-injection tests force system
 message writes to fail and prove no membership/name/socket side effect escapes.
 
+## Phase 8 — A message you can take back — `done`
+
+The largest feature gap the README had listed since phase 1: everything in this app could be sent and
+nothing could be changed. A typo stayed a typo, and a photo sent to the wrong group stayed there.
+
+| # | Item | How it ended up |
+| --- | --- | --- |
+| 23 | Edit your own message | `PATCH .../messages/:messageId`, author-only, text-only. Records `editedAt`; the list marks the bubble "edited". |
+| 24 | Delete your own message | `DELETE .../messages/:messageId`, author-only. Tombstones the row, empties the text, and removes the image row *and* its file. |
+
+### Deleting is a tombstone, and that is not squeamishness
+
+The obvious implementation — `DELETE FROM "Message"` — breaks two things in this schema that point at
+a message id with no foreign key to protect them:
+
+- `ConversationParticipant.lastReadMessageId` is a plain column on purpose (its own schema comment
+  explains why a `SetNull` relation would be worse). `countUnreadByConversation` LEFT JOINs the marker
+  and reads a miss as "this person has read nothing", so deleting the newest message in a conversation
+  would have relit the badge on its **entire history** for everyone who had finished reading it.
+- Paging hands the oldest loaded id back as a Prisma cursor. A cursor row that no longer exists fails
+  the request for the next page rather than returning it.
+
+So the row survives with `deletedAt` set, holding its place in the order, and the client renders
+"This message was deleted" in it. Both failures have a test: one asserts a reader whose marker pointed
+at the deleted message still sees zero unread, the other that the message keeps its position in
+`listMessages`.
+
+What does not survive is the content. `content` is emptied in the same write and the attachment row is
+deleted, so a client that forgets to check `deletedAt` renders nothing rather than the message. A check
+constraint (`"deletedAt" IS NULL OR "content" = ''`) makes that a property of the data instead of a
+promise one service keeps — the same argument phase 7 made for the owner invariant. A second
+constraint keeps `SYSTEM` messages immutable, because ADR 0009 already treats the group log as history
+and nobody authored it to begin with.
+
+Deleting the image also closes half of the "attachment files are not cleaned up" gap below: the file
+is removed after the transaction commits, in that order for the same reason `sendMessage` writes it
+before the row — a crash leaves an unreferenced file rather than a message showing a broken image. A
+failure to unlink is logged rather than thrown: the message *is* deleted, and failing the request
+would tell the caller otherwise.
+
+### An edit does not count as activity
+
+`editMessage` deliberately leaves `Conversation.updatedAt` alone. Fixing a typo in something sent last
+week is not a reason to throw that thread to the top of everyone's sidebar with nothing new in it. The
+sidebar *preview* still changes, because it reads the newest message rather than a stored copy — which
+is why the client re-lists conversations on `message:updated` for the text and not for the ordering.
+
+Both operations take the same `Conversation` row lock as every phase 7 mutation and re-check membership
+after it, so a delete racing a kick has one honest order. One socket event, `message:updated`, carries
+the whole message for both cases: the DTO's own `editedAt` / `deletedAt` say which happened, so a client
+replaces by id with nothing to branch on. Deleting twice is idempotent and broadcasts once.
+
+Not built, and left off deliberately: no edit history, no time limit on editing, and no "delete for me".
+The last one is a different feature — it needs per-participant visibility, which is a second axis on
+every message query.
+
+## Phase 9 — Mail that survives a crash — `done`
+
+The gap where the code was quietly lying. The README said password reset worked, and at repository
+level it did — tokens, expiry, session invalidation, all real. But the link was handed to a
+fire-and-forget `void promise.catch(log)`, so one bad minute at the provider, or a process dying at
+the wrong moment, lost it with nothing left behind to say it had been owed.
+
+| # | Item | How it ended up |
+| --- | --- | --- |
+| 25 | Transactional outbox | `OutboxMessage`, written by `enqueueMail` **inside the caller's transaction**. The reset token and the promise to mail it commit or roll back together. |
+| 26 | Delivery worker | Polls, claims with `FOR UPDATE SKIP LOCKED`, retries with exponential backoff, gives up after six attempts, and redacts the body on every terminal outcome. |
+
+See [ADR 0011](adr/0011-transactional-outbox-for-mail.md) for the reasoning in full.
+
+### The clock bug this uncovered
+
+The suite passed four runs in five, which is the worst possible result. The cause was not the tests:
+
+`nextAttemptAt` was `@default(now())`, and **Prisma evaluates `now()` in the client**, using the
+application's clock. The worker's claim compares that column against PostgreSQL's `NOW()`. Two
+clocks. A machine a few milliseconds ahead of its database writes a row that is not due the instant
+it is created — and on a real deployment, where the app and the database are different hosts, the
+skew is not milliseconds. It would have shipped as mail that sometimes just sits there, with no error
+anywhere and a table full of PENDING rows that look perfectly fine.
+
+The rule that came out of it, and that anything scheduled must follow: **every value compared against
+the database clock is written by the database.** `nextAttemptAt` is now
+`@default(dbgenerated("CURRENT_TIMESTAMP"))` and the retry schedule is `NOW() + make_interval(...)`
+in SQL. `createdAt` and `sentAt` are only ever read by people, so they stay ordinary.
+
+A second, smaller version of the same lesson is in the tests: `NOW()` is *transaction start* time, so
+two statements issued in order are not guaranteed to see it advance. A test that wants a row to be
+due sets it an hour into the past, not to "now".
+
+### What is still not built
+
+Delivery is at-least-once. The claim counts its attempt and takes a two-minute lease in one
+statement, so a crash mid-send does not immediately hand the row to another instance — but a crash
+*after* the provider accepted and *before* the row is marked sent still duplicates. Closing that
+needs an idempotency key the provider honours, which is a provider decision.
+
+And the provider itself is still a `ConsoleMailer`. That is deliberate, not unfinished: `mailer.ts`
+refuses to pick a transport from an env var, because a half-configured provider that silently falls
+back to the console is exactly how a password reset appears to work in production and reaches nobody.
+The swap is now genuinely one file, which it was not before this phase.
+
+## Phase 10 — Mail that actually sends — `done`
+
+Phase 9 built the durable half and stopped one step short: the transport was still `ConsoleMailer`,
+so nothing left the process. "Password reset works" was true of everything except the part the user
+experiences.
+
+| # | Item | How it ended up |
+| --- | --- | --- |
+| 27 | A real transport | `SmtpMailer` over nodemailer. SMTP rather than a provider SDK, so the provider is a connection string instead of a dependency. |
+| 28 | Configuration that cannot fail quietly | `MAIL_TRANSPORT` has no default; five misconfigurations now stop the boot instead of degrading. |
+| 29 | Mailpit in `docker-compose.yml` | A real SMTP server and a web inbox on :8025, so development reads the mail rather than grepping a log. |
+| 30 | Stable `Message-ID` | The outbox row id, so an at-least-once retry is recognisably the same message. |
+| 31 | Outbox retention | Settled rows swept after 30 days by an hourly timer. PENDING is never touched, whatever its age. |
+
+### Reversing the "no env var" decision, and why that is not a climbdown
+
+`mailer.ts` carried a comment arguing the transport must be a code change, because "a half-configured
+provider that silently falls back to the console is how a password reset appears to work in production
+and reaches nobody."
+
+That was right about the failure and wrong about its cause. The danger is the **silence**, not the
+variable. So the variable exists and the silence does not:
+
+- `MAIL_TRANSPORT` has no default. A deployment that never considered mail fails to start.
+- `smtp` without `SMTP_URL` or `MAIL_FROM` fails to start.
+- `console` with `NODE_ENV=production` fails to start — that combination writes every reset link to
+  stdout.
+- `SMTP_URL` must carry an `smtp://` or `smtps://` scheme. **This one was found by its own test.**
+  `z.string().url()` accepts `localhost:1025`, because `new URL()` reads `localhost:` as a scheme —
+  which is exactly the string someone pastes when they drop the prefix, and it would have failed at
+  the first send, hours later, inside a worker.
+
+All five are exercised against the real binary, not only the schema: the process refuses to listen.
+
+### A second bigint cast, in the same shape as the phase 9 clock bug
+
+`make_interval(days => $1)` fails with `function make_interval(days => bigint) does not exist`. Prisma
+sends a JS number as `bigint`; `days` is `integer`, and bigint→integer is an *assignment* cast, which
+PostgreSQL will not apply implicitly. `secs` is `double precision`, where the implicit cast does
+exist — which is why the phase 9 claim query gets away without one and the retention sweep does not.
+Both call sites now cast explicitly.
+
+### What is still not closed
+
+Delivery remains at-least-once. `Message-ID` makes a duplicate recognisable to a receiver that
+deduplicates, and nothing more — a crash after the SMTP server accepted but before the row is marked
+sent still produces a second copy for a receiver that does not. Removing that needs provider-side
+idempotency, which SMTP does not define.
+
 ## Known gaps not on the roadmap yet
 
 - **Handle placement.** Asking for a handle during registration is friction. Alternatives discussed:
@@ -560,19 +711,34 @@ message writes to fail and prove no membership/name/socket side effect escapes.
   `verifyAccessToken` compares each token's `iat` against `passwordChangedAt`, so a JWT is no longer
   self-contained proof and both HTTP and the socket handshake hit the database. Correct, and the
   thing to remember before adding a per-request query of your own.
-- **Password-reset delivery has no durable outbox.** It is detached from the HTTP response so a slow
-  or failed provider cannot reveal whether the address exists, and delivery failures are logged
-  without the token. The current console transport completes in-process. A real mail provider needs
-  an outbox/worker with retry before this is reliable across a crash between commit and send.
+- **No production mail account is signed up for.** Mail sends for real over SMTP as of phase 10, and
+  development runs against Mailpit, but a deployment still needs a provider, a verified sending
+  domain, and SPF/DKIM/DMARC records — none of which are code, and without which mail is accepted by
+  the provider and filed as spam by the recipient. That is the remaining distance, and it is
+  paperwork rather than engineering.
+- **Delivery is at-least-once.** A crash after the SMTP server accepted but before the row is marked
+  sent still duplicates for any receiver that does not honour `Message-ID`. SMTP defines no
+  idempotency key, so closing this properly means a provider API that does.
+- **Nothing bounces back.** A hard bounce, a rejected recipient or a complaint is invisible here: the
+  outbox records that the *server accepted* the message, which is not the same as it arriving.
+  Handling that needs the provider's webhooks, which is the first thing that would justify leaving
+  plain SMTP.
 - **An attachment URL is bearer proof until it expires.** Copied out of the network tab it works
   anywhere for up to an hour, and someone removed from a group can still fetch an image whose token
   they were handed a minute earlier. Inherent to signed URLs rather than an oversight — see
   [ADR 0007](adr/0007-signed-attachment-urls.md) — and the TTL is the whole mitigation.
-- **Attachment files are not cleaned up.** Deleting a message cascades the row; the file on disk
-  stays, and a send that fails between writing the file and committing the row leaves one nothing
-  ever referenced. Same class as the avatar gap below, and it belongs with whatever deletes messages
-  rather than in the filesystem layer.
-- **No message edit or delete**, no message search.
+- **An attachment file can still be orphaned on the way in.** Deleting a message now removes its file
+  (phase 8), which was the half this gap was actually about. What is left is the send path: a request
+  that fails between writing the file and committing the row leaves one nothing ever referenced, and
+  so does a crash between the delete commit and the unlink. Both cost bytes rather than correctness,
+  and closing them needs a sweep over the upload directory rather than another line in either service.
+- **No message search.** Editing and deleting are done (phase 8); finding is not.
+- **No edit history and no time limit on editing.** A message can be rewritten years later and the
+  only trace is the word "edited" — a reader cannot see what it used to say, and nothing stops someone
+  rewriting their half of an old argument. Every real messenger draws a line somewhere; this one has
+  not decided where, and adding the limit later invalidates nothing already stored.
+- **"Delete for me" does not exist** — deleting removes a message for everybody. The other kind needs
+  per-participant visibility, which is a second axis on every message query rather than a flag.
 - **Avatar files are not cleaned up when a user is deleted.** The database row cascades; the file on
   disk does not. Harmless today (nothing deletes users) and the wrong thing to fix in the filesystem
   layer — it belongs with whatever deletes the account.
@@ -596,8 +762,9 @@ message writes to fail and prove no membership/name/socket side effect escapes.
   happens, so it keeps the names people had at the time. Deliberate — see
   [ADR 0009](adr/0009-system-messages.md) — and recorded here so it is not "fixed" by accident. It is
   also the one thing localisation would change.
-- **Nothing prunes system lines.** A group with a lot of churn accumulates them in its history, the
-  same way it accumulates messages. Same class as having no message deletion.
+- **Nothing prunes system lines,** and nobody can delete one by hand either — the phase 8 check
+  constraint makes them immutable on purpose (ADR 0009). A group with a lot of churn accumulates them
+  in its history the same way it accumulates messages.
 - **A newly added group member's unread count includes the group's entire prior history.** Their read
   marker starts null, and the existing unread query treats a null marker as "count everything" — it
   has no way to distinguish "never read" from "wasn't here yet". `ConversationParticipant.joinedAt`
