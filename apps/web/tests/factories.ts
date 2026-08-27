@@ -54,6 +54,10 @@ export function makeMessage(
 	authorId: string,
 	content: string,
 	attachment: AttachmentDTO | null = null,
+	// Last, and both defaulting to "never": a message that was neither edited nor
+	// deleted is what every existing test means by one, and adding these ahead of
+	// `attachment` would have rewritten every call site to say so.
+	overrides: Pick<Partial<MessageDTO>, "editedAt" | "deletedAt"> = {},
 ): MessageDTO {
 	return {
 		id,
@@ -63,6 +67,9 @@ export function makeMessage(
 		content,
 		attachment,
 		createdAt: "2026-08-23T10:00:00.000Z",
+		editedAt: null,
+		deletedAt: null,
+		...overrides,
 	};
 }
 
@@ -81,6 +88,10 @@ export function makeSystemMessage(id: string, content: string): MessageDTO {
 		content,
 		attachment: null,
 		createdAt: "2026-08-23T10:00:00.000Z",
+		// Not overridable, unlike `makeMessage`: nobody wrote a system line, so
+		// there is nobody who may change it — the database refuses both.
+		editedAt: null,
+		deletedAt: null,
 	};
 }
 

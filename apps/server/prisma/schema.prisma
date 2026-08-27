@@ -150,6 +150,27 @@ model Message {
   // it happened, deliberately — see ADR 0009.
   content        String
   createdAt      DateTime    @default(now())
+  /// When the author last replaced `content`, or null if they never have.
+  ///
+  /// A timestamp rather than a boolean because the UI eventually wants to say
+  /// *when*, and because "edited" is derivable from it while the reverse is not.
+  editedAt       DateTime?
+  /// When the author deleted this message, or null while it stands.
+  ///
+  /// A tombstone, not a `DELETE`. Two things in this schema point at a message
+  /// id without a foreign key to protect them, and both break if the row goes:
+  ///
+  /// - `ConversationParticipant.lastReadMessageId` is a plain column on purpose
+  ///   (see its comment). The unread query LEFT JOINs the marker and reads a
+  ///   miss as "nothing read yet", so hard-deleting the newest message would
+  ///   relight the badge on the *entire* history for everyone who had read it.
+  /// - Message paging passes the oldest loaded id back as a Prisma cursor. A
+  ///   cursor row that no longer exists fails the request for the next page.
+  ///
+  /// `content` is emptied in the same write, and the check constraint below
+  /// makes that the database's rule rather than the service's promise — a
+  /// deleted message must not still be carrying its text.
+  deletedAt      DateTime?
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   author       User?        @relation(fields: [authorId], references: [id], onDelete: Cascade)

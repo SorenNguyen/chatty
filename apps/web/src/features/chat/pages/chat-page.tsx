@@ -3,7 +3,6 @@ import type {
 	ConversationLeftEvent,
 	ConversationReadEvent,
 	ConversationUpdatedEvent,
-	MessageDTO,
 } from "@chatty/shared-types";
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
@@ -20,8 +19,7 @@ import {
 	MessageList,
 	NewConversationPanel,
 } from "../components";
-import { MESSAGE_PAGE_SIZE } from "../constants/pagination";
-import { useMarkRead, usePresence, useSocketEvent, useTypingParticipants } from "../hooks";
+import { useConversationMessages, useMarkRead, usePresence, useSocketEvent, useTypingParticipants } from "../hooks";
 
 export function ChatPage() {
 	const currentUser = useAuth((state) => state.currentUser);
@@ -29,9 +27,6 @@ export function ChatPage() {
 
 	const [conversations, setConversations] = useState<ConversationDTO[]>([]);
 	const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
-	const [messages, setMessages] = useState<MessageDTO[]>([]);
-	const [hasMoreOlder, setHasMoreOlder] = useState(false);
-	const [isLoadingOlder, setIsLoadingOlder] = useState(false);
 	const [isManagingGroup, setIsManagingGroup] = useState(false);
 
 	const onlineUserIds = usePresence();
@@ -41,37 +36,21 @@ export function ChatPage() {
 		setConversations(await api.listConversations());
 	}, []);
 
-	useEffect(() => {
+	// Wrapped rather than passed straight down: the hooks below fire this from
+	// socket handlers, where a floating promise is a lint error and an unhandled
+	// rejection is a dropped refresh nobody sees.
+	const handleConversationsChanged = useCallback(() => {
 		void refreshConversations();
 	}, [refreshConversations]);
 
+	const { messages, hasMoreOlder, isLoadingOlder, loadOlder, editMessage, deleteMessage } = useConversationMessages(
+		selectedConversationId,
+		handleConversationsChanged,
+	);
+
 	useEffect(() => {
-		if (!selectedConversationId) {
-			setMessages([]);
-			setHasMoreOlder(false);
-
-			return;
-		}
-
-		let isCurrent = true;
-
-		void api.listMessages(selectedConversationId, { limit: MESSAGE_PAGE_SIZE }).then((page) => {
-			// Switching conversations quickly can land an older response after a
-			// newer one; without this the wrong conversation's messages appear.
-			if (!isCurrent) return;
-
-			// The API returns newest-first for pagination; the view reads oldest-first.
-			setMessages([...page].reverse());
-			// A full page probably means more exist. When the total is an exact
-			// multiple of the page size this costs one empty request at the end,
-			// which is cheaper than asking the server for a count every time.
-			setHasMoreOlder(page.length === MESSAGE_PAGE_SIZE);
-		});
-
-		return () => {
-			isCurrent = false;
-		};
-	}, [selectedConversationId]);
+		void refreshConversations();
+	}, [refreshConversations]);
 
 	useEffect(() => {
 		setIsManagingGroup(false);
@@ -82,40 +61,6 @@ export function ChatPage() {
 	// prepends and leaves this untouched, which is what stops scrolling up from
 	// looking like unreading.
 	useMarkRead(selectedConversationId, messages[messages.length - 1]?.id);
-
-	const loadOlderMessages = useCallback(() => {
-		const oldestMessage = messages[0];
-		if (!selectedConversationId || !oldestMessage || isLoadingOlder || !hasMoreOlder) return;
-
-		setIsLoadingOlder(true);
-		void api
-			.listMessages(selectedConversationId, { limit: MESSAGE_PAGE_SIZE, before: oldestMessage.id })
-			.then((page) => {
-				setMessages((current) => [...[...page].reverse(), ...current]);
-				setHasMoreOlder(page.length === MESSAGE_PAGE_SIZE);
-			})
-			.finally(() => setIsLoadingOlder(false));
-	}, [selectedConversationId, messages, isLoadingOlder, hasMoreOlder]);
-
-	useSocketEvent(
-		"message:new",
-		useCallback(
-			(message: MessageDTO) => {
-				if (message.conversationId === selectedConversationId) {
-					// Guard against duplicates: a reconnect can replay an event that
-					// is already on screen.
-					setMessages((current) =>
-						current.some((existing) => existing.id === message.id) ? current : [...current, message],
-					);
-				}
-
-				// Refresh regardless of which conversation it belongs to, so the
-				// sidebar preview and ordering stay correct for unopened threads.
-				void refreshConversations();
-			},
-			[selectedConversationId, refreshConversations],
-		),
-	);
 
 	useSocketEvent(
 		"conversation:new",
@@ -274,7 +219,9 @@ export function ChatPage() {
 								isGroup={selectedConversation.isGroup}
 								hasMoreOlder={hasMoreOlder}
 								isLoadingOlder={isLoadingOlder}
-								onLoadOlder={loadOlderMessages}
+								onLoadOlder={loadOlder}
+								onEditMessage={editMessage}
+								onDeleteMessage={deleteMessage}
 							/>
 						</div>
 

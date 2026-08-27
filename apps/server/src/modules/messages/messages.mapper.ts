@@ -38,6 +38,8 @@ export interface MessageRow {
 	author: UserRow | null;
 	content: string;
 	createdAt: Date;
+	editedAt: Date | null;
+	deletedAt: Date | null;
 	attachment: AttachmentRow | null;
 }
 
@@ -52,6 +54,8 @@ export const messageSelect = {
 	author: { select: userSelect },
 	content: true,
 	createdAt: true,
+	editedAt: true,
+	deletedAt: true,
 	attachment: { select: { id: true, width: true, height: true, byteSize: true } },
 } as const;
 
@@ -74,5 +78,7 @@ export function toMessageDTO(row: MessageRow): MessageDTO {
 				}
 			: null,
 		createdAt: row.createdAt.toISOString(),
+		editedAt: row.editedAt?.toISOString() ?? null,
+		deletedAt: row.deletedAt?.toISOString() ?? null,
 	};
 }

@@ -1,7 +1,12 @@
 import { Router } from "express";
 import { requireAuth } from "../../middlewares/require-auth.js";
 import { uploadAttachment } from "../../middlewares/upload-image.js";
-import { listMessagesController, sendMessageController } from "./messages.controller.js";
+import {
+	deleteMessageController,
+	editMessageController,
+	listMessagesController,
+	sendMessageController,
+} from "./messages.controller.js";
 
 // Mounted at /conversations/:conversationId/messages — see app.ts
 export const messagesRouter = Router({ mergeParams: true });
@@ -12,3 +17,10 @@ messagesRouter.get("/", listMessagesController);
 // through, so this one route takes a text message and an image without a branch
 // in front of it — and without a second write path to secure.
 messagesRouter.post("/", uploadAttachment, sendMessageController);
+// PATCH, not PUT: only the text is replaceable, and an edit that carried a new
+// image would be a second upload path with its own membership check to secure.
+messagesRouter.patch("/:messageId", editMessageController);
+// DELETE, even though the row survives as a tombstone. The resource the caller
+// is addressing is the message they wrote, and that is what goes — the row that
+// stays behind exists for read markers and paging cursors, not for them.
+messagesRouter.delete("/:messageId", deleteMessageController);

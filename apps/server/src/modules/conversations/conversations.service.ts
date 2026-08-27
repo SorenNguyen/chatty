@@ -115,6 +115,12 @@ interface UnreadCountRow {
  * being special-cased: their `authorId` is null, and `null <> $userId` is null,
  * not true. Deliberate — a badge on the sidebar means "someone said something
  * to you", and "Chi left the group" is not that.
+ *
+ * Deleted messages are not counted either, and that one *is* special-cased.
+ * A tombstone has no content left to read, so a badge pointing at it sends
+ * someone to look at "This message was deleted". The row still has to be here
+ * for the marker join below — which is the whole reason a delete is a tombstone
+ * rather than a DELETE.
  */
 async function countUnreadByConversation(userId: string, conversationIds: string[]): Promise<Map<string, number>> {
 	if (conversationIds.length === 0) return new Map();
@@ -127,6 +133,7 @@ async function countUnreadByConversation(userId: string, conversationIds: string
 		LEFT JOIN "Message" marker ON marker.id = p."lastReadMessageId"
 		WHERE m."conversationId" IN (${Prisma.join(conversationIds)})
 			AND m."authorId" <> ${userId}
+			AND m."deletedAt" IS NULL
 			AND (marker.id IS NULL OR m."createdAt" > marker."createdAt")
 		GROUP BY m."conversationId"
 	`;

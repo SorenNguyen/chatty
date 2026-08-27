@@ -6,6 +6,7 @@ import type {
 	ConversationDTO,
 	ConversationReadEvent,
 	CurrentUserDTO,
+	EditMessageRequest,
 	LoginRequest,
 	MarkReadRequest,
 	MessageDTO,
@@ -171,6 +172,34 @@ export const api = {
 		if (content) body.append("content", content);
 
 		return request<MessageDTO>(path, { method: "POST", body });
+	},
+
+	/**
+	 * Rewrites the text of a message you wrote. Only the author may, and only
+	 * while it stands — a deleted message is refused rather than restored.
+	 *
+	 * Like `sendMessage`, the returned message is not what puts it on screen: the
+	 * server broadcasts `message:updated` to everyone including the editor, so
+	 * one code path renders the change for all of them.
+	 */
+	editMessage(conversationId: string, messageId: string, content: string): Promise<MessageDTO> {
+		const body: EditMessageRequest = { content };
+
+		return request<MessageDTO>(`/conversations/${conversationId}/messages/${messageId}`, {
+			method: "PATCH",
+			body: JSON.stringify(body),
+		});
+	},
+
+	/**
+	 * Deletes a message you wrote, and its image with it.
+	 *
+	 * Returns the tombstone rather than nothing: the message keeps its place in
+	 * the conversation with its content emptied, which is what the list renders
+	 * as "This message was deleted". Deleting twice is not an error.
+	 */
+	deleteMessage(conversationId: string, messageId: string): Promise<MessageDTO> {
+		return request<MessageDTO>(`/conversations/${conversationId}/messages/${messageId}`, { method: "DELETE" });
 	},
 
 	/**

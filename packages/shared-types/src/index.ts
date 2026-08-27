@@ -161,6 +161,25 @@ export interface MessageDTO {
 	content: string;
 	attachment: AttachmentDTO | null;
 	createdAt: string;
+	/**
+	 * When the author last changed the text, or null if they never have.
+	 *
+	 * Present so a reader can tell a message that was rewritten from one that was
+	 * always this way — without it, editing is a silent rewrite of what someone
+	 * remembers reading.
+	 */
+	editedAt: string | null;
+	/**
+	 * When the author deleted it, or null while it stands.
+	 *
+	 * A deleted message still arrives, and it must: it holds its place in the
+	 * order, and it is what other people's read markers and the paging cursor
+	 * point at. What it does *not* carry is its content — the server empties
+	 * `content` and drops `attachment` on the same write, so there is nothing
+	 * left for a client to render even by mistake. Show the placeholder, not the
+	 * bubble.
+	 */
+	deletedAt: string | null;
 }
 
 // ---- Auth request/response contracts ----
@@ -273,6 +292,19 @@ export interface SendMessageRequest {
 	content?: string | undefined;
 }
 
+/**
+ * Body of `PATCH /conversations/:conversationId/messages/:messageId`.
+ *
+ * Text only, and required — replacing or removing an image is not an edit but a
+ * different message, and allowing it would mean a second upload path with its
+ * own membership check. Empty is accepted only on a message that still has an
+ * image to stand on its own, exactly as when it was sent: a message has to be
+ * something.
+ */
+export interface EditMessageRequest {
+	content: string;
+}
+
 /** Body of `POST /conversations/:id/members`. */
 export interface AddParticipantRequest {
 	userId: string;
@@ -358,6 +390,21 @@ export interface ConversationLeftEvent {
 /** Events the server pushes down. The client only listens to these. */
 export interface ServerToClientEvents {
 	"message:new": (message: MessageDTO) => void;
+	/**
+	 * A message already on screen changed — its author edited it, or deleted it.
+	 *
+	 * One event for both, carrying the whole message rather than a patch: the
+	 * DTO's own `editedAt` / `deletedAt` say which happened, so a client replaces
+	 * by id and has nothing to branch on. Two events would need the receiver to
+	 * merge fields it did not send, and a delete is precisely the case where a
+	 * merge that goes wrong leaves the old text on screen.
+	 *
+	 * Deliberately does *not* imply the conversation moved: editing a message
+	 * from last week must not jump that thread to the top of the sidebar, so the
+	 * server leaves `Conversation.updatedAt` alone. Re-read the sidebar for the
+	 * preview, not for the ordering.
+	 */
+	"message:updated": (message: MessageDTO) => void;
 	/**
 	 * Someone started a conversation that includes you.
 	 *
