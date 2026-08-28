@@ -31,29 +31,25 @@ Rules:
 
 ---
 
-## Branches
+## Branches — work goes to `main`
 
-```
-<type>/<short-description>
-```
+**Commit and push straight to `main`.** This is a one-person repository, and the branch-and-PR shape it started with was ceremony rather than review: PR #1 stayed open across five phases and was merged by the same person who wrote every commit in it. A review step with nobody on the other side of it is a delay, not a safeguard.
 
-`feat/group-chat`, `fix/socket-reconnect`, `refactor/message-service`.
+What actually protects `main` is the gate below, plus CI — which runs on every push to `main`, not only on pull requests. That is the part worth keeping, and it is unchanged.
 
-- Branch off `main`. Keep branches short-lived — a branch alive for two weeks is a merge conflict you have not met yet.
-- Never commit directly to `main` once anyone else is involved.
+Branch only when the work would leave `main` broken while it is in progress: a migration that has to land with an application change deployed separately, a spike you may throw away, anything you want a second machine to try before it is real. Then it is still `<type>/<short-description>` — `feat/group-chat`, `fix/socket-reconnect` — short-lived, and merged rather than left open.
+
+The moment a second person is involved, this rule goes back to being pull requests. It is a consequence of the repository having one author, not a view about review.
 
 ---
 
-## Before you open a PR
+## Before you push
 
 ```bash
-npm run typecheck        # all workspaces
-npm run lint
-npm run test
-bash scripts/audit-rules.sh apps/web/src   # frontend only
+npm run verify           # typecheck -> lint -> format:check -> test -> audit
 ```
 
-All four clean. "It works on my machine" is not a state that survives a second machine.
+Clean, on Node 22 or newer. "It works on my machine" is not a state that survives a second machine — and pushing to `main` means the next thing that reads a broken commit is CI, or a deployment.
 
 Checklist:
 
@@ -80,7 +76,7 @@ The value is in the **Consequences** section — the trade-offs you knowingly ac
 
 Declared here because chatty is built with an agent in the loop, and these are the boundaries:
 
-- **Never commit or push unprompted.** Wait for an explicit "commit this" / "push it" in the same turn.
+- **Never commit or push unprompted.** Wait for an explicit "commit this" / "push it" in the same turn. This did not change when the branch rule did: pushing straight to `main` makes the instruction to push more consequential, not less, because there is no pull request standing between the push and the trunk.
 - Never `git checkout` / `reset` / `clean` over uncommitted work without checking `git status` and stashing first.
 - Running `typecheck` / `lint` / `test` unprompted: **yes** — they are cheap and catch real breakage before it is handed over.
 - Report failures honestly, with the output. A test that fails is reported as failing, not narrated as "should work".

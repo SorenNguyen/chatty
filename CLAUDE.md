@@ -9,7 +9,7 @@ Read this before writing any code. It is the entry point: the conventions block 
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the system fits together and why |
 | [docs/conventions/frontend.md](docs/conventions/frontend.md) | React / TypeScript rules for `apps/web` |
 | [docs/conventions/backend.md](docs/conventions/backend.md) | Node / Express / Prisma rules for `apps/server` |
-| [docs/conventions/git-and-workflow.md](docs/conventions/git-and-workflow.md) | Commits, branches, PR checklist, agent boundaries |
+| [docs/conventions/git-and-workflow.md](docs/conventions/git-and-workflow.md) | Commits, why work goes straight to `main`, the pre-push checklist, agent boundaries |
 | [docs/adr/](docs/adr/) | Why each major technical decision was made |
 
 ---
