@@ -130,12 +130,12 @@ the paging cursor still point at those rows. Read receipts can be turned off, an
 symmetric — hide yours and you stop seeing everyone else's, with nothing revealed retroactively when
 you turn them back on. See [docs/ROADMAP.md](docs/ROADMAP.md) phase 13.
 
-Verified by 307 server tests (against a real Postgres), 146 web tests, and 14 Playwright specs
+Verified by 315 server tests (against a real Postgres), 146 web tests, and 14 Playwright specs
 driving a real browser against a real server — plus typecheck, lint, the conventions audit, and a
 production image build. CI runs all of it except the browser suite on every push.
 
 **[docs/ROADMAP.md](docs/ROADMAP.md) is the current source of truth for what is done and what is
-next.** Phases 1 to 13 are complete. Phase 7 makes group and password-reset transitions safe under
+next.** Phases 1 to 14 are complete. Phase 7 makes group and password-reset transitions safe under
 concurrent requests: one conversation lock orders membership-sensitive writes, PostgreSQL enforces
 the owner/message invariants, and fault-injection tests prove partial writes do not escape. Phase 8
 adds editing and deleting your own messages, on the same lock, with the deletion kept as a tombstone
@@ -149,7 +149,10 @@ file. Phase 11 makes a misconfigured production refuse to start at all and prove
 path for the first time; phase 12 adds full-text search. Phase 13 is what an account needs before
 real people have one — changing its email address, handing a group on, hiding read receipts, and
 deleting the account — and it is where `Message.authorId` stopped cascading, so somebody can leave
-without taking half of everyone else's conversations with them.
+without taking half of everyone else's conversations with them. Phase 14 closed the four Known gaps
+that were defects rather than missing features: unread now starts when you joined a group, a second
+test run refuses rather than corrupting the first, the web app has a Content-Security-Policy, and
+attachment files left by a failed upload are swept.
 
 Largest known gaps:
 
@@ -176,15 +179,14 @@ Largest known gaps:
 - **An attachment URL works for anyone holding it, until it expires.** Signed and scoped to one image
   with a one-hour life, but bearer proof for that hour — see
   [ADR 0007](docs/adr/0007-signed-attachment-urls.md). One image per message; no lightbox and no upload
-  progress. Deleting a message now removes its file, but a send that fails midway — or a crash between
-  the delete committing and the unlink — still leaves one nothing references. Deleting an account does
-  not help here: the messages survive it, so their attachments are still referenced.
+  progress. Files left behind by a send that failed midway are swept every six hours as of phase 14;
+  avatar files are not swept yet.
 - **Still no TLS, reverse proxy, load balancer or object storage.** The two API instances sit on
   separate ports rather than behind anything, and uploads are a shared volume — which works on one
   machine and does not survive per-machine disks. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
-- **The web app has no Content-Security-Policy.** The API's headers are set (phase 11); the static
-  server's are not, and a CSP added without a browser exercising it is a CSP that breaks the first
-  image.
+- **The CSP is not verified against a live API.** The web app has one as of phase 14, checked in a
+  real browser against the built image — but with no API behind it, so `img-src` and `connect-src`
+  are argued from the header's contents rather than demonstrated end to end.
 - Playwright covers one browser, and `test:e2e` is not part of `verify` — it needs two servers and a
   browser download.
 

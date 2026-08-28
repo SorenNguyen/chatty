@@ -3,6 +3,7 @@ import { NotFoundError } from "../src/lib/errors.js";
 import { userRoom } from "../src/lib/socket-bus.js";
 import { register } from "../src/modules/auth/auth.service.js";
 import {
+	addParticipant,
 	createConversation,
 	listConversationsForUser,
 	markConversationRead,
@@ -265,5 +266,58 @@ describe("turning read receipts off", () => {
 		const next = await sendMessage(anId, conversation.id, { content: "and now?" });
 		await markConversationRead(minhId, conversation.id, { messageId: next.id });
 		expect(await sharedMarkerOf(anId, minhId, conversation.id)).toBe(next.id);
+	});
+});
+
+describe("unreadCount for somebody added to an existing group", () => {
+	/** `createConversation` only makes a group with more than one other participant. */
+	async function createGroup(creatorId: string, otherIds: string[]) {
+		return createConversation(creatorId, { participantIds: otherIds, name: "Group" });
+	}
+
+	it("does not count the history from before they joined", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const chiId = await createUser("chi");
+		const group = await createGroup(minhId, [anId, binhId]);
+		await sendMessage(minhId, group.id, { content: "years of this" });
+		await sendMessage(anId, group.id, { content: "and this" });
+
+		await addParticipant(minhId, group.id, { userId: chiId });
+
+		// Their marker is null, which means "has read nothing" — true, and useless.
+		// Without the joinedAt bound the badge lights up with the group's entire
+		// past on the day they arrive.
+		expect((await conversationAsSeenBy(chiId, group.id)).unreadCount).toBe(0);
+	});
+
+	it("counts what arrives after they joined", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const chiId = await createUser("chi");
+		const group = await createGroup(minhId, [anId, binhId]);
+		await sendMessage(minhId, group.id, { content: "before" });
+		await addParticipant(minhId, group.id, { userId: chiId });
+
+		await sendMessage(anId, group.id, { content: "after" });
+
+		expect((await conversationAsSeenBy(chiId, group.id)).unreadCount).toBe(1);
+	});
+
+	it("leaves the people who were there from the start counting everything", async () => {
+		// The bound applies to everyone rather than only to new joiners — one rule
+		// instead of two — so this is what proves the rule did not cost anything for
+		// the participants whose joinedAt is the conversation's own creation.
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const group = await createGroup(minhId, [anId, binhId]);
+
+		await sendMessage(minhId, group.id, { content: "one" });
+		await sendMessage(minhId, group.id, { content: "two" });
+
+		expect((await conversationAsSeenBy(anId, group.id)).unreadCount).toBe(2);
 	});
 });

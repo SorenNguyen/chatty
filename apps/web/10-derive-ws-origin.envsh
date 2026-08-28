@@ -1,0 +1,15 @@
+#!/bin/sh
+# Derives the WebSocket origin the CSP has to allow, from the one the operator set.
+#
+# A CSP source expression matches by scheme, and `ws:` is not `http:`. So a
+# policy that names only the API's HTTP origin lets every fetch through and
+# blocks the socket — which is not a degraded chat app, it is a chat app where
+# nothing arrives until you reload. Deriving it here rather than asking for a
+# second variable means there is one value to set and no way to set it
+# inconsistently.
+#
+# `.envsh`, not `.sh`: nginx's entrypoint *sources* this extension and merely
+# executes the other, and an export from a subprocess would reach nothing. It
+# runs before `20-envsubst-on-templates.sh` by filename, which is the only reason
+# the rendered config sees the variable at all.
+export API_WS_ORIGIN="$(printf '%s' "${API_ORIGIN}" | sed -e 's|^http|ws|')"

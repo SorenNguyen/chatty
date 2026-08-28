@@ -136,6 +136,22 @@ interface UnreadCountRow {
  * someone to look at "This message was deleted". The row still has to be here
  * for the marker join below — which is the whole reason a delete is a tombstone
  * rather than a DELETE.
+ *
+ * **Unread starts when you joined, not when the conversation did.** Without the
+ * `joinedAt` bound, being added to a group with five years of history lit the
+ * badge with all of it: a new participant's marker is null, and a null marker
+ * means "has read nothing", which is true and useless. It is bounded for
+ * everyone rather than only for new joiners, because that is one rule instead of
+ * two — for the people who were there at the start `joinedAt` is the moment the
+ * conversation was created, so nothing predates it and nothing changes.
+ *
+ * `>=`, not `>`, and it is not an off-by-one. Both columns are millisecond
+ * timestamps written by the application, so a message sent in the same
+ * millisecond as somebody joining is a genuine tie — and it is a tie in tests
+ * constantly, where a fixture creates a conversation and sends into it in one
+ * breath. Counting that message is the friendlier way to be wrong: the reader
+ * sees something they may already have known about, rather than never being told
+ * about a message at all.
  */
 async function countUnreadByConversation(userId: string, conversationIds: string[]): Promise<Map<string, number>> {
 	if (conversationIds.length === 0) return new Map();
@@ -150,6 +166,7 @@ async function countUnreadByConversation(userId: string, conversationIds: string
 			AND m."kind" = 'USER'
 			AND m."authorId" IS DISTINCT FROM ${userId}
 			AND m."deletedAt" IS NULL
+			AND m."createdAt" >= p."joinedAt"
 			AND (marker.id IS NULL OR m."createdAt" > marker."createdAt")
 		GROUP BY m."conversationId"
 	`;

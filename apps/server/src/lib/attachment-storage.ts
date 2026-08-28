@@ -1,4 +1,4 @@
-import { access, mkdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import { env } from "../config/env.js";
@@ -31,6 +31,13 @@ const MAX_INPUT_PIXELS = 50_000_000;
 
 const attachmentsDirectory = path.resolve(env.UPLOAD_DIR, "attachments");
 
+/**
+ * Every attachment is re-encoded to WebP on the way in, so the extension is a
+ * constant rather than something derived from the upload. Named because the
+ * orphan sweep has to take it back off a filename to recover the id.
+ */
+const ATTACHMENT_FILE_EXTENSION = ".webp";
+
 /** What the re-encode produced, for the columns that describe it. */
 export interface StoredAttachment {
 	width: number;
@@ -52,7 +59,7 @@ function assertSafeKey(attachmentId: string): void {
 function attachmentPathFor(attachmentId: string): string {
 	assertSafeKey(attachmentId);
 
-	return path.join(attachmentsDirectory, `${attachmentId}.webp`);
+	return path.join(attachmentsDirectory, `${attachmentId}${ATTACHMENT_FILE_EXTENSION}`);
 }
 
 /**
@@ -116,6 +123,57 @@ export async function findAttachmentPath(attachmentId: string): Promise<string |
 /** Removes an attachment's file. Succeeds when there was nothing to remove. */
 export async function deleteAttachment(attachmentId: string): Promise<void> {
 	await rm(attachmentPathFor(attachmentId), { force: true });
+}
+
+/** One stored file, as the orphan sweep needs to see it. */
+export interface StoredAttachmentFile {
+	/** The id the filename is built from — what an `Attachment` row would be keyed by. */
+	id: string;
+	/** When it was written. The sweep needs an age, not a name, to be safe. */
+	modifiedAt: Date;
+}
+
+/**
+ * Every attachment file on disk, with its age.
+ *
+ * Here rather than in the sweep that uses it, because this is the only module
+ * that knows attachments are `<id>.webp` files under one directory — and keeping
+ * that true is what makes moving them to object storage a change to this file
+ * and nothing else. The sweep does the part this module must not do: ask the
+ * database which of them are still referenced.
+ *
+ * A missing directory is an empty list rather than an error. Nothing has been
+ * uploaded yet on a fresh install, and a sweep that crashes the timer on that is
+ * a sweep that never runs on a quiet deployment.
+ */
+export async function listStoredAttachments(): Promise<StoredAttachmentFile[]> {
+	let entries: string[];
+	try {
+		entries = await readdir(attachmentsDirectory);
+	} catch {
+		return [];
+	}
+
+	const files = await Promise.all(
+		entries
+			.filter((entry) => entry.endsWith(ATTACHMENT_FILE_EXTENSION))
+			.map(async (entry) => {
+				const id = entry.slice(0, -ATTACHMENT_FILE_EXTENSION.length);
+
+				try {
+					const stats = await stat(path.join(attachmentsDirectory, entry));
+
+					return { id, modifiedAt: stats.mtime };
+				} catch {
+					// Deleted between the listing and the stat — by a message delete, or
+					// by another instance's sweep. Not there is the outcome the caller
+					// wanted anyway.
+					return null;
+				}
+			}),
+	);
+
+	return files.filter((file): file is StoredAttachmentFile => file !== null);
 }
 
 /**

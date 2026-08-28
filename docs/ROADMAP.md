@@ -928,6 +928,98 @@ the database refuses a non-empty group with none, so the hand-over is not a nice
 between the delete working and failing. All of it commits with the user row, because half of this
 having happened is a person who has left four groups and still has an account.
 
+## Phase 14 — the four things that were actually broken — `done`
+
+Not features. Everything here was already listed under Known gaps, and what they have in common is
+that each one was a defect wearing a feature's clothes — the kind that gets deferred forever because
+nobody is asking for it by name.
+
+| # | Item | How it ended up |
+| --- | --- | --- |
+| 45 | Unread starts when you joined | One condition in `countUnreadByConversation`, bounded by `ConversationParticipant.joinedAt`. |
+| 46 | Two test runs cannot corrupt each other | A session advisory lock held by `tests/global-setup.ts` for the whole run. |
+| 47 | A Content-Security-Policy for the web app | `nginx.conf` became a template; the policy names the API's origin, derived once. |
+| 48 | Orphaned attachment files are swept | `lib/orphaned-uploads.ts`, on the same shape as the outbox retention sweep. |
+
+### Being added to a group was a badge with five years in it
+
+A new participant's read marker is null, and the unread query reads a null marker as "has read
+nothing" — true, and useless. Joining a group with history therefore lit the badge with all of it.
+
+The bound is `joinedAt`, and it is applied to **everyone** rather than only to new joiners. That was
+the thing the gap entry was worried about — "a second axis on unread math" — and it turned out to be
+the opposite: one rule instead of two. For the people who were there from the start, `joinedAt` is
+the moment the conversation was created, so nothing predates it and nothing changes for them. There
+is a test that says so.
+
+`>=`, not `>`. Both columns are millisecond timestamps written by the application, so a message sent
+in the same millisecond as somebody joining is a real tie — constantly, in tests, where a fixture
+creates a conversation and sends into it in one breath. Counting that message is the friendlier way
+to be wrong.
+
+### A test suite that could be corrupted by a second terminal
+
+`tests/setup.ts` truncates every table before every test, so two runs against `chatty_test` deleted
+each other's fixtures mid-test. It never looked like a collision: it looked like "user does not
+exist" and "email already registered" scattered across unrelated files, which reads as a broken suite
+rather than a busy database.
+
+`global-setup.ts` now takes a PostgreSQL **session** advisory lock before it does anything else,
+including the migration, and a second run refuses to start with a sentence that says what to do. A
+session lock rather than a row or a lock file because it is released when the connection ends —
+including on `ctrl-c`, and including on a crash. A lock that has to be cleaned up is a lock that
+eventually strands the database in "busy" with nobody holding it.
+
+It needs its own client with `connection_limit=1`. A pooled client is free to take the lock on one
+connection and run the unlock on another, which would leave the lock held until the process exited.
+
+### The CSP, and the two ways it could have been decorative
+
+The API got Helmet in phase 11 and the web app got nothing, which was recorded as a gap rather than
+half-done. It is the half that matters most for a chat app: every message is a string a stranger
+typed. React escapes what it renders, so this is defence in depth — and the point of defence in depth
+is the day something reaches `dangerouslySetInnerHTML`, or a dependency does it on this app's behalf.
+
+Two things would have made the policy pointless, and both were found by running it rather than by
+reading it:
+
+- **`add_header` does not merge.** A `location` block that sets any header of its own discards every
+  header inherited from the server block. Both locations here set a `Cache-Control`, so both would
+  have silently served the fingerprinted JavaScript and `index.html` — the two files the policy is
+  actually about — with no policy at all. The directive is held in one `set $csp` and re-added in
+  each block.
+- **`ws:` is not `http:`.** A CSP source expression matches by scheme, so a `connect-src` naming only
+  the API's URL lets every fetch through and blocks the socket, which is the entire product. The
+  WebSocket origin is derived from the HTTP one in a `.envsh` the nginx entrypoint sources, so there
+  is one value to configure and no way to configure it inconsistently.
+
+The `.envsh` has to be **executable** or the entrypoint skips it, logging a line nobody reads and
+failing nothing — the container then dies on an unsubstituted variable. `COPY --chmod=0755`.
+
+Verified against the built image rather than the config file: the header is present on `/`, on a
+fingerprinted asset and on a client-side route, and a real Chromium loads the app under it with no
+violations and no console errors. What is **not** verified end to end is the app talking to a live API
+through the policy — that needs the full production stack — so `img-src` and `connect-src` are
+argued from the header's contents rather than demonstrated.
+
+### The half of the orphan gap that was actually closeable
+
+`sendMessage` writes the file before the row, deliberately: the other order leaves a message pointing
+at a picture that is not there. A request that dies in that window leaves a file nothing will ever
+reference, and no amount of care inside the service can see it afterwards. So it is swept.
+
+The grace period is the whole safety argument, and it is generous rather than tight. A file written
+seconds ago may belong to a request that has not committed yet, and deleting *that* one turns a
+working upload into a broken image — strictly worse than the bytes being reclaimed. An hour is far
+past any live request.
+
+No lock, on purpose. Two instances sweeping compute the same set and both call `rm --force`, which is
+what makes deleting the same file twice a no-op; a lock would be a second thing to get right for an
+operation that is already idempotent.
+
+One thing this does **not** cover: avatar files. The same sweep is the right home for them and the
+loop is now here, but it was left out rather than added quietly — see Known gaps.
+
 ## Known gaps not on the roadmap yet
 
 - **Handle placement.** Asking for a handle during registration is friction. Alternatives discussed:
@@ -953,13 +1045,12 @@ having happened is a person who has left four groups and still has an account.
   anywhere for up to an hour, and someone removed from a group can still fetch an image whose token
   they were handed a minute earlier. Inherent to signed URLs rather than an oversight — see
   [ADR 0007](adr/0007-signed-attachment-urls.md) — and the TTL is the whole mitigation.
-- **An attachment file can still be orphaned on the way in.** Deleting a message now removes its file
-  (phase 8), which was the half this gap was actually about. What is left is the send path: a request
-  that fails between writing the file and committing the row leaves one nothing ever referenced, and
-  so does a crash between the delete commit and the unlink. Both cost bytes rather than correctness,
-  and closing them needs a sweep over the upload directory rather than another line in either service.
-  Deleting an account was expected to close this and does not: the messages survive the account, so
-  their attachments are still referenced and must stay.
+- **Avatar files are still not swept.** Attachment files are, as of phase 14, and the sweep in
+  `lib/orphaned-uploads.ts` is the right home for avatars too — the loop already exists. It was left
+  out rather than added quietly, because the question it has to ask is a different one: an avatar
+  file is orphaned when `User.avatarUpdatedAt` is null or the user is gone, not when a row with a
+  matching id is missing. Phase 13 added a path that produces them (a failed unlink after an account
+  is deleted is logged, not retried), so this is a real if slow-growing gap.
 - **Search keeps diacritics.** `hen gap` does not find `hẹn gặp`. The fix is the `unaccent`
   extension plus an IMMUTABLE wrapper, written out in full in the phase 12 migration — deliberately
   not taken on, because it is a host-level dependency and the host is not chosen.
@@ -984,12 +1075,11 @@ having happened is a person who has left four groups and still has an account.
   conversation you are in — `use-typing-participants` drops the rest on purpose, because a sidebar
   badge for something that expires in seconds is mostly flicker. Real messengers do show it there,
   so this is a judgement call rather than a settled answer.
-- **Two test runs against `chatty_test` at once corrupt each other.** `tests/setup.ts` truncates
-  before every test, so a second run — another terminal, another agent, a watch mode left open —
-  deletes the first one's fixtures mid-test. It surfaces as unique-constraint and "participant does
-  not exist" failures scattered across unrelated files, which reads as a broken suite rather than a
-  busy database. The seed script has a guard for pointing at the wrong database; this is the same
-  class of problem and has none.
+- **The test suite still shares one upload directory across tests.** The database is truncated before
+  each test and the filesystem is not, so a file written by one test survives into the next as a
+  genuine orphan. Harmless for every suite except the sweep's own, which empties the directory
+  itself — but it is the same class of problem the advisory lock closed for the database, one level
+  down.
 - **A system line does not follow a later rename.** "An added Binh" is stored as text when it
   happens, so it keeps the names people had at the time. Deliberate — see
   [ADR 0009](adr/0009-system-messages.md) — and recorded here so it is not "fixed" by accident. It is
@@ -997,11 +1087,6 @@ having happened is a person who has left four groups and still has an account.
 - **Nothing prunes system lines,** and nobody can delete one by hand either — the phase 8 check
   constraint makes them immutable on purpose (ADR 0009). A group with a lot of churn accumulates them
   in its history the same way it accumulates messages.
-- **A newly added group member's unread count includes the group's entire prior history.** Their read
-  marker starts null, and the existing unread query treats a null marker as "count everything" — it
-  has no way to distinguish "never read" from "wasn't here yet". `ConversationParticipant.joinedAt`
-  already exists and could bound the query, but doing that for new joiners only (and not everyone
-  else) is a second axis on unread math that was not asked for.
 - **There is still no second admin and no demotion.** An owner can now hand the group to somebody
   else (phase 13), which is the half that was missing; what remains is that the role is a single seat
   rather than a set, so there is nobody to cover for an owner who has gone quiet without them acting

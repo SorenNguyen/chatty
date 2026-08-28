@@ -92,6 +92,12 @@ services:
       dockerfile: apps/web/Dockerfile
       args:
         VITE_API_URL: ${API_PUBLIC_URL:-http://localhost:4000}
+    # The same value again, and it has to be: the build arg above is compiled
+    # into the bundle, while this one is read at container start to render the
+    # Content-Security-Policy. One `API_PUBLIC_URL` still drives both, so there is
+    # nothing here to keep in sync by hand — see apps/web/Dockerfile.
+    environment:
+      API_ORIGIN: ${API_PUBLIC_URL:-http://localhost:4000}
     restart: unless-stopped
     ports:
       - "8080:8080"

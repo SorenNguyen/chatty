@@ -3,6 +3,7 @@ import { createAdapter } from "@socket.io/redis-adapter";
 import { createApp } from "./app.js";
 import { env } from "./config/env.js";
 import { logger } from "./lib/logger.js";
+import { startOrphanedUploadSweeper } from "./lib/orphaned-uploads.js";
 import { startOutboxWorker } from "./lib/outbox.js";
 import { redis } from "./lib/redis.js";
 import { getIO } from "./lib/socket-bus.js";
@@ -30,6 +31,12 @@ if (redis) {
 // throughput rather than duplicate mail — unlike rate limits and socket rooms,
 // this one needs no Redis to behave correctly with several processes.
 startOutboxWorker();
+
+// Also one per instance, and also safe that way: two sweeps compute the same set
+// and `rm --force` makes deleting a file twice a no-op. Unlike the outbox this
+// one is not doing work anybody is waiting for — it reclaims the files left by
+// uploads that died between writing the image and committing its row.
+startOrphanedUploadSweeper();
 
 httpServer.listen(env.PORT, () => {
 	logger.info(`chatty server listening on :${env.PORT}`);
