@@ -39,7 +39,9 @@ What actually protects `main` is the gate below, plus CI — which runs on every
 
 Branch only when the work would leave `main` broken while it is in progress: a migration that has to land with an application change deployed separately, a spike you may throw away, anything you want a second machine to try before it is real. Then it is still `<type>/<short-description>` — `feat/group-chat`, `fix/socket-reconnect` — short-lived, and merged rather than left open.
 
-The moment a second person is involved, this rule goes back to being pull requests. It is a consequence of the repository having one author, not a view about review.
+**This is the owner's rule, and only the owner's.** `main` is protected: a pull request and a green `verify` are required for everyone else, and the protection deliberately does not apply to administrators. So the repository being open source did not change how its author works, and outside contributions still arrive the way they should — through a pull request that CI has already read. See [CONTRIBUTING.md](../../CONTRIBUTING.md).
+
+The exemption is a consequence of the repository having one regular author, not a view about review. The moment there is a second, turn on "include administrators" and this section becomes a description of history.
 
 ---
 

@@ -7,6 +7,7 @@ A messaging app (Zalo/Telegram-style: 1-1 and group chat, realtime delivery) bui
 | Document | What it answers |
 | --- | --- |
 | [CLAUDE.md](CLAUDE.md) | The conventions block — button/icon/alias/filename decisions, and the checklists |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to run it, what the gate is, and what a good pull request looks like |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the pieces fit together and why |
 | [docs/conventions/](docs/conventions/) | The rules for writing frontend, backend, and commits |
 | [docs/adr/](docs/adr/) | Why each major technical decision was made |
@@ -186,3 +187,13 @@ Largest known gaps:
   image.
 - Playwright covers one browser, and `test:e2e` is not part of `verify` — it needs two servers and a
   browser download.
+
+## Contributing
+
+Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). The **Known gaps**
+list above is the real queue, and the most valuable report this repository can receive is a place
+where the docs and the code say different things.
+
+## License
+
+[MIT](LICENSE). `scripts/audit-rules.sh` is adapted from evondev's Dev Rules, also MIT.
