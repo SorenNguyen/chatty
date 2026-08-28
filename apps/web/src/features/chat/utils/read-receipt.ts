@@ -22,12 +22,22 @@ export interface ReadReceipt {
  * Null when the answer is not knowable from what is loaded. A marker pointing at
  * a message from an older page is not found here, and guessing that it must
  * therefore be older would claim messages were read that may not have been.
+ *
+ * Null too when `areReceiptsShared` is false — the viewer has turned read
+ * receipts off, and the setting is symmetric: hiding yours while still reading
+ * everyone else's is the arrangement people are right to call unfair. This is the
+ * only half of the symmetry the client owns. The other half is not a rendering
+ * decision at all: a participant with receipts off has no shared marker in the
+ * database, so their position never reaches anybody's browser to be hidden.
  */
 export function getReadReceipt(
 	messages: MessageDTO[],
 	participants: ParticipantDTO[],
 	currentUserId: string,
+	areReceiptsShared: boolean,
 ): ReadReceipt | null {
+	if (!areReceiptsShared) return null;
+
 	const others = participants.filter((participant) => participant.id !== currentUserId);
 
 	const markerIndexes = others

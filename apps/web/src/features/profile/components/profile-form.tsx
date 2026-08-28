@@ -11,16 +11,20 @@ interface ProfileFormProps {
 }
 
 /**
- * Edits the two things about an account that are yours to change.
+ * Edits the things about an account that are yours to change in one request.
  *
- * Email is shown but not editable: changing it has to prove the new address is
- * reachable, which needs the outbound email that password reset is also waiting
- * on. Rendering it read-only is more honest than leaving it off the screen, so
- * nobody goes looking for it somewhere else.
+ * Email is not one of them, and is not shown here at all any more: moving an
+ * account to a new address is a two-step flow that only takes effect when a link
+ * in the new mailbox is opened, so it has its own form rather than a field that
+ * would appear to save with everything else.
  */
 export function ProfileForm({ user }: ProfileFormProps) {
 	const setCurrentUser = useAuth((state) => state.setCurrentUser);
-	const [fields, setFields] = useState({ displayName: user.displayName, handle: user.handle });
+	const [fields, setFields] = useState({
+		displayName: user.displayName,
+		handle: user.handle,
+		readReceiptsEnabled: user.readReceiptsEnabled,
+	});
 	const [errors, setErrors] = useState({ displayName: "", handle: "", form: "" });
 	const [isSaving, setIsSaving] = useState(false);
 	const [isSaved, setIsSaved] = useState(false);
@@ -29,7 +33,10 @@ export function ProfileForm({ user }: ProfileFormProps) {
 	// capital into your own unchanged handle is not an edit.
 	const displayName = fields.displayName.trim();
 	const handle = fields.handle.trim().toLowerCase();
-	const hasChanges = displayName !== user.displayName || handle !== user.handle;
+	const hasChanges =
+		displayName !== user.displayName ||
+		handle !== user.handle ||
+		fields.readReceiptsEnabled !== user.readReceiptsEnabled;
 
 	function validate() {
 		const nextErrors = { displayName: "", handle: "", form: "" };
@@ -57,6 +64,9 @@ export function ProfileForm({ user }: ProfileFormProps) {
 		const input: UpdateProfileRequest = {
 			...(displayName !== user.displayName && { displayName }),
 			...(handle !== user.handle && { handle }),
+			...(fields.readReceiptsEnabled !== user.readReceiptsEnabled && {
+				readReceiptsEnabled: fields.readReceiptsEnabled,
+			}),
 		};
 
 		setIsSaving(true);
@@ -95,7 +105,29 @@ export function ProfileForm({ user }: ProfileFormProps) {
 					setFields((current) => ({ ...current, handle: event.target.value }));
 				}}
 			/>
-			<TextField label="Email" type="email" value={user.email} readOnly disabled autoComplete="email" />
+			{/* A raw checkbox: the app declares a Button and a TextField and nothing
+			    else, and inventing a toggle primitive for its only use would be a
+			    component to maintain rather than a decision made. */}
+			<label className="flex items-start gap-3 text-sm text-slate-900">
+				<input
+					type="checkbox"
+					checked={fields.readReceiptsEnabled}
+					onChange={(event) => {
+						setIsSaved(false);
+						setFields((current) => ({ ...current, readReceiptsEnabled: event.target.checked }));
+					}}
+					className="mt-0.5 size-4"
+				/>
+				<span className="flex flex-col gap-0.5">
+					<span className="font-medium">Send read receipts</span>
+					{/* The symmetry is said out loud, because it is the part people are
+					    surprised by — and being surprised by it after the fact is what
+					    makes a setting feel like a trick. */}
+					<span className="text-xs text-slate-500">
+						Turning this off hides your “Seen” from everyone, and hides theirs from you.
+					</span>
+				</span>
+			</label>
 
 			{errors.form && (
 				<p role="alert" className="text-sm text-red-600">

@@ -102,10 +102,21 @@ describe("ProfileForm", () => {
 		expect(useAuth.getState().currentUser?.displayName).toBe("Minh Nguyen");
 	});
 
-	it("shows the email but does not let it be edited", async () => {
+	it("sends the read receipt setting when it is toggled", async () => {
+		const typist = userEvent.setup();
 		render(<ProfileForm user={user} />);
 
-		expect(screen.getByLabelText("Email")).toHaveValue("minh@chatty.test");
-		expect(screen.getByLabelText("Email")).toBeDisabled();
+		await typist.click(screen.getByLabelText(/Send read receipts/));
+		await typist.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(updateProfile).toHaveBeenCalledWith({ readReceiptsEnabled: false });
+	});
+
+	it("says out loud that hiding your receipts also hides everyone else's", async () => {
+		// The symmetry is the part people are surprised by, and being surprised by
+		// it after the fact is what makes a setting feel like a trick.
+		render(<ProfileForm user={user} />);
+
+		expect(screen.getByText(/hides theirs from you/)).toBeInTheDocument();
 	});
 });

@@ -60,9 +60,15 @@ than being a state change that happens silently.
   line of text saying who can change it, the remove buttons are absent for members, and the owner's
   row carries an "Owner" badge so it is obvious who to ask. A disabled control with no explanation
   reads as a bug.
-- **No manual hand-over.** An owner cannot promote someone while staying in the group — the only
-  transfer is the automatic one on their way out. Additive when it is wanted: one endpoint and one
-  button, with the same `assertOwner` check already in place.
+- **Manual hand-over, added in phase 13.** This consequence used to read "no manual hand-over —
+  additive when it is wanted: one endpoint and one button, with the same `assertOwner` check already
+  in place." That is exactly what it cost: `PUT /conversations/:id/owner` demotes the caller and
+  promotes a member who is already in the group, under the same lock and with a system line. No
+  schema change was needed — the deferred constraint trigger was written in anticipation of a
+  transaction that briefly has zero owners, which is what this is.
+
+  Two hand-overs racing do not reach the constraint: the row lock orders them, and the second finds
+  it is no longer the owner and gets the same 403 a non-owner gets.
 - **No second admin, and no demotion.** One owner, exactly, for as long as the group has anyone in
   it. A second role tier would need a rule for what an admin may do to another admin, which is a
   question this app has not yet had to answer.

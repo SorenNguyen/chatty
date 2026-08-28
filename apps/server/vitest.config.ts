@@ -22,6 +22,11 @@ export default defineConfig({
 			// Pinned rather than left to the default, so a test asserting the shape
 			// of an avatar URL does not silently depend on how the dev app is served.
 			PUBLIC_URL: "http://api.test",
+			// The suite spies on `mailer.send` and never lets a real one run, so the
+			// transport only has to be a valid choice. `console` is that, and it
+			// cannot accidentally reach a network — an `smtp` value here would mean
+			// a mistake in a test opens a socket to whatever the URL pointed at.
+			MAIL_TRANSPORT: "console",
 		},
 		globalSetup: ["./tests/global-setup.ts"],
 		setupFiles: ["./tests/setup.ts"],

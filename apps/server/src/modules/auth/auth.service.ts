@@ -1,19 +1,25 @@
 import { createHash, randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import type { AuthResponse } from "@chatty/shared-types";
+// A value import, not `import type`: `confirmEmailChange` matches on
+// `Prisma.PrismaClientKnownRequestError` at runtime to turn a unique-violation
+// into a 409 rather than a 500.
+import { Prisma } from "@prisma/client";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { env } from "../../config/env.js";
 import type { JwtPayload } from "../../lib/access-token.js";
 import { ConflictError, UnauthorizedError, ValidationError } from "../../lib/errors.js";
-import { buildPasswordResetUrl, mailer } from "../../lib/mailer.js";
-import { logger } from "../../lib/logger.js";
+import { buildEmailChangeUrl, buildPasswordResetUrl } from "../../lib/mailer.js";
+import { enqueueMail } from "../../lib/outbox.js";
 import { prisma } from "../../lib/prisma.js";
 import { getIO, userRoom } from "../../lib/socket-bus.js";
 import type {
 	ChangePasswordInput,
+	ConfirmEmailChangeInput,
 	LoginInput,
 	RegisterInput,
+	RequestEmailChangeInput,
 	RequestPasswordResetInput,
 	ResetPasswordInput,
 } from "./auth.schema.js";
@@ -150,12 +156,39 @@ const PASSWORD_RESET_RESPONSE_FLOOR_MS = 300;
  * SHA-256, not bcrypt, and the difference is deliberate.
  *
  * bcrypt is slow on purpose because a password is low-entropy and guessable.
- * A reset token is 32 bytes from `randomBytes` — guessing it is already out of
+ * A mailed token is 32 bytes from `randomBytes` — guessing it is already out of
  * reach, so the hash only needs to stop a leaked database from handing over
  * working links. bcrypt would also silently truncate at 72 bytes.
+ *
+ * Shared by password reset and email change, because they are the same kind of
+ * secret with the same threat model. Two copies would be two places to get the
+ * algorithm right.
  */
-function hashResetToken(token: string): string {
+function hashOneTimeToken(token: string): string {
 	return createHash("sha256").update(token).digest("hex");
+}
+
+/**
+ * Throws unless `password` is this account's current one.
+ *
+ * Exported for the one operation that lives outside this module and still has to
+ * ask — deleting the account, which belongs with the rest of `/users/me`. The
+ * check has one home for the same reason hashing does: "how do we know it is
+ * really them" is not a question two modules should answer separately.
+ *
+ * Constant-time comparison is bcrypt's own; there is no timing signal to protect
+ * here anyway, since the caller has already proved they hold a token for this
+ * exact account.
+ */
+export async function assertPasswordMatches(userId: string, password: string): Promise<void> {
+	const user = await prisma.user.findUnique({ where: { id: userId }, select: { passwordHash: true } });
+
+	// Reachable only if the account was deleted between the token being issued
+	// and this request.
+	if (!user) throw new UnauthorizedError("Invalid or expired token");
+
+	const isCorrect = await bcrypt.compare(password, user.passwordHash);
+	if (!isCorrect) throw new UnauthorizedError("Current password is incorrect");
 }
 
 async function waitForPasswordResetResponseFloor(startedAt: number): Promise<void> {
@@ -163,27 +196,38 @@ async function waitForPasswordResetResponseFloor(startedAt: number): Promise<voi
 	if (remainingMs > 0) await delay(remainingMs);
 }
 
-function dispatchPasswordResetMail(recipient: string, token: string): void {
-	// Delivery must not sit on the request path. A slow or failing provider only
-	// runs for a real account, so awaiting it would turn latency or a 500 into an
-	// account-enumeration oracle. The current console transport completes in this
-	// process; a real deployment needs the durable outbox recorded in Known gaps.
-	void Promise.resolve()
-		.then(() =>
-			mailer.send({
-				to: recipient,
-				subject: "Reset your Chatty password",
-				body: [
-					"Someone asked to reset the password on your Chatty account.",
-					"",
-					`Open this link within the hour to choose a new one:`,
-					buildPasswordResetUrl(token),
-					"",
-					"If it was not you, nothing has changed and you can ignore this.",
-				].join("\n"),
-			}),
-		)
-		.catch((error: unknown) => logger.error({ err: error }, "password reset email delivery failed"));
+/**
+ * Records the reset mail, in the transaction that mints the token.
+ *
+ * The transaction argument is the whole point. Delivery still must not sit on
+ * the request path — a slow or failing provider only runs for a real account, so
+ * awaiting it would turn latency or a 500 into an account-enumeration oracle —
+ * but the old answer to that was `void promise.catch(log)`, which bought the
+ * timing property by giving up on the mail entirely. A crash between the commit
+ * and the send left a live token whose owner was never told, which reads to them
+ * as a reset that silently did nothing.
+ *
+ * Writing the row here makes "this link is live" and "we owe this person the
+ * link" one commit, and hands the sending to the outbox worker, which retries.
+ * The request path gains one local INSERT and never waits on a network.
+ */
+async function enqueuePasswordResetMail(
+	transaction: Prisma.TransactionClient,
+	recipient: string,
+	token: string,
+): Promise<void> {
+	await enqueueMail(transaction, {
+		to: recipient,
+		subject: "Reset your Chatty password",
+		body: [
+			"Someone asked to reset the password on your Chatty account.",
+			"",
+			`Open this link within the hour to choose a new one:`,
+			buildPasswordResetUrl(token),
+			"",
+			"If it was not you, nothing has changed and you can ignore this.",
+		].join("\n"),
+	});
 }
 
 /**
@@ -263,7 +307,7 @@ export async function requestPasswordReset(input: RequestPasswordResetInput): Pr
 	const token = randomBytes(32).toString("base64url");
 
 	try {
-		const recipient = await prisma.$transaction(async (transaction) => {
+		await prisma.$transaction(async (transaction) => {
 			// The row lock serialises requests for the same account. Without it, two
 			// requests can both burn the old set before either creates its replacement,
 			// leaving two live links after both commits.
@@ -274,7 +318,7 @@ export async function requestPasswordReset(input: RequestPasswordResetInput): Pr
 				FOR UPDATE
 			`;
 			const user = users[0];
-			if (!user) return null;
+			if (!user) return;
 
 			await transaction.passwordResetToken.updateMany({
 				where: { userId: user.id, usedAt: null },
@@ -284,16 +328,16 @@ export async function requestPasswordReset(input: RequestPasswordResetInput): Pr
 			await transaction.passwordResetToken.create({
 				data: {
 					userId: user.id,
-					tokenHash: hashResetToken(token),
+					tokenHash: hashOneTimeToken(token),
 					expiresAt: new Date(Date.now() + PASSWORD_RESET_TTL_MS),
 				},
 				select: { id: true },
 			});
 
-			return user.email;
+			// Inside the transaction, deliberately — see the function's own comment.
+			// If the token write above rolls back, so does the promise to mail it.
+			await enqueuePasswordResetMail(transaction, user.email, token);
 		});
-
-		if (recipient) dispatchPasswordResetMail(recipient, token);
 	} finally {
 		// Applied on success and failure so the fast path cannot identify an
 		// unknown address. A future network mailer must keep its own latency below
@@ -315,7 +359,7 @@ export async function requestPasswordReset(input: RequestPasswordResetInput): Pr
  */
 export async function resetPassword(input: ResetPasswordInput): Promise<void> {
 	const record = await prisma.passwordResetToken.findUnique({
-		where: { tokenHash: hashResetToken(input.token) },
+		where: { tokenHash: hashOneTimeToken(input.token) },
 		select: { id: true, userId: true, expiresAt: true, usedAt: true },
 	});
 
@@ -348,4 +392,181 @@ export async function resetPassword(input: ResetPasswordInput): Promise<void> {
 	// the mailbox, which is not the same as having been signed in — they sign in
 	// with the new password like anyone else.
 	endSessions(record.userId);
+}
+
+/**
+ * How long a confirmation link lives. The same hour a reset link gets, for the
+ * same reason: long enough for a slow inbox, short enough that a forgotten link
+ * in a mailbox is not a standing offer to take the account somewhere else.
+ */
+const EMAIL_CHANGE_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * Records both halves of an email change, in the transaction that mints the token.
+ *
+ * Two messages, and the second one is the point of the feature as much as the
+ * first. Changing the address on an account is how an account is taken — the
+ * next password reset goes to the new mailbox — so the old address is told it
+ * happened while it is still the address that can do something about it. It is
+ * sent even though the change has not taken effect yet, deliberately: a warning
+ * that arrives only after the link is opened arrives after the door is closed.
+ *
+ * Both go in the caller's transaction, so a rolled-back token cannot leave a mail
+ * promising a link that does not exist.
+ */
+async function enqueueEmailChangeMails(
+	transaction: Prisma.TransactionClient,
+	currentEmail: string,
+	newEmail: string,
+	token: string,
+): Promise<void> {
+	await enqueueMail(transaction, {
+		to: newEmail,
+		subject: "Confirm your new Chatty email address",
+		body: [
+			"Someone asked to move a Chatty account to this address.",
+			"",
+			"Open this link within the hour to confirm it:",
+			buildEmailChangeUrl(token),
+			"",
+			"If it was not you, ignore this — nothing changes until the link is opened.",
+		].join("\n"),
+	});
+
+	await enqueueMail(transaction, {
+		to: currentEmail,
+		subject: "Someone asked to change your Chatty email address",
+		// The new address is quoted in full rather than masked. The person reading
+		// this is the account's current owner, and the useful question — "is that
+		// mine?" — cannot be answered from "n***@example.com".
+		body: [
+			`A request was made to change the email address on your Chatty account to ${newEmail}.`,
+			"",
+			"Nothing has changed yet: the new address has to confirm a link first.",
+			"",
+			"If this was not you, change your password now — whoever asked can read this account.",
+		].join("\n"),
+	});
+}
+
+/**
+ * Starts an email change: mints a link to the new address and warns the old one.
+ *
+ * **Nothing about the account changes here**, and that is the whole design. The
+ * new address is parked on a token row until somebody proves they can read it;
+ * writing it to `User.email` now would hand the account's password-reset
+ * delivery to an address that may have been a typo — or somebody else's.
+ *
+ * Outstanding links are burned first, the same as a password reset: two live
+ * links to two different addresses is one more than anybody asked for.
+ *
+ * The "already registered" answer reveals that an address has an account. That
+ * is the same disclosure `register` makes and it is unavoidable for the same
+ * reason — a caller who cannot be told why it failed cannot fix it — but here it
+ * costs less, because the caller is signed in and rate limited per user.
+ */
+export async function requestEmailChange(userId: string, input: RequestEmailChangeInput): Promise<void> {
+	// Outside the transaction: bcrypt takes ~300ms, and holding a row lock for it
+	// would serialise this account's requests behind a deliberately slow hash.
+	await assertPasswordMatches(userId, input.currentPassword);
+
+	const token = randomBytes(32).toString("base64url");
+
+	await prisma.$transaction(async (transaction) => {
+		// The same row lock `requestPasswordReset` takes, for the same race: two
+		// requests can otherwise both burn the old set before either writes its
+		// replacement, leaving two live links after both commits.
+		const users = await transaction.$queryRaw<{ id: string; email: string }[]>`
+			SELECT id, email
+			FROM "User"
+			WHERE id = ${userId}
+			FOR UPDATE
+		`;
+		const user = users[0];
+		if (!user) throw new UnauthorizedError("Invalid or expired token");
+
+		if (user.email === input.newEmail) {
+			throw new ValidationError("That is already the address on this account");
+		}
+
+		const owner = await transaction.user.findUnique({ where: { email: input.newEmail }, select: { id: true } });
+		if (owner) throw new ConflictError("Email already registered");
+
+		await transaction.emailChangeToken.updateMany({
+			where: { userId, usedAt: null },
+			data: { usedAt: new Date() },
+		});
+
+		await transaction.emailChangeToken.create({
+			data: {
+				userId,
+				newEmail: input.newEmail,
+				tokenHash: hashOneTimeToken(token),
+				expiresAt: new Date(Date.now() + EMAIL_CHANGE_TTL_MS),
+			},
+			select: { id: true },
+		});
+
+		await enqueueEmailChangeMails(transaction, user.email, input.newEmail, token);
+	});
+}
+
+/**
+ * Finishes an email change: the address on the account becomes the confirmed one.
+ *
+ * Unauthenticated, like the reset confirmation, and for the same practical
+ * reason — the link is opened in whatever mailbox it was sent to, which is
+ * frequently a phone that has never signed in. The token is the proof.
+ *
+ * The uniqueness of the new address is re-checked here rather than trusted from
+ * the request, because the gap between the two steps is an hour wide: somebody
+ * else can register that address in the meantime. The check is the database's
+ * unique index, caught and turned into a 409 — a read-then-write would leave the
+ * same race open, one query narrower.
+ *
+ * Sessions are deliberately left alone. This changes what you sign in *with*,
+ * not whether the person signed in is still you; the password is untouched, and
+ * the warning to the old address is what covers the case where it is not.
+ */
+export async function confirmEmailChange(input: ConfirmEmailChangeInput): Promise<void> {
+	const record = await prisma.emailChangeToken.findUnique({
+		where: { tokenHash: hashOneTimeToken(input.token) },
+		select: { id: true, userId: true, newEmail: true, expiresAt: true, usedAt: true },
+	});
+
+	if (!record || record.usedAt || record.expiresAt.getTime() <= Date.now()) {
+		throw new ValidationError("That confirmation link is invalid or has expired");
+	}
+
+	try {
+		await prisma.$transaction(async (transaction) => {
+			const claimedAt = new Date();
+			// The conditional write, not the read above, is the authority: two
+			// requests may both pass that read and only one can change a
+			// still-unused, still-live row.
+			const claimed = await transaction.emailChangeToken.updateMany({
+				where: { id: record.id, usedAt: null, expiresAt: { gt: claimedAt } },
+				data: { usedAt: claimedAt },
+			});
+			if (claimed.count !== 1) {
+				throw new ValidationError("That confirmation link is invalid or has expired");
+			}
+
+			await transaction.user.update({
+				where: { id: record.userId },
+				data: { email: record.newEmail },
+				select: { id: true },
+			});
+		});
+	} catch (error) {
+		// P2002 is the unique violation on `User.email`: somebody registered the
+		// address during the hour this link was live. A clean 409 rather than the
+		// 500 an unhandled Prisma error would become — the link is spent either
+		// way, and the person needs to be told to ask again from the other address.
+		if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+			throw new ConflictError("Email already registered");
+		}
+
+		throw error;
+	}
 }

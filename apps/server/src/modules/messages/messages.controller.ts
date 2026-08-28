@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { ValidationError } from "../../lib/errors.js";
-import { listMessagesQuerySchema, sendMessageSchema } from "./messages.schema.js";
+import { editMessageSchema, listMessagesQuerySchema, sendMessageSchema } from "./messages.schema.js";
 import * as messagesService from "./messages.service.js";
 
 // req.userId is always set here: requireAuth runs before these controllers (see messages.routes.ts)
@@ -24,6 +24,30 @@ export async function sendMessageController(req: Request, res: Response): Promis
 		...(req.file ? { attachment: req.file.buffer } : {}),
 	});
 	res.status(201).json(message);
+}
+
+export async function editMessageController(req: Request, res: Response): Promise<void> {
+	const input = editMessageSchema.parse(req.body);
+	const conversationId = req.params.conversationId as string;
+	const messageId = req.params.messageId as string;
+
+	const message = await messagesService.editMessage(req.userId!, conversationId, messageId, input);
+	res.status(200).json(message);
+}
+
+/**
+ * Answers 200 with the tombstone rather than the 204 `removeParticipant` uses.
+ *
+ * The difference is that there is still a resource here: a deleted message keeps
+ * its place in the conversation, and the caller's own view has to render it as
+ * one. Nothing to describe is what earns a 204.
+ */
+export async function deleteMessageController(req: Request, res: Response): Promise<void> {
+	const conversationId = req.params.conversationId as string;
+	const messageId = req.params.messageId as string;
+
+	const message = await messagesService.deleteMessage(req.userId!, conversationId, messageId);
+	res.status(200).json(message);
 }
 
 export async function listMessagesController(req: Request, res: Response): Promise<void> {

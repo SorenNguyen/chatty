@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requireAuth } from "../../middlewares/require-auth.js";
 import { uploadAvatar } from "../../middlewares/upload-image.js";
 import {
+	deleteAccountController,
 	deleteAvatarController,
 	getAvatarController,
 	getMeController,
@@ -33,6 +34,9 @@ usersRouter.use(requireAuth);
 // Declared before "/" would be, and distinct from it, so "@me" is never read as a search term.
 usersRouter.get("/me", getMeController);
 usersRouter.patch("/me", updateProfileController);
+// Declared next to the profile it destroys rather than under /auth, because this
+// is the account resource. It takes a body — see `deleteAccountSchema`.
+usersRouter.delete("/me", deleteAccountController);
 usersRouter.post("/me/avatar", uploadAvatar, uploadAvatarController);
 usersRouter.delete("/me/avatar", deleteAvatarController);
 usersRouter.get("/", searchUsersController);

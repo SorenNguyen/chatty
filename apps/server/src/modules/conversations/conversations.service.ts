@@ -16,13 +16,16 @@ import type {
 	CreateConversationInput,
 	MarkReadInput,
 	RenameConversationInput,
+	TransferOwnershipInput,
 } from "./conversations.schema.js";
 
 /** Shape returned by every query below, so one mapper can serve all of them. */
 const conversationInclude = {
 	participants: {
 		select: {
-			lastReadMessageId: true,
+			// The shared marker, not `lastReadMessageId`. Nothing that leaves this
+			// process reads the private one — see `mapParticipants`.
+			lastSharedReadMessageId: true,
 			role: true,
 			user: { select: userSelect },
 		},
@@ -40,19 +43,28 @@ interface ConversationRow {
 	name: string | null;
 	updatedAt: Date;
 	participants: {
-		lastReadMessageId: string | null;
+		lastSharedReadMessageId: string | null;
 		role: DbConversationRole;
 		user: UserRow;
 	}[];
 	messages: MessageRow[];
 }
 
-/** Shared by every mapper below, so a participant looks the same everywhere one appears. */
+/**
+ * Shared by every mapper below, so a participant looks the same everywhere one appears.
+ *
+ * `lastReadMessageId` on the wire is fed by `lastSharedReadMessageId` in the
+ * database, and that substitution is the entire server side of "turn read
+ * receipts off". A participant who has turned them off has no shared marker, so
+ * there is nothing here to filter out per viewer and nothing a broadcast can
+ * leak — the value simply is not in the row this reads. See the schema comment
+ * on the column.
+ */
 function mapParticipants(rows: ConversationRow["participants"]): ParticipantDTO[] {
-	return rows.map(({ user, lastReadMessageId, role }) => ({
+	return rows.map(({ user, lastSharedReadMessageId, role }) => ({
 		...toUserDTO(user),
 		role: role === "OWNER" ? "owner" : "member",
-		lastReadMessageId,
+		lastReadMessageId: lastSharedReadMessageId,
 	}));
 }
 
@@ -111,10 +123,19 @@ interface UnreadCountRow {
  * to group), which is why callers default a miss to zero rather than trusting
  * the map to be complete.
  *
- * System messages are never counted, and that falls out of the SQL rather than
- * being special-cased: their `authorId` is null, and `null <> $userId` is null,
- * not true. Deliberate — a badge on the sidebar means "someone said something
- * to you", and "Chi left the group" is not that.
+ * System messages are never counted — a badge on the sidebar means "someone said
+ * something to you", and "Chi left the group" is not that. It used to fall out of
+ * the SQL for free, because `authorId` was null only on a system line and
+ * `null <> $userId` is null rather than true. Deleting an account ended that: a
+ * USER message can now outlive its author and have a null `authorId` too, and
+ * reading it as a system line would quietly stop counting the messages of
+ * everyone who ever left. `kind` is the discriminator, so the filter says so.
+ *
+ * Deleted messages are not counted either, and that one *is* special-cased.
+ * A tombstone has no content left to read, so a badge pointing at it sends
+ * someone to look at "This message was deleted". The row still has to be here
+ * for the marker join below — which is the whole reason a delete is a tombstone
+ * rather than a DELETE.
  */
 async function countUnreadByConversation(userId: string, conversationIds: string[]): Promise<Map<string, number>> {
 	if (conversationIds.length === 0) return new Map();
@@ -126,7 +147,9 @@ async function countUnreadByConversation(userId: string, conversationIds: string
 			ON p."conversationId" = m."conversationId" AND p."userId" = ${userId}
 		LEFT JOIN "Message" marker ON marker.id = p."lastReadMessageId"
 		WHERE m."conversationId" IN (${Prisma.join(conversationIds)})
-			AND m."authorId" <> ${userId}
+			AND m."kind" = 'USER'
+			AND m."authorId" IS DISTINCT FROM ${userId}
+			AND m."deletedAt" IS NULL
 			AND (marker.id IS NULL OR m."createdAt" > marker."createdAt")
 		GROUP BY m."conversationId"
 	`;
@@ -366,8 +389,9 @@ export async function markConversationRead(
 
 	const participant = await prisma.conversationParticipant.findUniqueOrThrow({
 		where: { conversationId_userId: { conversationId, userId: currentUserId } },
-		select: { lastReadMessageId: true },
+		select: { lastReadMessageId: true, user: { select: { readReceiptsEnabled: true } } },
 	});
+	const areReceiptsShared = participant.user.readReceiptsEnabled;
 
 	if (participant.lastReadMessageId) {
 		const currentMarker = await prisma.message.findUnique({
@@ -386,18 +410,70 @@ export async function markConversationRead(
 
 	await prisma.conversationParticipant.update({
 		where: { conversationId_userId: { conversationId, userId: currentUserId } },
-		data: { lastReadMessageId: message.id },
+		data: {
+			lastReadMessageId: message.id,
+			// The private marker always moves — clearing your own badge is nobody
+			// else's business. The shared one moves only when receipts are on, so a
+			// reader who has turned them off leaves no record anywhere of how far
+			// they got.
+			...(areReceiptsShared && { lastSharedReadMessageId: message.id }),
+		},
 		select: { id: true },
 	});
 
 	const event: ConversationReadEvent = { conversationId, userId: currentUserId, lastReadMessageId: message.id };
 
-	// To the room, so the author sees "Seen" appear without polling. The reader's
-	// own other tabs are in that room too, which is what keeps a badge cleared on
-	// the phone from staying lit on the laptop.
-	getIO().to(conversationId).emit("conversation:read", event);
+	if (areReceiptsShared) {
+		// To the room, so the author sees "Seen" appear without polling. The reader's
+		// own other tabs are in that room too, which is what keeps a badge cleared on
+		// the phone from staying lit on the laptop.
+		getIO().to(conversationId).emit("conversation:read", event);
+	} else {
+		// Only this reader's own devices. They still need the badge cleared on the
+		// laptop when they read on the phone; nobody else gets told anything, which
+		// is the same promise the unwritten shared marker makes.
+		getIO().to(userRoom(currentUserId)).emit("conversation:read", event);
+	}
 
 	return event;
+}
+
+/**
+ * Withdraws every read receipt this user has given, everywhere.
+ *
+ * Called when they turn receipts off. Leaving the shared markers where they are
+ * would keep yesterday's "Seen" on other people's screens after a setting that
+ * says otherwise — and the markers are what the DTO reads, so clearing them is
+ * the whole of it.
+ *
+ * The broadcast is what makes it visible now rather than after a reload:
+ * `conversation:updated` already carries every participant's marker, so it is
+ * the event that says "these are the markers, forget what you had". One emit per
+ * conversation, on an action nobody performs twice in a day.
+ *
+ * Exported for `users.service`, which owns the setting; the conversation-shaped
+ * half of it belongs here for the same reason `assertParticipant` does.
+ */
+export async function clearSharedReadMarkers(userId: string): Promise<void> {
+	const memberships = await prisma.conversationParticipant.findMany({
+		where: { userId, lastSharedReadMessageId: { not: null } },
+		select: { conversationId: true },
+	});
+	if (memberships.length === 0) return;
+
+	await prisma.conversationParticipant.updateMany({
+		where: { userId },
+		data: { lastSharedReadMessageId: null },
+	});
+
+	const conversations = await prisma.conversation.findMany({
+		where: { id: { in: memberships.map((membership) => membership.conversationId) } },
+		include: conversationInclude,
+	});
+
+	for (const conversation of conversations) {
+		announceConversationUpdated(conversation.id, toConversationUpdatedEvent(conversation));
+	}
 }
 
 /**
@@ -759,4 +835,147 @@ export async function renameConversation(
 
 	const actorUnread = await countUnreadByConversation(currentUserId, [conversationId]);
 	return toConversationDTO(updated, actorUnread.get(conversationId) ?? 0);
+}
+
+/**
+ * Hands a group to another member who is still in it. **Owner only.**
+ *
+ * The gap ADR 0008 left open: until now the role moved in exactly one
+ * circumstance — the owner walking out — so an owner who wanted to stay in the
+ * group and stop administering it had no way to say so, and a group whose owner
+ * had gone quiet had no way to get a new one.
+ *
+ * Two writes, and the order is not arbitrary. The partial unique index on
+ * `(conversationId) WHERE role = 'OWNER'` refuses a second owner *per statement*,
+ * so the demotion has to land first; the deferred constraint trigger then allows
+ * the moment in between where the group has none, and re-checks at commit. That
+ * pairing is exactly what the phase 7 migration's own comment said it was for.
+ *
+ * Two hand-overs racing each other are settled before either gets that far: both
+ * take the `Conversation` row lock in `prepareGroupMutation`, and whichever
+ * arrives second finds it is no longer the owner and is refused with a 403. A
+ * clean failure rather than the constraint violation — a 500 — the invariant
+ * would otherwise produce.
+ */
+export async function transferGroupOwnership(
+	currentUserId: string,
+	conversationId: string,
+	input: TransferOwnershipInput,
+): Promise<ConversationDTO> {
+	const { systemMessage, updated } = await prisma.$transaction(async (transaction) => {
+		await prepareGroupMutation(transaction, currentUserId, conversationId);
+		await assertOwner(transaction, currentUserId, conversationId);
+
+		if (input.userId === currentUserId) {
+			throw new ValidationError("You already own this group");
+		}
+
+		const target = await transaction.conversationParticipant.findUnique({
+			where: { conversationId_userId: { conversationId, userId: input.userId } },
+			select: { id: true, user: { select: { displayName: true } } },
+		});
+		// NotFound rather than Validation: from the caller's side this is "no such
+		// member here", the same answer `removeParticipant` gives.
+		if (!target) throw new NotFoundError("Not a participant of this conversation");
+
+		await transaction.conversationParticipant.update({
+			where: { conversationId_userId: { conversationId, userId: currentUserId } },
+			data: { role: "MEMBER" },
+			select: { id: true },
+		});
+		await transaction.conversationParticipant.update({
+			where: { id: target.id },
+			data: { role: "OWNER" },
+			select: { id: true },
+		});
+
+		const [actorName] = await displayNamesOf(transaction, [currentUserId]);
+		const message = await createSystemMessage(
+			transaction,
+			conversationId,
+			`${actorName} made ${target.user.displayName} the group owner`,
+		);
+
+		return { systemMessage: message, updated: await reloadConversation(transaction, conversationId) };
+	});
+
+	announceSystemMessage(systemMessage);
+	announceConversationUpdated(conversationId, toConversationUpdatedEvent(updated));
+
+	const actorUnread = await countUnreadByConversation(currentUserId, [conversationId]);
+	return toConversationDTO(updated, actorUnread.get(conversationId) ?? 0);
+}
+
+/**
+ * Takes a user out of every conversation they are in, inside the caller's transaction.
+ *
+ * The conversation-shaped half of deleting an account. It lives here rather than
+ * in `users.service` because it is made entirely of this module's invariants —
+ * the owner rule, the system log, the room bookkeeping — and none of them should
+ * be reimplemented by whoever happens to be deleting the row.
+ *
+ * Takes the transaction rather than opening one, so the departures and the delete
+ * of the user itself are one commit. Half of this having happened is a person who
+ * has left four groups and still has an account.
+ *
+ * Direct conversations are left alone: there is nobody to promote and nothing to
+ * announce, and the participant row goes with the user by cascade. The messages
+ * stay in both cases — see the `Message.authorId` schema comment.
+ *
+ * Returns what has to be broadcast *after* the commit, because a socket event is
+ * not transactional and an event about a transaction that rolls back is a lie.
+ */
+export interface DepartureEffects {
+	systemMessages: MessageRow[];
+	conversations: ConversationRow[];
+}
+
+export async function removeUserFromEveryGroup(
+	transaction: Prisma.TransactionClient,
+	userId: string,
+	displayName: string,
+): Promise<DepartureEffects> {
+	const memberships = await transaction.conversationParticipant.findMany({
+		where: { userId, conversation: { isGroup: true } },
+		select: { conversationId: true, role: true },
+	});
+
+	const systemMessages: MessageRow[] = [];
+	const conversations: ConversationRow[] = [];
+
+	for (const membership of memberships) {
+		const { conversationId } = membership;
+		// The same row lock every other membership change takes, so a deletion and
+		// a concurrent kick or hand-over on the same group happen in one order.
+		await transaction.$queryRaw`SELECT id FROM "Conversation" WHERE id = ${conversationId} FOR UPDATE`;
+
+		await transaction.conversationParticipant.delete({
+			where: { conversationId_userId: { conversationId, userId } },
+		});
+
+		// The name is captured before the row goes, and it is the last time this
+		// person is named anywhere: their surviving messages lose the author
+		// entirely. A group that watched somebody vanish with no line in the log
+		// would be the one membership change ADR 0009 does not record.
+		systemMessages.push(
+			await createSystemMessage(transaction, conversationId, `${displayName} deleted their account`),
+		);
+
+		if (membership.role === "OWNER") {
+			const ownershipMessage = await transferOwnership(transaction, conversationId);
+			if (ownershipMessage) systemMessages.push(ownershipMessage);
+		}
+
+		conversations.push(await reloadConversation(transaction, conversationId));
+	}
+
+	return { systemMessages, conversations };
+}
+
+/** Broadcasts what `removeUserFromEveryGroup` did, once its transaction has committed. */
+export function announceDepartures(effects: DepartureEffects): void {
+	for (const message of effects.systemMessages) announceSystemMessage(message);
+	for (const conversation of effects.conversations) {
+		announceConversationUpdated(conversation.id, toConversationUpdatedEvent(conversation));
+	}
 }

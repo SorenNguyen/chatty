@@ -1,9 +1,17 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { MessageList } from "@/features/chat/components/message-list";
-import { makeMessage, makeParticipant, makeSystemMessage } from "./factories";
+import { makeAttachment, makeMessage, makeOrphanedMessage, makeParticipant, makeSystemMessage } from "./factories";
 
 const messages = [makeMessage("m1", "minh", "first"), makeMessage("m2", "an", "second")];
+
+/**
+ * Any moment in the past. Nothing here renders these — the list branches on
+ * whether they are set, not on what they say — so a fixed value keeps the tests
+ * about the branch rather than about formatting.
+ */
+const FIXED_EDITED_AT = "2026-08-23T10:05:00.000Z";
+const FIXED_DELETED_AT = "2026-08-23T10:06:00.000Z";
 
 function renderList(overrides: Partial<React.ComponentProps<typeof MessageList>> = {}) {
 	const props = {
@@ -11,9 +19,12 @@ function renderList(overrides: Partial<React.ComponentProps<typeof MessageList>>
 		currentUserId: "minh",
 		participants: [makeParticipant("minh", "Minh"), makeParticipant("an", "An")],
 		isGroup: false,
+		areReceiptsShared: true,
 		hasMoreOlder: false,
 		isLoadingOlder: false,
 		onLoadOlder: vi.fn(),
+		onEditMessage: vi.fn(),
+		onDeleteMessage: vi.fn(),
 		...overrides,
 	};
 
@@ -68,6 +79,22 @@ describe("MessageList", () => {
 		});
 
 		expect(screen.getByText("an")).toBeInTheDocument();
+	});
+
+	it("names a message whose author deleted their account rather than dropping the label", () => {
+		// The message survives the account — deleting it would empty half of other
+		// people's conversations — but the name does not. Without this it would
+		// render as an anonymous bubble with no indication whose it was.
+		renderList({
+			messages: [makeOrphanedMessage("m1", "written before they left")],
+			participants: [makeParticipant("minh", "Minh"), makeParticipant("an", "An")],
+			isGroup: true,
+		});
+
+		expect(screen.getByText("written before they left")).toBeInTheDocument();
+		expect(screen.getByText("Deleted account")).toBeInTheDocument();
+		// Still a bubble, unlike a system line: somebody said this.
+		expect(document.querySelector(".rounded-2xl")).not.toBeNull();
 	});
 
 	it("renders a group event as a line of its own", () => {
@@ -135,5 +162,153 @@ describe("MessageList", () => {
 		fireEvent.scroll(getScrollContainer(), { target: { scrollTop: 5000 } });
 
 		expect(onLoadOlder).not.toHaveBeenCalled();
+	});
+});
+
+describe("MessageList editing and deleting", () => {
+	const mine = makeMessage("m1", "minh", "mine");
+	const theirs = makeMessage("m2", "an", "theirs");
+
+	it("offers edit and delete on your own message", () => {
+		renderList({ messages: [mine] });
+
+		expect(screen.getByLabelText("Edit message")).toBeInTheDocument();
+		expect(screen.getByLabelText("Delete message")).toBeInTheDocument();
+	});
+
+	it("offers neither on someone else's", () => {
+		renderList({ messages: [theirs] });
+
+		expect(screen.queryByLabelText("Edit message")).not.toBeInTheDocument();
+		expect(screen.queryByLabelText("Delete message")).not.toBeInTheDocument();
+	});
+
+	it("offers neither on a message already deleted", () => {
+		// A tombstone has no text and no image left to act on.
+		renderList({ messages: [makeMessage("m1", "minh", "", null, { deletedAt: FIXED_DELETED_AT })] });
+
+		expect(screen.queryByLabelText("Edit message")).not.toBeInTheDocument();
+	});
+
+	it("reports the new text once the author saves", () => {
+		const { onEditMessage } = renderList({ messages: [mine] });
+
+		fireEvent.click(screen.getByLabelText("Edit message"));
+		fireEvent.change(screen.getByLabelText("Edit message"), { target: { value: "mine, fixed" } });
+		fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+		expect(onEditMessage).toHaveBeenCalledWith("m1", "mine, fixed");
+	});
+
+	it("does not report an edit that changes nothing", () => {
+		// Otherwise opening the editor and pressing Save writes an "edited" marker
+		// onto a message nobody actually changed.
+		const { onEditMessage } = renderList({ messages: [mine] });
+
+		fireEvent.click(screen.getByLabelText("Edit message"));
+
+		expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+		expect(onEditMessage).not.toHaveBeenCalled();
+	});
+
+	it("does not let a text-only message be emptied", () => {
+		const { onEditMessage } = renderList({ messages: [mine] });
+
+		fireEvent.click(screen.getByLabelText("Edit message"));
+		fireEvent.change(screen.getByLabelText("Edit message"), { target: { value: "   " } });
+
+		expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+		expect(onEditMessage).not.toHaveBeenCalled();
+	});
+
+	it("lets the caption of a message with an image be cleared", () => {
+		const { onEditMessage } = renderList({
+			messages: [makeMessage("m1", "minh", "look", makeAttachment())],
+		});
+
+		fireEvent.click(screen.getByLabelText("Edit message"));
+		fireEvent.change(screen.getByLabelText("Edit message"), { target: { value: "" } });
+		fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+		expect(onEditMessage).toHaveBeenCalledWith("m1", "");
+	});
+
+	it("abandons the edit on cancel", () => {
+		const { onEditMessage } = renderList({ messages: [mine] });
+
+		fireEvent.click(screen.getByLabelText("Edit message"));
+		fireEvent.change(screen.getByLabelText("Edit message"), { target: { value: "never mind" } });
+		fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+		expect(onEditMessage).not.toHaveBeenCalled();
+		expect(screen.getByText("mine")).toBeInTheDocument();
+	});
+
+	it("asks before deleting", () => {
+		// The only destructive action in the app that confirms, because it is the
+		// only one nobody can undo — the server empties the row and removes the file.
+		const { onDeleteMessage } = renderList({ messages: [mine] });
+
+		fireEvent.click(screen.getByLabelText("Delete message"));
+
+		expect(onDeleteMessage).not.toHaveBeenCalled();
+		expect(screen.getByLabelText("Confirm delete")).toBeInTheDocument();
+	});
+
+	it("deletes once the author confirms", () => {
+		const { onDeleteMessage } = renderList({ messages: [mine] });
+
+		fireEvent.click(screen.getByLabelText("Delete message"));
+		fireEvent.click(screen.getByLabelText("Confirm delete"));
+
+		expect(onDeleteMessage).toHaveBeenCalledWith("m1");
+	});
+
+	it("keeps the message when the author backs out", () => {
+		const { onDeleteMessage } = renderList({ messages: [mine] });
+
+		fireEvent.click(screen.getByLabelText("Delete message"));
+		fireEvent.click(screen.getByLabelText("Keep message"));
+
+		expect(onDeleteMessage).not.toHaveBeenCalled();
+		expect(screen.getByLabelText("Delete message")).toBeInTheDocument();
+	});
+
+	it("stands a placeholder in for a deleted message", () => {
+		renderList({ messages: [makeMessage("m1", "minh", "", null, { deletedAt: FIXED_DELETED_AT })] });
+
+		expect(screen.getByText("This message was deleted")).toBeInTheDocument();
+	});
+
+	it("renders nothing of a deleted message's image", () => {
+		// The server drops the attachment on delete, so this is belt and braces —
+		// and the one thing a client must never render from a stale copy.
+		renderList({
+			messages: [makeMessage("m1", "minh", "", makeAttachment(), { deletedAt: FIXED_DELETED_AT })],
+		});
+
+		expect(screen.queryByRole("img")).not.toBeInTheDocument();
+	});
+
+	it("marks a message its author rewrote", () => {
+		renderList({ messages: [makeMessage("m1", "minh", "fixed", null, { editedAt: FIXED_EDITED_AT })] });
+
+		expect(screen.getByText(/edited/)).toBeInTheDocument();
+	});
+
+	it("does not mark a message nobody touched", () => {
+		renderList({ messages: [mine] });
+
+		expect(screen.queryByText(/edited/)).not.toBeInTheDocument();
+	});
+
+	it("does not call a deleted message edited, even if it was", () => {
+		// Both timestamps can be set: edit it, then delete it. "Edited" beside
+		// "This message was deleted" describes text nobody can read either way.
+		renderList({
+			messages: [makeMessage("m1", "minh", "", null, { editedAt: FIXED_EDITED_AT, deletedAt: FIXED_DELETED_AT })],
+		});
+
+		expect(screen.queryByText(/edited/)).not.toBeInTheDocument();
 	});
 });

@@ -1,6 +1,11 @@
 import type { Request, Response } from "express";
 import { ValidationError } from "../../lib/errors.js";
-import { avatarParamsSchema, searchUsersQuerySchema, updateProfileSchema } from "./users.schema.js";
+import {
+	avatarParamsSchema,
+	deleteAccountSchema,
+	searchUsersQuerySchema,
+	updateProfileSchema,
+} from "./users.schema.js";
 import * as usersService from "./users.service.js";
 
 // req.userId is always set here: requireAuth runs before these controllers
@@ -24,6 +29,15 @@ export async function updateProfileController(req: Request, res: Response): Prom
 	const user = await usersService.updateProfile(req.userId!, input);
 
 	res.status(200).json(user);
+}
+
+export async function deleteAccountController(req: Request, res: Response): Promise<void> {
+	const input = deleteAccountSchema.parse(req.body);
+	await usersService.deleteAccount(req.userId!, input);
+
+	// No body. There is no profile left to return, and the client's next act is to
+	// throw away the token it made this request with.
+	res.status(204).send();
 }
 
 export async function searchUsersController(req: Request, res: Response): Promise<void> {

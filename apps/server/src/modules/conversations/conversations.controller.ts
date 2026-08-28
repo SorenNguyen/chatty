@@ -4,6 +4,7 @@ import {
 	createConversationSchema,
 	markReadSchema,
 	renameConversationSchema,
+	transferOwnershipSchema,
 } from "./conversations.schema.js";
 import * as conversationsService from "./conversations.service.js";
 
@@ -41,6 +42,13 @@ export async function removeParticipantController(req: Request, res: Response): 
 	// No body: the actor and the target both learn what happened from socket
 	// events, not from this response — see removeParticipant's doc comment.
 	res.status(204).send();
+}
+
+export async function transferOwnershipController(req: Request, res: Response): Promise<void> {
+	const input = transferOwnershipSchema.parse(req.body);
+	const conversationId = req.params.conversationId as string;
+	const conversation = await conversationsService.transferGroupOwnership(req.userId!, conversationId, input);
+	res.status(200).json(conversation);
 }
 
 export async function renameConversationController(req: Request, res: Response): Promise<void> {

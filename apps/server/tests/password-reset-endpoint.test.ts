@@ -1,11 +1,11 @@
 import { createServer, type Server } from "node:http";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
-import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app.js";
 import { logger } from "../src/lib/logger.js";
 import { mailer } from "../src/lib/mailer.js";
+import { processOutboxOnce } from "../src/lib/outbox.js";
 import { prisma } from "../src/lib/prisma.js";
 
 let server: Server;
@@ -64,19 +64,30 @@ describe("POST /auth/password-reset", () => {
 			},
 		});
 		vi.spyOn(mailer, "send").mockRejectedValue(new Error("provider unavailable"));
-		const logged = vi.spyOn(logger, "error").mockImplementation(() => undefined);
+		vi.spyOn(logger, "warn").mockImplementation(() => undefined);
 
 		const response = await requestReset("known@chatty.test");
+		await processOutboxOnce();
 
 		expect(response.status).toBe(204);
 		expect(await response.text()).toBe("");
-		expect(logged).toHaveBeenCalledWith(
-			expect.objectContaining({ err: expect.any(Error) }),
-			"password reset email delivery failed",
-		);
+		// The mail is not lost, which is what the outbox bought: still queued,
+		// counted as attempted, with the reason recorded for the next pass. Before
+		// the outbox a failure here meant a live token whose owner was never told.
+		const queued = await prisma.outboxMessage.findFirstOrThrow({
+			select: { status: true, attempts: true, lastError: true },
+		});
+		expect(queued.status).toBe("PENDING");
+		expect(queued.attempts).toBe(1);
+		expect(queued.lastError).toContain("provider unavailable");
 	});
 
-	it("does not wait for a slow mail provider before answering", async () => {
+	it("never touches the mail provider on the request path at all", async () => {
+		// Stronger than the timing assertion this replaces. The request used to
+		// start delivery and merely decline to await it, so a provider slow enough
+		// still competed for this process. Now the request's only mail work is one
+		// local INSERT, and the provider is a worker's problem — which is why the
+		// spy below must not have been called by the time the 204 comes back.
 		await prisma.user.create({
 			data: {
 				email: "known@chatty.test",
@@ -85,17 +96,13 @@ describe("POST /auth/password-reset", () => {
 				passwordHash: "not-used-here",
 			},
 		});
-		let finishDelivery!: () => void;
-		const delivery = new Promise<void>((resolve) => {
-			finishDelivery = resolve;
-		});
-		vi.spyOn(mailer, "send").mockReturnValue(delivery);
+		const sent = vi.spyOn(mailer, "send").mockResolvedValue(undefined);
 
-		const response = await Promise.race([requestReset("known@chatty.test"), delay(1000).then(() => null)]);
-		finishDelivery();
+		const response = await requestReset("known@chatty.test");
 
-		expect(response).not.toBeNull();
-		expect(response?.status).toBe(204);
+		expect(response.status).toBe(204);
+		expect(sent).not.toHaveBeenCalled();
+		expect(await prisma.outboxMessage.count({ where: { status: "PENDING" } })).toBe(1);
 	});
 
 	it("rejects an invalid email before the service runs", async () => {

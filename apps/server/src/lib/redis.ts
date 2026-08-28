@@ -47,11 +47,15 @@ async function connectAll(url: string): Promise<RedisConnections> {
 export const redis: RedisConnections | null = env.REDIS_URL ? await connectAll(env.REDIS_URL) : null;
 
 if (!redis && env.NODE_ENV === "production") {
-	// Not a throw: an instance without Redis still works correctly on its own,
-	// and refusing to boot would turn a scaling misconfiguration into an outage.
-	// It is loud because the failure it precedes is silent — two instances each
-	// enforcing their own rate limit, and presence that only sees half the users.
+	// Reaching here now means `SINGLE_INSTANCE=true` was set deliberately — a
+	// production boot with neither that nor `REDIS_URL` is refused in
+	// config/env.ts. This used to be the only guard, and a warning is a thing
+	// people scroll past on the way to "it started, ship it".
+	//
+	// Still logged, because the declaration has an expiry date nobody writes
+	// down: the moment a second instance appears, this line is the record of
+	// what the first one was promised.
 	logger.warn(
-		"REDIS_URL is not set. Rate-limit counters and socket rooms are per-process, so this instance cannot be run alongside another.",
+		"SINGLE_INSTANCE is set and REDIS_URL is not. Rate-limit counters and socket rooms are per-process, so a second instance would silently behave as a separate app.",
 	);
 }

@@ -13,13 +13,13 @@ describe("getReadReceipt", () => {
 	it("returns nothing when the other person has read nothing", () => {
 		const participants = [makeParticipant("minh", "Minh"), makeParticipant("an", "An", null)];
 
-		expect(getReadReceipt(messages, participants, "minh")).toBeNull();
+		expect(getReadReceipt(messages, participants, "minh", true)).toBeNull();
 	});
 
 	it("puts the receipt on your newest message the other person has reached", () => {
 		const participants = [makeParticipant("minh", "Minh"), makeParticipant("an", "An", "m3")];
 
-		expect(getReadReceipt(messages, participants, "minh")).toEqual({ messageId: "m3", readerCount: 1 });
+		expect(getReadReceipt(messages, participants, "minh", true)).toEqual({ messageId: "m3", readerCount: 1 });
 	});
 
 	it("walks back to your message when the marker sits on someone else's", () => {
@@ -27,13 +27,13 @@ describe("getReadReceipt", () => {
 		// seen is the one before it.
 		const participants = [makeParticipant("minh", "Minh"), makeParticipant("an", "An", "m2")];
 
-		expect(getReadReceipt(messages, participants, "minh")).toEqual({ messageId: "m1", readerCount: 1 });
+		expect(getReadReceipt(messages, participants, "minh", true)).toEqual({ messageId: "m1", readerCount: 1 });
 	});
 
 	it("ignores your own marker, so reading your own messages is not a receipt", () => {
 		const participants = [makeParticipant("minh", "Minh", "m4"), makeParticipant("an", "An", null)];
 
-		expect(getReadReceipt(messages, participants, "minh")).toBeNull();
+		expect(getReadReceipt(messages, participants, "minh", true)).toBeNull();
 	});
 
 	it("reports the receipt at the furthest reader and counts only those who reached it", () => {
@@ -44,7 +44,7 @@ describe("getReadReceipt", () => {
 		];
 
 		// Binh stopped at m1, so they are not among the readers of m4.
-		expect(getReadReceipt(messages, participants, "minh")).toEqual({ messageId: "m4", readerCount: 1 });
+		expect(getReadReceipt(messages, participants, "minh", true)).toEqual({ messageId: "m4", readerCount: 1 });
 	});
 
 	it("counts everyone who has reached the same message", () => {
@@ -54,7 +54,16 @@ describe("getReadReceipt", () => {
 			makeParticipant("binh", "Binh", "m4"),
 		];
 
-		expect(getReadReceipt(messages, participants, "minh")).toEqual({ messageId: "m4", readerCount: 2 });
+		expect(getReadReceipt(messages, participants, "minh", true)).toEqual({ messageId: "m4", readerCount: 2 });
+	});
+
+	it("shows nothing to a viewer who has turned their own receipts off", () => {
+		// The symmetric half of the setting, and the only half the client owns: the
+		// other person is sharing, and this viewer still does not get to see it,
+		// because they stopped sharing theirs.
+		const participants = [makeParticipant("minh", "Minh"), makeParticipant("an", "An", "m3")];
+
+		expect(getReadReceipt(messages, participants, "minh", false)).toBeNull();
 	});
 
 	it("returns nothing when the marker points outside the loaded page", () => {
@@ -62,6 +71,6 @@ describe("getReadReceipt", () => {
 		// older, and asserting messages were read that may not have been.
 		const participants = [makeParticipant("minh", "Minh"), makeParticipant("an", "An", "m-from-an-older-page")];
 
-		expect(getReadReceipt(messages, participants, "minh")).toBeNull();
+		expect(getReadReceipt(messages, participants, "minh", true)).toBeNull();
 	});
 });

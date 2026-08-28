@@ -27,3 +27,11 @@ export const renameConversationSchema = z.object({
 	name: z.string().min(1).max(100),
 });
 export type RenameConversationInput = z.infer<typeof renameConversationSchema>;
+
+export const transferOwnershipSchema = z.object({
+	// Who the group is being handed to. They have to already be in it — inviting
+	// and promoting are two decisions, and rolling them into one would let a
+	// stranger be made owner in a single request.
+	userId: z.string().min(1),
+});
+export type TransferOwnershipInput = z.infer<typeof transferOwnershipSchema>;

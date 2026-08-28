@@ -3,6 +3,7 @@ import { createAdapter } from "@socket.io/redis-adapter";
 import { createApp } from "./app.js";
 import { env } from "./config/env.js";
 import { logger } from "./lib/logger.js";
+import { startOutboxWorker } from "./lib/outbox.js";
 import { redis } from "./lib/redis.js";
 import { getIO } from "./lib/socket-bus.js";
 import { initSockets } from "./sockets/index.js";
@@ -23,6 +24,12 @@ if (redis) {
 	getIO().adapter(createAdapter(redis.pub, redis.sub));
 	logger.info("socket.io using the redis adapter");
 }
+
+// Every instance runs one. They compete for the same rows and step over each
+// other's claims (`FOR UPDATE SKIP LOCKED`), so more instances is more delivery
+// throughput rather than duplicate mail — unlike rate limits and socket rooms,
+// this one needs no Redis to behave correctly with several processes.
+startOutboxWorker();
 
 httpServer.listen(env.PORT, () => {
 	logger.info(`chatty server listening on :${env.PORT}`);

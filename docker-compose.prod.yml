@@ -60,6 +60,14 @@ services:
       CORS_ORIGIN: ${WEB_ORIGIN:-http://localhost:8080}
       PUBLIC_URL: ${API_PUBLIC_URL:-http://localhost:4000}
       NODE_ENV: production
+      # Mail, with no defaults, for the same reason JWT_SECRET has none: the
+      # fallback would be worse than the failure. `MAIL_TRANSPORT=console` is
+      # refused outright under NODE_ENV=production — it would write every
+      # password reset link to the container log — so these three are what make
+      # this file bootable at all.
+      MAIL_TRANSPORT: smtp
+      SMTP_URL: ${SMTP_URL:?set SMTP_URL, e.g. smtp://user:pass@smtp.provider.example:587}
+      MAIL_FROM: ${MAIL_FROM:?set MAIL_FROM to an address on a domain you have verified with the provider}
     volumes:
       # Shared between both instances on purpose: an avatar uploaded through
       # api-1 has to be servable by api-2. This is the local stand-in for the

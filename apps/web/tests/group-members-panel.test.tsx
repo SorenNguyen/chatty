@@ -8,6 +8,7 @@ const searchUsers = vi.fn();
 const addParticipant = vi.fn();
 const removeParticipant = vi.fn();
 const renameConversation = vi.fn();
+const transferOwnership = vi.fn();
 
 vi.mock("@/api/client", () => ({
 	api: {
@@ -15,6 +16,7 @@ vi.mock("@/api/client", () => ({
 		addParticipant: (conversationId: string, userId: string) => addParticipant(conversationId, userId),
 		removeParticipant: (conversationId: string, userId: string) => removeParticipant(conversationId, userId),
 		renameConversation: (conversationId: string, name: string) => renameConversation(conversationId, name),
+		transferOwnership: (conversationId: string, userId: string) => transferOwnership(conversationId, userId),
 	},
 }));
 
@@ -37,6 +39,7 @@ beforeEach(() => {
 	addParticipant.mockReset().mockResolvedValue(group);
 	removeParticipant.mockReset().mockResolvedValue(undefined);
 	renameConversation.mockReset().mockResolvedValue(group);
+	transferOwnership.mockReset().mockResolvedValue(group);
 });
 
 describe("GroupMembersPanel", () => {
@@ -67,6 +70,18 @@ describe("GroupMembersPanel", () => {
 		await user.click(screen.getByRole("button", { name: "Remove An from the group" }));
 
 		expect(removeParticipant).toHaveBeenCalledWith("group-1", "an");
+	});
+
+	it("hands the group to another member", async () => {
+		const typist = userEvent.setup();
+		render(<GroupMembersPanel conversation={group} currentUserId="minh" onClose={vi.fn()} />);
+
+		await typist.click(screen.getByRole("button", { name: "Make An the group owner" }));
+
+		expect(transferOwnership).toHaveBeenCalledWith("group-1", "an");
+		// No hand-over button on your own row: you are already the owner, and the
+		// server refuses it anyway.
+		expect(screen.queryByRole("button", { name: "Make Minh the group owner" })).not.toBeInTheDocument();
 	});
 
 	it('leaves the group when "Leave group" is clicked', async () => {
@@ -143,11 +158,12 @@ describe("GroupMembersPanel", () => {
 });
 
 describe("GroupMembersPanel, seen by a member who does not own the group", () => {
-	it("offers no way to remove anyone", () => {
+	it("offers no way to remove anyone, and no way to hand the group on", () => {
 		render(<GroupMembersPanel conversation={group} currentUserId="an" onClose={vi.fn()} />);
 
 		expect(screen.queryByRole("button", { name: "Remove Binh from the group" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Remove Minh from the group" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Make Binh the group owner" })).not.toBeInTheDocument();
 	});
 
 	it("locks the name field and says who can change it", () => {

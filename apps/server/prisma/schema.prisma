@@ -38,11 +38,56 @@ model User {
   /// password would leave every session opened beforehand working until the
   /// token expired — which is exactly the case a reset is reached for.
   passwordChangedAt DateTime?
+  /// Whether other people may see how far this user has read.
+  ///
+  /// Symmetric by design: turning it off also hides everyone else's markers from
+  /// them. The server half of that promise is `lastSharedReadMessageId` on the
+  /// participant row — while this is false, that column stops advancing, so the
+  /// marker never leaves the process rather than being filtered out of a response
+  /// somebody could still ask for.
+  readReceiptsEnabled Boolean @default(true)
   createdAt         DateTime  @default(now())
 
   participants        ConversationParticipant[]
   messages            Message[]
   passwordResetTokens PasswordResetToken[]
+  emailChangeTokens   EmailChangeToken[]
+}
+
+/// A one-time link mailed to an address someone wants to move their account to.
+///
+/// Separate from `PasswordResetToken` rather than a `kind` column on it, because
+/// the two carry different payloads: this one has to remember **which address**
+/// was asked for, and a reset token has nothing to remember. Merging them would
+/// mean a nullable column that must be non-null for exactly one of the two kinds
+/// — the shape of constraint this schema keeps pushing into the database instead.
+///
+/// The token is stored as a SHA-256, for the reason spelled out on
+/// `PasswordResetToken.tokenHash`: a leaked database must not hand over the
+/// ability to take an account's address.
+model EmailChangeToken {
+  id        String    @id @default(cuid())
+  userId    String
+  /// The address the account moves to when this link is opened.
+  ///
+  /// Held here rather than written to `User.email` on request, which is the whole
+  /// point of the feature: an address nobody has proved they can read must never
+  /// become a credential. Uniqueness is **not** enforced on this column — two
+  /// people may both ask for an address neither of them owns; only the first to
+  /// open their link gets it, and the second fails at redemption against
+  /// `User.email`'s own unique index.
+  newEmail  String
+  tokenHash String    @unique
+  expiresAt DateTime
+  /// Set when the link is opened. Kept rather than deleted, the same way a spent
+  /// reset token is: a second click can then be told apart from a made-up token
+  /// in the logs, while both answer the caller identically.
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 /// A one-time link mailed to someone who cannot sign in.
@@ -66,6 +111,77 @@ model PasswordResetToken {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+/// Where an outbox message is in its life.
+///
+/// Three values, and only one of them means "there is still work here": the
+/// worker claims PENDING rows and nothing else ever moves back into it. SENT and
+/// FAILED are both terminal, and both redact the body — see the model below.
+enum OutboxStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+/// An email this app has promised to send but has not sent yet.
+///
+/// A transactional outbox. The row is written **inside the same transaction as
+/// the thing that caused it** — for a password reset, the same transaction that
+/// creates the token — so "this link is live" and "we owe this person the link"
+/// commit or roll back together. Before this table the send was fired after the
+/// commit and forgotten: a crash in that window, or a provider having a bad
+/// minute, lost the mail with nothing left to say it had ever been owed.
+///
+/// It is not a general job queue and should not become one. Everything here is
+/// shaped by mail: a recipient, a rendered body, and the fact that sending twice
+/// is worse than sending late.
+model OutboxMessage {
+  id      String       @id @default(cuid())
+  status  OutboxStatus @default(PENDING)
+  to      String
+  subject String
+  /// The rendered message, and **emptied the moment there is nothing left to
+  /// send** — on success and on final failure alike.
+  ///
+  /// This is the one uncomfortable part of an outbox for password reset: the
+  /// body contains the live link, so between commit and delivery a working key
+  /// to an account sits in a table in plaintext. There is no way around holding
+  /// it — the mail cannot be sent without it — so the mitigations are that the
+  /// window is one poll interval rather than an hour, that the token's own TTL
+  /// bounds the worst case, and that the check constraint below makes the
+  /// redaction a property of the data rather than a habit of the worker. Same
+  /// argument, and the same shape, as `Message.deletedAt`.
+  body    String
+  /// How many times delivery has been tried. Attempt zero is a row nobody has
+  /// picked up yet, not a row that failed once.
+  attempts      Int      @default(0)
+  /// The earliest the worker may try again — now for a new row, then pushed out
+  /// by exponential backoff after each failure. Also what makes a claim query
+  /// cheap: due rows are an index range rather than a scan.
+  ///
+  /// `dbgenerated`, not `now()`, and the difference is a bug rather than a
+  /// preference. Prisma evaluates `@default(now())` in the client, using the
+  /// application's clock, while the worker's claim compares this column against
+  /// PostgreSQL's `NOW()`. Two clocks. A machine a few milliseconds ahead of the
+  /// database writes a row that is not yet due the instant it is created, and on
+  /// a real deployment — app and database on different hosts — the skew is not
+  /// milliseconds. It showed up here as a test suite that passed four times in
+  /// five; it would have shipped as mail that sometimes just sits there.
+  ///
+  /// Everything that is *compared* against the database clock is therefore
+  /// written by the database. `createdAt` and `sentAt` are only ever read by
+  /// people, so they stay ordinary.
+  nextAttemptAt DateTime @default(dbgenerated("CURRENT_TIMESTAMP"))
+  /// Why the last attempt failed, kept for the person reading the table at 3am.
+  /// Never contains the body, so it is safe to log and to keep after redaction.
+  lastError     String?
+  sentAt        DateTime?
+  createdAt     DateTime  @default(now())
+
+  // The worker's only query: due PENDING rows, oldest first. Ordering the index
+  // this way means it serves both the filter and the sort.
+  @@index([status, nextAttemptAt])
 }
 
 model Conversation {
@@ -116,6 +232,21 @@ model ConversationParticipant {
   // would silently reset someone's marker to "nothing read" the first time a
   // message is deleted, which reads as a whole conversation going unread.
   lastReadMessageId String?
+  /// The same marker, but the half other people are allowed to see.
+  ///
+  /// Two columns rather than one flag consulted at read time, and the difference
+  /// is what "turning read receipts off" actually means here. `lastReadMessageId`
+  /// keeps advancing while receipts are off, because the unread badge is the
+  /// reader's own business. This one does not — so their position is never
+  /// written down anywhere a response could reveal it.
+  ///
+  /// It is also what stops the toggle from being retroactive. If exposure were
+  /// `enabled ? lastReadMessageId : null`, switching receipts back on would
+  /// publish everything read while they were off, in one go. Here the shared
+  /// marker is still parked where it was when they turned receipts off, and it
+  /// catches up only when they read something new — a receipt caused by an
+  /// action, which is what a receipt is supposed to be.
+  lastSharedReadMessageId String?
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -136,8 +267,15 @@ enum MessageKind {
 model Message {
   id             String      @id @default(cuid())
   conversationId String
-  /// Null only on a SYSTEM message, which nobody wrote.
-  /// Enforced together with `kind` by the phase 7 database check constraint.
+  /// Who wrote it — null on a SYSTEM message, and null once a USER message
+  /// outlives the account that wrote it.
+  ///
+  /// The phase 7 check constraint used to make those two the same thing
+  /// (`USER` implied an author). Deleting an account breaks that: the messages
+  /// stay, for exactly the reasons `deletedAt` below is a tombstone rather than a
+  /// DELETE, and there is no longer anybody to point at. The constraint now only
+  /// holds the other direction — a SYSTEM message has no author — and `kind` is
+  /// what tells the two cases apart, which is what it was declared for.
   authorId       String?
   kind           MessageKind @default(USER)
   // Empty string for a message that is only an image. Nullable would be more
@@ -150,12 +288,51 @@ model Message {
   // it happened, deliberately — see ADR 0009.
   content        String
   createdAt      DateTime    @default(now())
+  /// When the author last replaced `content`, or null if they never have.
+  ///
+  /// A timestamp rather than a boolean because the UI eventually wants to say
+  /// *when*, and because "edited" is derivable from it while the reverse is not.
+  editedAt       DateTime?
+  /// When the author deleted this message, or null while it stands.
+  ///
+  /// A tombstone, not a `DELETE`. Two things in this schema point at a message
+  /// id without a foreign key to protect them, and both break if the row goes:
+  ///
+  /// - `ConversationParticipant.lastReadMessageId` is a plain column on purpose
+  ///   (see its comment). The unread query LEFT JOINs the marker and reads a
+  ///   miss as "nothing read yet", so hard-deleting the newest message would
+  ///   relight the badge on the *entire* history for everyone who had read it.
+  /// - Message paging passes the oldest loaded id back as a Prisma cursor. A
+  ///   cursor row that no longer exists fails the request for the next page.
+  ///
+  /// `content` is emptied in the same write, and the check constraint below
+  /// makes that the database's rule rather than the service's promise — a
+  /// deleted message must not still be carrying its text.
+  deletedAt      DateTime?
+  /// What search matches against: `to_tsvector('simple', content)`, maintained
+  /// by PostgreSQL as a GENERATED column.
+  ///
+  /// `Unsupported` because Prisma has no tsvector type, and that is fine here —
+  /// Prisma leaves such fields out of the generated client entirely, which is
+  /// exactly the behaviour a generated column needs. Nothing may write to it,
+  /// and nothing can: search reads it through raw SQL.
+  ///
+  /// Declared at all only so `prisma db pull` and a future `migrate dev` do not
+  /// see the column as drift and offer to drop it.
+  searchVector   Unsupported("tsvector")?
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  author       User?        @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  // SetNull, not Cascade. Cascade would delete every message a departing user
+  // ever wrote — gutting other people's conversations, and hard-deleting rows
+  // that read markers and paging cursors point at without a foreign key to
+  // protect them. See `authorId` above and `deletedAt` below.
+  author       User?        @relation(fields: [authorId], references: [id], onDelete: SetNull)
   attachment   Attachment?
 
   @@index([conversationId, createdAt])
+  // The GIN index on `searchVector` lives in the phase 12 migration: Prisma
+  // cannot express an index method, and an `@@index` here would create a second,
+  // useless btree one alongside it.
 }
 
 /// An image sent with a message.
