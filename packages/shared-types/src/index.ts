@@ -38,6 +38,19 @@ export interface UserDTO {
  */
 export interface CurrentUserDTO extends UserDTO {
 	email: string;
+	/**
+	 * Whether other people may see how far you have read.
+	 *
+	 * Only on your own profile, never on `UserDTO`: whether somebody else shares
+	 * their receipts is visible in the effect (their marker simply stops arriving),
+	 * and publishing the setting itself would announce "this person is hiding" to
+	 * everyone they talk to.
+	 *
+	 * **Symmetric.** With this false the server stops sharing your marker *and* the
+	 * client stops drawing anyone else's "Seen" — hiding yours while still reading
+	 * theirs is the arrangement people are right to call unfair.
+	 */
+	readReceiptsEnabled: boolean;
 }
 
 /**
@@ -63,6 +76,12 @@ export interface ParticipantDTO extends UserDTO {
 	 * someone when it is at or before their marker. The client compares by
 	 * position in the loaded list rather than by timestamp, because ids are what
 	 * the server commits to.
+	 *
+	 * **The shared marker, not the real one.** A participant with read receipts
+	 * turned off keeps reading and keeps clearing their own badge; what stops is
+	 * this value moving. So a null here — or a marker that has stopped advancing —
+	 * means "not shared", which is indistinguishable from "not read", and that is
+	 * the point.
 	 */
 	lastReadMessageId: string | null;
 }
@@ -239,9 +258,10 @@ export interface AuthResponse {
  * Sending only the field that changed is also what keeps two tabs from
  * overwriting each other's edit of the other field.
  *
- * `email` is deliberately not here. Changing it has to prove the new address is
- * reachable, which needs the same outbound-email machinery as password reset —
- * see the roadmap's phase 3 item 10.
+ * `email` is deliberately not here, and never will be: changing it is a two-step
+ * flow that only takes effect when a link in the new mailbox is opened, so it
+ * cannot be one field of a PATCH that succeeds immediately. See
+ * `RequestEmailChangeRequest`.
  */
 export interface UpdateProfileRequest {
 	// `| undefined` is required, not noise: the server compiles with
@@ -250,6 +270,55 @@ export interface UpdateProfileRequest {
 	// what a Zod `.partial()` produces for a field the client left out.
 	displayName?: string | undefined;
 	handle?: string | undefined;
+	/**
+	 * Turning this off hides your read marker from everyone, and everyone's from
+	 * you. It sits on the profile PATCH rather than an endpoint of its own because
+	 * it is a stored preference like the other two, not an action.
+	 */
+	readReceiptsEnabled?: boolean | undefined;
+}
+
+/**
+ * Body of `POST /auth/email` — asks to move the account to a new address.
+ *
+ * Nothing changes when this returns. The address becomes the account's only once
+ * the link mailed to it is opened, because an address nobody has proved they can
+ * read must never become a credential.
+ *
+ * `currentPassword` for the same reason `ChangePasswordRequest` carries one: a
+ * token is proof of a past sign-in, and the address on an account is what a
+ * password reset is delivered to — whoever changes it can take the account.
+ */
+export interface RequestEmailChangeRequest {
+	newEmail: string;
+	currentPassword: string;
+}
+
+/** Body of `POST /auth/email/confirm`. The token comes from the link in the new mailbox. */
+export interface ConfirmEmailChangeRequest {
+	token: string;
+}
+
+/**
+ * Body of `DELETE /users/me`.
+ *
+ * A password rather than a confirmation checkbox: this is the one action in the
+ * app nothing can undo, and the person at an unlocked laptop holds the token but
+ * not the password.
+ */
+export interface DeleteAccountRequest {
+	currentPassword: string;
+}
+
+/**
+ * Body of `PUT /conversations/:conversationId/owner`.
+ *
+ * PUT because it replaces the group's single owner: handing it to the same
+ * person twice ends in the same state, and the second request simply finds
+ * itself no longer the owner and is refused.
+ */
+export interface TransferOwnershipRequest {
+	userId: string;
 }
 
 /**

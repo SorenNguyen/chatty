@@ -1,6 +1,6 @@
 import type { ConversationDTO, UserDTO } from "@chatty/shared-types";
 import { useEffect, useState } from "react";
-import { LogOut, Search, UserMinus, X } from "lucide-react";
+import { Crown, LogOut, Search, UserMinus, X } from "lucide-react";
 import { api } from "@/api/client";
 import { Avatar } from "@/components/avatar";
 import { Button } from "@/components/button";
@@ -28,6 +28,7 @@ export function GroupMembersPanel({ conversation, currentUserId, onClose }: Grou
 	const [isSavingName, setIsSavingName] = useState(false);
 	const [nameError, setNameError] = useState("");
 	const [removingUserId, setRemovingUserId] = useState<string | null>(null);
+	const [promotingUserId, setPromotingUserId] = useState<string | null>(null);
 	const [isLeaving, setIsLeaving] = useState(false);
 	const [actionError, setActionError] = useState("");
 	const [addingUserId, setAddingUserId] = useState<string | null>(null);
@@ -90,6 +91,21 @@ export function GroupMembersPanel({ conversation, currentUserId, onClose }: Grou
 			setActionError((removeError as Error).message);
 		} finally {
 			setRemovingUserId(null);
+		}
+	}
+
+	async function handleMakeOwner(userId: string) {
+		setPromotingUserId(userId);
+		setActionError("");
+		try {
+			await api.transferOwnership(conversation.id, userId);
+			// Nothing local to update: `conversation:updated` carries the new roles
+			// back to everyone including this tab, so the crown moves through the
+			// same path for the person who pressed the button as for everyone else.
+		} catch (transferError) {
+			setActionError((transferError as Error).message);
+		} finally {
+			setPromotingUserId(null);
 		}
 	}
 
@@ -169,15 +185,29 @@ export function GroupMembersPanel({ conversation, currentUserId, onClose }: Grou
 							    clearly-labelled action below, so a small × next to your
 							    own name cannot be clicked by accident. */}
 							{!isSelf && isOwner && (
-								<Button
-									variant="ghost"
-									onClick={() => void handleRemoveMember(participant.id)}
-									disabled={removingUserId === participant.id}
-									aria-label={`Remove ${participant.displayName} from the group`}
-									className="px-2"
-								>
-									<UserMinus className="size-4" />
-								</Button>
+								<>
+									{/* Handing the group over costs the person pressing it
+									    their own role, so it is spelled out in the label
+									    rather than left to the crown to imply. */}
+									<Button
+										variant="ghost"
+										onClick={() => void handleMakeOwner(participant.id)}
+										disabled={promotingUserId === participant.id}
+										aria-label={`Make ${participant.displayName} the group owner`}
+										className="px-2"
+									>
+										<Crown className="size-4" />
+									</Button>
+									<Button
+										variant="ghost"
+										onClick={() => void handleRemoveMember(participant.id)}
+										disabled={removingUserId === participant.id}
+										aria-label={`Remove ${participant.displayName} from the group`}
+										className="px-2"
+									>
+										<UserMinus className="size-4" />
+									</Button>
+								</>
 							)}
 						</li>
 					);

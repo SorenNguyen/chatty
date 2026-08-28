@@ -1,6 +1,8 @@
 import { Router } from "express";
 import {
 	changePasswordRateLimiter,
+	emailChangeConfirmRateLimiter,
+	emailChangeRateLimiter,
 	loginRateLimiter,
 	passwordResetConfirmRateLimiter,
 	passwordResetRequestRateLimiter,
@@ -9,8 +11,10 @@ import {
 import { requireAuth } from "../../middlewares/require-auth.js";
 import {
 	changePasswordController,
+	confirmEmailChangeController,
 	loginController,
 	registerController,
+	requestEmailChangeController,
 	requestPasswordResetController,
 	resetPasswordController,
 } from "./auth.controller.js";
@@ -33,3 +37,12 @@ authRouter.post("/password", requireAuth, changePasswordRateLimiter, changePassw
 // first here, the way it does for those two and unlike `/password` above.
 authRouter.post("/password-reset", passwordResetRequestRateLimiter, requestPasswordResetController);
 authRouter.post("/password-reset/confirm", passwordResetConfirmRateLimiter, resetPasswordController);
+
+// Changing the address on an account is a credential change, which is why it is
+// here rather than on `PATCH /users/me` with the display name: it needs the
+// current password, it goes through the mailer, and it does not take effect when
+// the request returns. Authenticated then limited, like `/password` above.
+authRouter.post("/email", requireAuth, emailChangeRateLimiter, requestEmailChangeController);
+// Unauthenticated, like the reset confirmation: the link is opened wherever the
+// new mailbox is read, which is regularly a device that has never signed in.
+authRouter.post("/email/confirm", emailChangeConfirmRateLimiter, confirmEmailChangeController);

@@ -3,9 +3,11 @@ import type {
 	AuthResponse,
 	ChangePasswordRequest,
 	ChangePasswordResponse,
+	ConfirmEmailChangeRequest,
 	ConversationDTO,
 	ConversationReadEvent,
 	CurrentUserDTO,
+	DeleteAccountRequest,
 	EditMessageRequest,
 	LoginRequest,
 	MarkReadRequest,
@@ -13,8 +15,10 @@ import type {
 	MessageSearchResultDTO,
 	RegisterRequest,
 	RenameConversationRequest,
+	RequestEmailChangeRequest,
 	RequestPasswordResetRequest,
 	ResetPasswordRequest,
+	TransferOwnershipRequest,
 	UpdateProfileRequest,
 	UserDTO,
 } from "@chatty/shared-types";
@@ -129,6 +133,34 @@ export const api = {
 	/** Redeems a link from the email. One use, one hour. */
 	resetPassword(input: ResetPasswordRequest): Promise<void> {
 		return post<void>("/auth/password-reset/confirm", input);
+	},
+
+	/**
+	 * Asks to move the account to a new address.
+	 *
+	 * **Nothing has changed when this resolves.** A link goes to the new address
+	 * and the account moves only once it is opened, so the UI must say "check that
+	 * inbox" rather than "email updated" — and the cached profile must not be
+	 * touched. The old address is warned at the same time.
+	 */
+	requestEmailChange(input: RequestEmailChangeRequest): Promise<void> {
+		return post<void>("/auth/email", input);
+	},
+
+	/** Redeems the link from the new mailbox. One use, one hour, no session required. */
+	confirmEmailChange(input: ConfirmEmailChangeRequest): Promise<void> {
+		return post<void>("/auth/email/confirm", input);
+	},
+
+	/**
+	 * Deletes the signed-in account, permanently.
+	 *
+	 * The token this was sent with is dead on arrival of the response, so the
+	 * caller has to clear it — `useAuth.deleteAccount` is what does that and drops
+	 * the socket. Call that rather than this.
+	 */
+	deleteAccount(input: DeleteAccountRequest): Promise<void> {
+		return request<void>("/users/me", { method: "DELETE", body: JSON.stringify(input) });
 	},
 
 	searchUsers(query: string): Promise<UserDTO[]> {
@@ -266,6 +298,22 @@ export const api = {
 	 */
 	removeParticipant(conversationId: string, userId: string): Promise<void> {
 		return request<void>(`/conversations/${conversationId}/members/${userId}`, { method: "DELETE" });
+	},
+
+	/**
+	 * Hands a group to another member. Owner only, and the caller stops being the
+	 * owner in the same request — there is exactly one.
+	 *
+	 * Returns the conversation as the (now former) owner sees it; everyone else
+	 * learns about it from `conversation:updated` and the system line.
+	 */
+	transferOwnership(conversationId: string, userId: string): Promise<ConversationDTO> {
+		const body: TransferOwnershipRequest = { userId };
+
+		return request<ConversationDTO>(`/conversations/${conversationId}/owner`, {
+			method: "PUT",
+			body: JSON.stringify(body),
+		});
 	},
 
 	renameConversation(conversationId: string, name: string): Promise<ConversationDTO> {

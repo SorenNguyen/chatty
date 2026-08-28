@@ -220,6 +220,7 @@ export function ChatPage() {
 								currentUserId={currentUser.id}
 								participants={selectedConversation.participants}
 								isGroup={selectedConversation.isGroup}
+								areReceiptsShared={currentUser.readReceiptsEnabled}
 								hasMoreOlder={hasMoreOlder}
 								isLoadingOlder={isLoadingOlder}
 								onLoadOlder={loadOlder}

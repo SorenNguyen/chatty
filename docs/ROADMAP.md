@@ -224,9 +224,10 @@ Known at the end of item 9, then closed by item 10:
 
 Still deliberately deferred rather than missed:
 
-- Email cannot be changed. It needs proof that the new address is reachable, which is the same
-  outbound-email machinery item 10 is waiting on. Shown read-only on the profile form rather than
-  omitted, so nobody goes looking for it elsewhere.
+- ~~Email cannot be changed.~~ Built in phase 13, once the outbound-email machinery item 10 was
+  waiting on existed. It is not a field on this form and never will be: it takes effect when a link
+  in the new mailbox is opened, not when the request returns, so it has its own form and its own two
+  endpoints under `/auth`.
 - The handle uniqueness check is read-then-write, the same shape `register` uses, and carries the
   same small race. The unique index is what actually prevents a collision; the loser gets a 500
   rather than a 409.
@@ -821,6 +822,112 @@ Results are newest-first rather than ranked. In a chat the thing being looked fo
 the recent one, and a relevance score would put a three-year-old message above this morning's for
 saying the word twice.
 
+## Phase 13 — What an account needs before real people have one — `done`
+
+Four things every messenger has and this one did not, and they are the same four because they are
+the same subject: an account is something you can move, hand on, hide behind, and leave.
+
+| # | Item | How it ended up |
+| --- | --- | --- |
+| 41 | Change your email | `POST /auth/email` + `POST /auth/email/confirm`. The new address is parked on an `EmailChangeToken` until a link sent to it is opened; the old address is warned in the same transaction. |
+| 42 | Hand a group over | `PUT /conversations/:id/owner`, owner-only, on the phase 7 lock. Demote then promote, with a system line. |
+| 43 | Turn read receipts off | `User.readReceiptsEnabled`, plus a **second** marker column that only advances while they are on. |
+| 44 | Delete your account | `DELETE /users/me`. The row, its tokens, its memberships and its avatar file go; its messages stay, without a name on them. |
+
+### An unverified address is not a credential
+
+The obvious implementation writes `User.email` and mails a "you changed your email" notice. That is
+wrong in a way that is easy to miss: the address on an account is where a password reset is
+delivered, so writing an unproven one hands the account to whoever typed it — including to the
+person who typed it wrong and can now recover neither.
+
+So nothing about the account changes when the request returns. The new address lives on a token row
+for an hour, and `User.email` moves only when the link mailed to it is opened. The uniqueness of the
+address is re-checked at that second step against the database's own index rather than trusted from
+the first, because the gap between them is an hour wide and somebody else can register it in the
+meantime — a `P2002` caught and turned into a 409, not the 500 an unhandled Prisma error would be.
+
+Two mails, not one. The second goes to the **old** address while it is still the address that can do
+something about it, and it is sent at request time rather than after confirmation: a warning that
+arrives once the door has closed is a log entry, not a warning.
+
+Sessions are deliberately left alone. This changes what you sign in *with*, not whether the person
+signed in is still you — the password is untouched, and the warning covers the case where it is not.
+
+### The owner hand-over the phase 7 migration was already waiting for
+
+`ConversationParticipant` carries a partial unique index (`WHERE role = 'OWNER'`) and a **deferred**
+constraint trigger, and the migration's own comment says why it is deferred: "an owner hand-over
+briefly has zero owners between DELETE and UPDATE inside an otherwise-valid transaction." That
+hand-over did not exist yet. It does now, and it needed no schema change at all — demote first (the
+per-statement unique index would refuse a second owner), promote second, and the deferred trigger
+re-checks at commit.
+
+Two hand-overs racing are settled before either reaches the constraint: both take the `Conversation`
+row lock, and the one that arrives second finds it is no longer the owner and gets a 403. The
+invariant is still there underneath as the thing that would catch a mistake — the point is that the
+application never asks it to, so the failure a user sees is a sentence rather than a 500.
+
+### Read receipts, and why one boolean is not enough
+
+The setting is symmetric: hide yours and you stop seeing everyone else's. That half is
+straightforward. The hard half is the sentence "turning it back on must not reveal what you read
+while it was off", and it rules out the obvious design — a flag consulted at read time, exposing
+`enabled ? lastReadMessageId : null`. Under that, flipping the switch back publishes the whole hidden
+period in one go, retroactively, for anyone watching.
+
+So there are two markers. `lastReadMessageId` keeps advancing whatever the setting says, because the
+unread badge is the reader's own business and nobody else's. `lastSharedReadMessageId` — the one
+every DTO and every broadcast actually reads — advances only while receipts are on. While they are
+off the reader's position is never written anywhere a response could reveal it, and turning them
+back on publishes nothing by itself: the shared marker is stale, and it catches up on the next thing
+actually read. A receipt caused by an action, which is what a receipt is.
+
+Turning them **off** also clears the shared markers that were already given, and broadcasts
+`conversation:updated` to say so. A setting that leaves yesterday's "Seen" sitting on somebody's
+screen has not done what its label says.
+
+One asymmetry is honest about where it lives: the server guarantees your marker does not leave, and
+the *fairness* half — that you do not get to read theirs — is enforced where the receipt is rendered.
+It is a product rule rather than a confidentiality one, and pretending otherwise would mean
+per-viewer copies of every room broadcast.
+
+### Deleting an account: what goes, and the one decision that had to be made
+
+Gone: the user row, and by cascade their participant rows, their reset tokens and their pending email
+changes; their avatar file, which closes the "avatar files are not cleaned up" gap — nothing had ever
+deleted a user, so nothing had ever been the right place to delete the file; and their live sockets,
+which are already past the gate `requireAuth` re-checks.
+
+**Their messages stay.** `Message.authorId` was `ON DELETE CASCADE`, which would have deleted every
+message they ever wrote — gutting other people's conversations, and hard-deleting rows that
+`lastReadMessageId` and the paging cursor point at with no foreign key to protect them. That is
+precisely the pair of failures that made a message delete a tombstone in phase 8, and they do not get
+weaker when the account rather than the message is what went. The relation is now `SET NULL`.
+
+That forced the phase 7 check constraint open. It read `kind` and `authorId` as two spellings of one
+fact — `USER` implied an author — and a message outliving its author breaks that. Only the SYSTEM
+direction survives, which is the half that was ever load-bearing, and `kind` goes back to being the
+discriminator its schema comment already said it was. One consequence had to be chased down by hand:
+`countUnreadByConversation` excluded system messages by relying on `null <> $userId` being null, so
+after this change it would have silently stopped counting the messages of everyone who ever left. It
+filters on `kind` now.
+
+**The name goes with the account, and that was a decision rather than a default.** The alternative —
+copying the author's display name onto the message when it is written, the way the system log already
+snapshots names — is a real design that other apps choose. It was rejected: holding on to the name of
+somebody who has just asked to be erased is the opposite of what they asked for. An authorless USER
+message renders as "Deleted account".
+
+Attachments on those messages stay too, since the messages do. So account deletion does **not** close
+the orphaned-attachment gap, whatever the plan said: that one is about files whose upload failed, and
+it needs a sweep of the upload directory rather than a line in this service.
+
+Every group they were in gets a `"X deleted their account"` line and, if they owned it, a new owner —
+the database refuses a non-empty group with none, so the hand-over is not a nicety but the difference
+between the delete working and failing. All of it commits with the user row, because half of this
+having happened is a person who has left four groups and still has an account.
+
 ## Known gaps not on the roadmap yet
 
 - **Handle placement.** Asking for a handle during registration is friction. Alternatives discussed:
@@ -851,6 +958,8 @@ saying the word twice.
   that fails between writing the file and committing the row leaves one nothing ever referenced, and
   so does a crash between the delete commit and the unlink. Both cost bytes rather than correctness,
   and closing them needs a sweep over the upload directory rather than another line in either service.
+  Deleting an account was expected to close this and does not: the messages survive the account, so
+  their attachments are still referenced and must stay.
 - **Search keeps diacritics.** `hen gap` does not find `hẹn gặp`. The fix is the `unaccent`
   extension plus an IMMUTABLE wrapper, written out in full in the phase 12 migration — deliberately
   not taken on, because it is a host-level dependency and the host is not chosen.
@@ -862,11 +971,11 @@ saying the word twice.
   not decided where, and adding the limit later invalidates nothing already stored.
 - **"Delete for me" does not exist** — deleting removes a message for everybody. The other kind needs
   per-participant visibility, which is a second axis on every message query rather than a flag.
-- **Avatar files are not cleaned up when a user is deleted.** The database row cascades; the file on
-  disk does not. Harmless today (nothing deletes users) and the wrong thing to fix in the filesystem
-  layer — it belongs with whatever deletes the account.
-- **Read receipts cannot be turned off.** Every real messenger lets you disable them, and doing so
-  has to be symmetric — if you hide yours, you do not get to see theirs.
+- **A deleted account's name is gone from its messages, and cannot be brought back.** The messages
+  survive with `author` null and render as "Deleted account" (phase 13). Anyone who wants the history
+  to keep reading as a conversation between named people would need a display-name snapshot on every
+  message row, written at send time — which is a schema change and, more to the point, a different
+  answer to what deletion means.
 - **A read marker pointing outside the loaded page shows no "Seen".** Correct rather than wrong (the
   alternative is guessing), but it means a receipt can disappear when you scroll far enough back.
 - **Presence is binary.** No "last seen at", which would need a column and a decision about who is
@@ -893,8 +1002,10 @@ saying the word twice.
   has no way to distinguish "never read" from "wasn't here yet". `ConversationParticipant.joinedAt`
   already exists and could bound the query, but doing that for new joiners only (and not everyone
   else) is a second axis on unread math that was not asked for.
-- **A group's owner cannot hand it over without leaving,** and there is no second admin and no
-  demotion — one owner, until they walk out. See [ADR 0008](adr/0008-group-owner-role.md).
+- **There is still no second admin and no demotion.** An owner can now hand the group to somebody
+  else (phase 13), which is the half that was missing; what remains is that the role is a single seat
+  rather than a set, so there is nobody to cover for an owner who has gone quiet without them acting
+  first. See [ADR 0008](adr/0008-group-owner-role.md).
 - **Any member can still add a stranger to a group.** Deliberate (inviting is how a group grows), and
   the owner can undo it. Every add is now named in the log, which is what makes that acceptable.
 

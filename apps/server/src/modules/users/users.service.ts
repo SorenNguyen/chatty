@@ -1,9 +1,17 @@
 import type { CurrentUserDTO, UserDTO } from "@chatty/shared-types";
 import { deleteAvatar, findAvatarPath, saveAvatar } from "../../lib/avatar-storage.js";
-import { ConflictError, NotFoundError } from "../../lib/errors.js";
+import { ConflictError, NotFoundError, UnauthorizedError } from "../../lib/errors.js";
+import { logger } from "../../lib/logger.js";
 import { prisma } from "../../lib/prisma.js";
+import { getIO, userRoom } from "../../lib/socket-bus.js";
+import { assertPasswordMatches } from "../auth/auth.service.js";
+import {
+	announceDepartures,
+	clearSharedReadMarkers,
+	removeUserFromEveryGroup,
+} from "../conversations/conversations.service.js";
 import { toUserDTO, userSelect } from "./users.mapper.js";
-import type { SearchUsersQuery, UpdateProfileInput } from "./users.schema.js";
+import type { DeleteAccountInput, SearchUsersQuery, UpdateProfileInput } from "./users.schema.js";
 
 /**
  * Loads the signed-in user's own profile.
@@ -17,17 +25,18 @@ export async function getUserById(userId: string): Promise<CurrentUserDTO> {
 	const user = await prisma.user.findUnique({
 		where: { id: userId },
 		// `passwordHash` is never selected — see docs/conventions/backend.md.
-		// `email` is added on top of the shared projection rather than being part
-		// of it: this is the one response allowed to carry it, and keeping it out
-		// of `userSelect` is what stops it riding along on somebody else's profile.
-		select: { ...userSelect, email: true },
+		// `email` and `readReceiptsEnabled` are added on top of the shared
+		// projection rather than being part of it: this is the one response allowed
+		// to carry them, and keeping them out of `userSelect` is what stops them
+		// riding along on somebody else's profile.
+		select: { ...userSelect, email: true, readReceiptsEnabled: true },
 	});
 
 	// findUnique + explicit throw, not findUniqueOrThrow: the latter raises a
 	// Prisma error the error middleware would turn into a 500, not a 404.
 	if (!user) throw new NotFoundError("User not found");
 
-	return { ...toUserDTO(user), email: user.email };
+	return { ...toUserDTO(user), email: user.email, readReceiptsEnabled: user.readReceiptsEnabled };
 }
 
 /**
@@ -60,9 +69,17 @@ export async function updateProfile(userId: string, input: UpdateProfileInput): 
 		data: {
 			...(input.displayName !== undefined && { displayName: input.displayName }),
 			...(input.handle !== undefined && { handle: input.handle }),
+			...(input.readReceiptsEnabled !== undefined && { readReceiptsEnabled: input.readReceiptsEnabled }),
 		},
 		select: { id: true },
 	});
+
+	// Turning them off withdraws the receipts already given, rather than only
+	// stopping new ones: a setting that leaves yesterday's "Seen" on somebody's
+	// screen has not done what its label says. Turning them back **on** restores
+	// nothing — the markers are gone, and they catch up when this user next reads
+	// something, which is what keeps the toggle from being a retroactive reveal.
+	if (input.readReceiptsEnabled === false) await clearSharedReadMarkers(userId);
 
 	// Re-read rather than mapping the update's own result, so there is exactly one
 	// place that knows how a row becomes a CurrentUserDTO.
@@ -140,4 +157,69 @@ export async function getAvatarFilePath(userId: string): Promise<string> {
 	if (!filePath) throw new NotFoundError("No avatar set");
 
 	return filePath;
+}
+
+/**
+ * Deletes the signed-in user's account, for good.
+ *
+ * **What goes:** the user row, and with it — by cascade — their participant rows,
+ * their password reset tokens and their pending email changes. Their avatar file
+ * goes too, which closes the "avatar files are not cleaned up" gap: nothing used
+ * to delete a user, so nothing had ever been the right place to delete the file.
+ *
+ * **What stays, and why it is not an oversight:** their messages. The rows are
+ * kept with `authorId` set to null — the foreign key is `ON DELETE SET NULL`
+ * specifically so this cannot cascade — because deleting them would empty other
+ * people's conversations of half a discussion, and because hard-deleting message
+ * rows breaks read markers and paging cursors for everyone else in the thread.
+ * That is the same argument phase 8 made for tombstoning a deleted message, and
+ * it does not get weaker when the account rather than the message is what went.
+ *
+ * The name goes with the account. The client renders an authorless USER message
+ * as "Deleted account", rather than keeping a snapshot of who wrote it: holding
+ * on to the name of somebody who just asked to be erased is the opposite of what
+ * they asked for. It is a decision rather than a default — the alternative, an
+ * author name copied onto the message at write time, is a real design that other
+ * apps choose — and this is where it is recorded.
+ *
+ * Attachments on those messages stay for the same reason the text does. Account
+ * deletion therefore does **not** close the orphaned-attachment gap; that one is
+ * about files whose upload failed, and it needs a sweep of the upload directory.
+ *
+ * Every group they were in learns about it, gets a new owner if it needs one, and
+ * says so in its log — see `removeUserFromEveryGroup`. One transaction, so a
+ * crash cannot leave somebody half-departed.
+ */
+export async function deleteAccount(userId: string, input: DeleteAccountInput): Promise<void> {
+	await assertPasswordMatches(userId, input.currentPassword);
+
+	const user = await prisma.user.findUnique({ where: { id: userId }, select: { displayName: true } });
+	if (!user) throw new UnauthorizedError("Invalid or expired token");
+
+	const departures = await prisma.$transaction(async (transaction) => {
+		// Before the delete, while the participant rows and the name still exist.
+		const effects = await removeUserFromEveryGroup(transaction, userId, user.displayName);
+
+		await transaction.user.delete({ where: { id: userId }, select: { id: true } });
+
+		return effects;
+	});
+
+	// Everything below is after the commit and cannot be rolled back, so nothing
+	// below may fail the request.
+
+	// Disconnect before the broadcasts: the departure lines are about this person
+	// and are sent to rooms their sockets are still in until this runs. Their
+	// token stops working on its next request anyway — `requireAuth` reads the
+	// user row — but an open socket is already past that gate.
+	getIO().in(userRoom(userId)).disconnectSockets(true);
+
+	announceDepartures(departures);
+
+	// Logged rather than thrown. The account *is* deleted, and failing the request
+	// now would tell the caller otherwise — the same call the message delete makes
+	// about an attachment file it could not unlink.
+	await deleteAvatar(userId).catch((error: unknown) => {
+		logger.error({ err: error, userId }, "failed to remove avatar file for a deleted account");
+	});
 }

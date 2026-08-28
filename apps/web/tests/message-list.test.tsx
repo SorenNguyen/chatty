@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { MessageList } from "@/features/chat/components/message-list";
-import { makeAttachment, makeMessage, makeParticipant, makeSystemMessage } from "./factories";
+import { makeAttachment, makeMessage, makeOrphanedMessage, makeParticipant, makeSystemMessage } from "./factories";
 
 const messages = [makeMessage("m1", "minh", "first"), makeMessage("m2", "an", "second")];
 
@@ -19,6 +19,7 @@ function renderList(overrides: Partial<React.ComponentProps<typeof MessageList>>
 		currentUserId: "minh",
 		participants: [makeParticipant("minh", "Minh"), makeParticipant("an", "An")],
 		isGroup: false,
+		areReceiptsShared: true,
 		hasMoreOlder: false,
 		isLoadingOlder: false,
 		onLoadOlder: vi.fn(),
@@ -78,6 +79,22 @@ describe("MessageList", () => {
 		});
 
 		expect(screen.getByText("an")).toBeInTheDocument();
+	});
+
+	it("names a message whose author deleted their account rather than dropping the label", () => {
+		// The message survives the account — deleting it would empty half of other
+		// people's conversations — but the name does not. Without this it would
+		// render as an anonymous bubble with no indication whose it was.
+		renderList({
+			messages: [makeOrphanedMessage("m1", "written before they left")],
+			participants: [makeParticipant("minh", "Minh"), makeParticipant("an", "An")],
+			isGroup: true,
+		});
+
+		expect(screen.getByText("written before they left")).toBeInTheDocument();
+		expect(screen.getByText("Deleted account")).toBeInTheDocument();
+		// Still a bubble, unlike a system line: somebody said this.
+		expect(document.querySelector(".rounded-2xl")).not.toBeNull();
 	});
 
 	it("renders a group event as a line of its own", () => {

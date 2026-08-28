@@ -20,6 +20,15 @@ interface AuthState {
 	 * the same reason.
 	 */
 	changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
+	/**
+	 * Deletes the account and leaves this browser signed out.
+	 *
+	 * Here for the same reason `changePassword` and `logout` are: the token is
+	 * dead the moment the request returns and the socket has been closed by the
+	 * server, so the local session has to be torn down too. A form cannot do that
+	 * without reaching into storage itself.
+	 */
+	deleteAccount: (currentPassword: string) => Promise<void>;
 	logout: () => void;
 	restoreSession: () => Promise<void>;
 	/**
@@ -65,6 +74,17 @@ export const useAuth = create<AuthState>((set) => ({
 		// that no longer works. Dropping it makes the next getSocket() build one
 		// with the token just stored.
 		closeSocket();
+	},
+
+	async deleteAccount(currentPassword) {
+		await api.deleteAccount({ currentPassword });
+		// Deliberately the same teardown as `logout`, in the same order, rather
+		// than a call to it: this state has to be gone whether or not `logout`
+		// keeps doing exactly this, and a failed request above must leave the
+		// session untouched.
+		clearStoredToken();
+		closeSocket();
+		set({ currentUser: null });
 	},
 
 	logout() {

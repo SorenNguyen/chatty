@@ -1,8 +1,10 @@
 import type { Request, Response } from "express";
 import {
 	changePasswordSchema,
+	confirmEmailChangeSchema,
 	loginSchema,
 	registerSchema,
+	requestEmailChangeSchema,
 	requestPasswordResetSchema,
 	resetPasswordSchema,
 } from "./auth.schema.js";
@@ -50,5 +52,23 @@ export async function resetPasswordController(req: Request, res: Response): Prom
 
 	// No token: reading the mailbox proved the address, not the session. They
 	// sign in with the new password like anyone else.
+	res.status(204).send();
+}
+
+export async function requestEmailChangeController(req: Request, res: Response): Promise<void> {
+	const input = requestEmailChangeSchema.parse(req.body);
+	await authService.requestEmailChange(req.userId!, input);
+
+	// 204, and the profile is deliberately not returned: nothing about the
+	// account has changed yet, so a body echoing it back would suggest otherwise.
+	res.status(204).send();
+}
+
+export async function confirmEmailChangeController(req: Request, res: Response): Promise<void> {
+	const input = confirmEmailChangeSchema.parse(req.body);
+	await authService.confirmEmailChange(input);
+
+	// Also 204. The caller of this endpoint is a link opened in a mailbox and is
+	// usually not signed in, so there is no session here to hand a profile to.
 	res.status(204).send();
 }

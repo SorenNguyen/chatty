@@ -109,23 +109,32 @@ Working end to end: register, sign in, find people by `@handle`, start a direct 
 send messages that arrive in real time over WebSocket, scroll up to load older history, upload an
 avatar, see unread badges, read receipts, typing indicators and who is online, manage a group —
 invite someone, rename it, remove a member, leave it, with every one of those announced in the chat
-log — edit your own profile, change your password, or reset a forgotten one, send an image with
-or without a caption, rewrite or delete a message you sent, and search every conversation you are
-in for a message you half remember.
+log, hand it to somebody else — edit your own profile, change your password, or reset a forgotten
+one, move the account to a new email address, turn read receipts off, delete the account entirely,
+send an image with or without a caption, rewrite or delete a message you sent, and search every
+conversation you are in for a message you half remember.
 
 Deleting leaves a marked-out placeholder rather than a hole: the text is emptied and the image and its
 file are removed, but the row stays so that other people's read markers and the paging cursor still
 have something to point at. See [docs/ROADMAP.md](docs/ROADMAP.md) phase 8.
 
-A group has an owner: the person who created it. Only they can rename it or remove somebody else;
-anyone can invite, and anyone can leave. See [ADR 0008](docs/adr/0008-group-owner-role.md).
+A group has an owner: the person who created it. Only they can rename it, remove somebody else or
+hand the group on; anyone can invite, and anyone can leave. See
+[ADR 0008](docs/adr/0008-group-owner-role.md).
 
-Verified by 277 server tests (against a real Postgres), 136 web tests, and 14 Playwright specs
+Deleting your account removes the account, its avatar file and every session it had open — but not
+its messages. Those stay in their conversations with the author taken off them, rendered as "Deleted
+account", for the same reason a deleted message leaves a tombstone: other people's read markers and
+the paging cursor still point at those rows. Read receipts can be turned off, and the setting is
+symmetric — hide yours and you stop seeing everyone else's, with nothing revealed retroactively when
+you turn them back on. See [docs/ROADMAP.md](docs/ROADMAP.md) phase 13.
+
+Verified by 307 server tests (against a real Postgres), 146 web tests, and 14 Playwright specs
 driving a real browser against a real server — plus typecheck, lint, the conventions audit, and a
 production image build. CI runs all of it except the browser suite on every push.
 
 **[docs/ROADMAP.md](docs/ROADMAP.md) is the current source of truth for what is done and what is
-next.** Phases 1 to 12 are complete. Phase 7 makes group and password-reset transitions safe under
+next.** Phases 1 to 13 are complete. Phase 7 makes group and password-reset transitions safe under
 concurrent requests: one conversation lock orders membership-sensitive writes, PostgreSQL enforces
 the owner/message invariants, and fault-injection tests prove partial writes do not escape. Phase 8
 adds editing and deleting your own messages, on the same lock, with the deletion kept as a tombstone
@@ -136,7 +145,10 @@ with backoff, claiming rows in a way that is safe to run on every instance — s
 so a reset link now leaves the process and lands in an inbox; the configuration has no silent
 fallback, and five ways of getting it wrong stop the server booting rather than degrading to a log
 file. Phase 11 makes a misconfigured production refuse to start at all and proves the two-instance
-path for the first time; phase 12 adds full-text search.
+path for the first time; phase 12 adds full-text search. Phase 13 is what an account needs before
+real people have one — changing its email address, handing a group on, hiding read receipts, and
+deleting the account — and it is where `Message.authorId` stopped cascading, so somebody can leave
+without taking half of everyone else's conversations with them.
 
 Largest known gaps:
 
@@ -148,8 +160,9 @@ Largest known gaps:
   taking on before the host is chosen. The phase 12 migration spells out the exact change.
 - **No edit history and no time limit on editing** — a message can be rewritten years later and the
   only trace is the word "edited". Deleting is for everybody, never just for you.
-- **A group owner cannot hand over without leaving**, there is no second admin and no demotion, and
-  any member can still invite a stranger. See [ADR 0008](docs/adr/0008-group-owner-role.md).
+- **There is no second admin and no demotion** — the role is one seat, so nobody can cover for an
+  owner who has gone quiet without them handing it over first — and any member can still invite a
+  stranger. See [ADR 0008](docs/adr/0008-group-owner-role.md).
 - **A system line does not follow a later rename** — "An added Binh" keeps the names people had when
   it happened, by design. See [ADR 0009](docs/adr/0009-system-messages.md).
 - **Mail sends, but no production account is signed up for.** Phase 10 added a real SMTP transport
@@ -157,13 +170,14 @@ Largest known gaps:
   domain and SPF/DKIM/DMARC records, without which mail is accepted and then filed as spam. Delivery
   is at-least-once — `Message-ID` makes a retry recognisable, nothing more — and bounces are
   invisible, because the outbox records that the server *accepted* the message rather than that it
-  arrived. Changing the email address on an account is not built at all, and needs this same
-  machinery to prove the new address is reachable.
+  arrived. Changing an account's email address (phase 13) runs on the same machinery and inherits the
+  same limits.
 - **An attachment URL works for anyone holding it, until it expires.** Signed and scoped to one image
   with a one-hour life, but bearer proof for that hour — see
   [ADR 0007](docs/adr/0007-signed-attachment-urls.md). One image per message; no lightbox and no upload
   progress. Deleting a message now removes its file, but a send that fails midway — or a crash between
-  the delete committing and the unlink — still leaves one nothing references.
+  the delete committing and the unlink — still leaves one nothing references. Deleting an account does
+  not help here: the messages survive it, so their attachments are still referenced.
 - **Still no TLS, reverse proxy, load balancer or object storage.** The two API instances sit on
   separate ports rather than behind anything, and uploads are a shared volume — which works on one
   machine and does not survive per-machine disks. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).

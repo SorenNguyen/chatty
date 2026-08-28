@@ -38,11 +38,56 @@ model User {
   /// password would leave every session opened beforehand working until the
   /// token expired — which is exactly the case a reset is reached for.
   passwordChangedAt DateTime?
+  /// Whether other people may see how far this user has read.
+  ///
+  /// Symmetric by design: turning it off also hides everyone else's markers from
+  /// them. The server half of that promise is `lastSharedReadMessageId` on the
+  /// participant row — while this is false, that column stops advancing, so the
+  /// marker never leaves the process rather than being filtered out of a response
+  /// somebody could still ask for.
+  readReceiptsEnabled Boolean @default(true)
   createdAt         DateTime  @default(now())
 
   participants        ConversationParticipant[]
   messages            Message[]
   passwordResetTokens PasswordResetToken[]
+  emailChangeTokens   EmailChangeToken[]
+}
+
+/// A one-time link mailed to an address someone wants to move their account to.
+///
+/// Separate from `PasswordResetToken` rather than a `kind` column on it, because
+/// the two carry different payloads: this one has to remember **which address**
+/// was asked for, and a reset token has nothing to remember. Merging them would
+/// mean a nullable column that must be non-null for exactly one of the two kinds
+/// — the shape of constraint this schema keeps pushing into the database instead.
+///
+/// The token is stored as a SHA-256, for the reason spelled out on
+/// `PasswordResetToken.tokenHash`: a leaked database must not hand over the
+/// ability to take an account's address.
+model EmailChangeToken {
+  id        String    @id @default(cuid())
+  userId    String
+  /// The address the account moves to when this link is opened.
+  ///
+  /// Held here rather than written to `User.email` on request, which is the whole
+  /// point of the feature: an address nobody has proved they can read must never
+  /// become a credential. Uniqueness is **not** enforced on this column — two
+  /// people may both ask for an address neither of them owns; only the first to
+  /// open their link gets it, and the second fails at redemption against
+  /// `User.email`'s own unique index.
+  newEmail  String
+  tokenHash String    @unique
+  expiresAt DateTime
+  /// Set when the link is opened. Kept rather than deleted, the same way a spent
+  /// reset token is: a second click can then be told apart from a made-up token
+  /// in the logs, while both answer the caller identically.
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 /// A one-time link mailed to someone who cannot sign in.
@@ -187,6 +232,21 @@ model ConversationParticipant {
   // would silently reset someone's marker to "nothing read" the first time a
   // message is deleted, which reads as a whole conversation going unread.
   lastReadMessageId String?
+  /// The same marker, but the half other people are allowed to see.
+  ///
+  /// Two columns rather than one flag consulted at read time, and the difference
+  /// is what "turning read receipts off" actually means here. `lastReadMessageId`
+  /// keeps advancing while receipts are off, because the unread badge is the
+  /// reader's own business. This one does not — so their position is never
+  /// written down anywhere a response could reveal it.
+  ///
+  /// It is also what stops the toggle from being retroactive. If exposure were
+  /// `enabled ? lastReadMessageId : null`, switching receipts back on would
+  /// publish everything read while they were off, in one go. Here the shared
+  /// marker is still parked where it was when they turned receipts off, and it
+  /// catches up only when they read something new — a receipt caused by an
+  /// action, which is what a receipt is supposed to be.
+  lastSharedReadMessageId String?
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -207,8 +267,15 @@ enum MessageKind {
 model Message {
   id             String      @id @default(cuid())
   conversationId String
-  /// Null only on a SYSTEM message, which nobody wrote.
-  /// Enforced together with `kind` by the phase 7 database check constraint.
+  /// Who wrote it — null on a SYSTEM message, and null once a USER message
+  /// outlives the account that wrote it.
+  ///
+  /// The phase 7 check constraint used to make those two the same thing
+  /// (`USER` implied an author). Deleting an account breaks that: the messages
+  /// stay, for exactly the reasons `deletedAt` below is a tombstone rather than a
+  /// DELETE, and there is no longer anybody to point at. The constraint now only
+  /// holds the other direction — a SYSTEM message has no author — and `kind` is
+  /// what tells the two cases apart, which is what it was declared for.
   authorId       String?
   kind           MessageKind @default(USER)
   // Empty string for a message that is only an image. Nullable would be more
@@ -255,7 +322,11 @@ model Message {
   searchVector   Unsupported("tsvector")?
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  author       User?        @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  // SetNull, not Cascade. Cascade would delete every message a departing user
+  // ever wrote — gutting other people's conversations, and hard-deleting rows
+  // that read markers and paging cursors point at without a foreign key to
+  // protect them. See `authorId` above and `deletedAt` below.
+  author       User?        @relation(fields: [authorId], references: [id], onDelete: SetNull)
   attachment   Attachment?
 
   @@index([conversationId, createdAt])

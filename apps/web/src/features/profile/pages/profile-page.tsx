@@ -2,7 +2,7 @@ import { ArrowLeft } from "lucide-react";
 import { Link } from "react-router-dom";
 import { CurrentUserAvatar } from "@/components/current-user-avatar";
 import { useAuth } from "@/hooks/use-auth";
-import { ChangePasswordForm, ProfileForm } from "../components";
+import { ChangeEmailForm, ChangePasswordForm, DeleteAccountForm, ProfileForm } from "../components";
 
 /**
  * Account settings, on its own route rather than a panel inside the chat.
@@ -45,8 +45,20 @@ export function ProfilePage() {
 				</section>
 
 				<section className="rounded-2xl bg-white p-6 shadow-sm">
+					<h2 className="mb-4 text-base font-semibold text-slate-900">Change email</h2>
+					<ChangeEmailForm user={currentUser} />
+				</section>
+
+				<section className="rounded-2xl bg-white p-6 shadow-sm">
 					<h2 className="mb-4 text-base font-semibold text-slate-900">Change password</h2>
 					<ChangePasswordForm />
+				</section>
+
+				{/* Last, and visually apart from the rest: everything above this line is
+				    reversible and nothing below it is. */}
+				<section className="rounded-2xl border border-red-200 bg-white p-6 shadow-sm">
+					<h2 className="mb-4 text-base font-semibold text-red-700">Delete account</h2>
+					<DeleteAccountForm />
 				</section>
 			</div>
 		</main>

@@ -1,7 +1,9 @@
 import type {
 	ChangePasswordRequest,
+	ConfirmEmailChangeRequest,
 	LoginRequest,
 	RegisterRequest,
+	RequestEmailChangeRequest,
 	RequestPasswordResetRequest,
 	ResetPasswordRequest,
 } from "@chatty/shared-types";
@@ -82,6 +84,25 @@ export const resetPasswordSchema = z.object({
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
 
 /**
+ * Body of `POST /auth/email`.
+ *
+ * `currentPassword` is presence-checked only, exactly as in
+ * `changePasswordSchema` — its job is to be compared against a stored hash, not
+ * to meet today's length bar.
+ */
+export const requestEmailChangeSchema = z.object({
+	newEmail: z.string().email(),
+	currentPassword: z.string().min(1),
+});
+export type RequestEmailChangeInput = z.infer<typeof requestEmailChangeSchema>;
+
+/** Body of `POST /auth/email/confirm`. Bounded for the reason `resetPasswordSchema` gives. */
+export const confirmEmailChangeSchema = z.object({
+	token: z.string().min(1).max(512),
+});
+export type ConfirmEmailChangeInput = z.infer<typeof confirmEmailChangeSchema>;
+
+/**
  * Compile-time proof that what these schemas produce is what the client sends.
  *
  * Zod validates at runtime and knows nothing about the client; the shared
@@ -95,3 +116,5 @@ export type LoginContract = AssertAssignable<LoginInput, LoginRequest>;
 export type ChangePasswordContract = AssertAssignable<ChangePasswordInput, ChangePasswordRequest>;
 export type RequestPasswordResetContract = AssertAssignable<RequestPasswordResetInput, RequestPasswordResetRequest>;
 export type ResetPasswordContract = AssertAssignable<ResetPasswordInput, ResetPasswordRequest>;
+export type RequestEmailChangeContract = AssertAssignable<RequestEmailChangeInput, RequestEmailChangeRequest>;
+export type ConfirmEmailChangeContract = AssertAssignable<ConfirmEmailChangeInput, ConfirmEmailChangeRequest>;

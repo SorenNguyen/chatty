@@ -128,3 +128,35 @@ export const passwordResetConfirmRateLimiter = createAuthLimiter({
 	limit: 20,
 	message: "Too many attempts. Try again later.",
 });
+
+/**
+ * Caps `POST /auth/email`.
+ *
+ * The mail-cannon argument from the reset limiter, with a twist that makes it
+ * worse rather than better: this endpoint sends to an address the caller types
+ * in, and the copy says a Chatty account is moving to it. Uncapped, one account
+ * is enough to spray a plausible-looking message across an address list.
+ *
+ * Keyed by user id like the password-change limiter, because `requireAuth` runs
+ * first and the budget should belong to the account rather than to the office
+ * everyone shares an IP with. Tighter than the reset limit: nobody changes their
+ * address five times an hour.
+ */
+export const emailChangeRateLimiter = createAuthLimiter({
+	windowMs: 60 * 60 * 1000,
+	limit: 5,
+	message: "Too many email change requests. Try again later.",
+	// Non-null because this limiter is only ever mounted after requireAuth.
+	keyGenerator: (request) => request.userId!,
+});
+
+/**
+ * Caps `POST /auth/email/confirm`, the twin of the reset confirmation and capped
+ * for the same reason: it is the one unauthenticated endpoint that accepts
+ * guesses at a token, and a legitimate user reaches it once.
+ */
+export const emailChangeConfirmRateLimiter = createAuthLimiter({
+	windowMs: 15 * 60 * 1000,
+	limit: 20,
+	message: "Too many attempts. Try again later.",
+});

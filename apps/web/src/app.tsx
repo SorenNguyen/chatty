@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { ConfirmEmailPage } from "@/features/auth/pages/confirm-email-page";
 import { ForgotPasswordPage } from "@/features/auth/pages/forgot-password-page";
 import { LoginPage } from "@/features/auth/pages/login-page";
 import { ResetPasswordPage } from "@/features/auth/pages/reset-password-page";
@@ -35,6 +36,9 @@ export function App() {
 				    link, and bouncing them to /chat would strand the email. */}
 				<Route path="/forgot-password" element={<ForgotPasswordPage />} />
 				<Route path="/reset-password" element={<ResetPasswordPage />} />
+				{/* Unguarded for the same reason: the link is opened in the new
+				    mailbox, which is regularly a phone that has never signed in. */}
+				<Route path="/confirm-email" element={<ConfirmEmailPage />} />
 				<Route path="/chat" element={currentUser ? <ChatPage /> : <Navigate to="/login" replace />} />
 				<Route path="/profile" element={currentUser ? <ProfilePage /> : <Navigate to="/login" replace />} />
 				<Route path="*" element={<Navigate to={currentUser ? "/chat" : "/login"} replace />} />

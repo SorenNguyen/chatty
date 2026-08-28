@@ -32,7 +32,7 @@ export function makeUser(id: string, displayName: string): UserDTO {
  * builder that adds it to everyone makes leaking it into a `UserDTO` easy.
  */
 export function makeCurrentUser(overrides: Partial<CurrentUserDTO> = {}): CurrentUserDTO {
-	return { ...makeUser("minh", "Minh"), email: "minh@chatty.test", ...overrides };
+	return { ...makeUser("minh", "Minh"), email: "minh@chatty.test", readReceiptsEnabled: true, ...overrides };
 }
 
 export function makeParticipant(
@@ -93,6 +93,18 @@ export function makeSystemMessage(id: string, content: string): MessageDTO {
 		editedAt: null,
 		deletedAt: null,
 	};
+}
+
+/**
+ * A message whose author deleted their account.
+ *
+ * Still `kind: "user"` — somebody wrote it — with no author to point at. That
+ * combination used to be impossible and is what the list has to tell apart from
+ * a system line, which is the reason this is its own builder rather than an
+ * override on `makeMessage`.
+ */
+export function makeOrphanedMessage(id: string, content: string): MessageDTO {
+	return { ...makeMessage(id, "gone", content), author: null };
 }
 
 /**

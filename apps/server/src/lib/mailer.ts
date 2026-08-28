@@ -120,3 +120,8 @@ export function buildPasswordResetUrl(token: string): string {
 	// already the authority on "which origin is this API's front end".
 	return `${env.CORS_ORIGIN}/reset-password?token=${encodeURIComponent(token)}`;
 }
+
+/** The link that confirms a new email address. Same origin, same reasoning. */
+export function buildEmailChangeUrl(token: string): string {
+	return `${env.CORS_ORIGIN}/confirm-email?token=${encodeURIComponent(token)}`;
+}

@@ -12,3 +12,14 @@ export const DELETED_MESSAGE_TEXT = "This message was deleted";
 
 /** Marker beside the timestamp of a message its author rewrote. */
 export const EDITED_MESSAGE_LABEL = "edited";
+
+/**
+ * What stands in for the name of someone who deleted their account.
+ *
+ * The message survives them — deleting an account does not empty other people's
+ * conversations — but the name does not: the server sets `author` to null rather
+ * than keeping a copy of who it used to be, because holding on to the name of
+ * somebody who asked to be erased is the opposite of what they asked for. So the
+ * client needs something to put above the bubble, and this is it.
+ */
+export const DELETED_AUTHOR_NAME = "Deleted account";

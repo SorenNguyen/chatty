@@ -5,7 +5,7 @@ import { MessageActions } from "./message-actions";
 import { MessageAttachment } from "./message-attachment";
 import { MessageEditor } from "./message-editor";
 import { cn } from "@/utils/cn";
-import { DELETED_MESSAGE_TEXT, EDITED_MESSAGE_LABEL } from "../constants/message";
+import { DELETED_AUTHOR_NAME, DELETED_MESSAGE_TEXT, EDITED_MESSAGE_LABEL } from "../constants/message";
 import { useMessageScroll } from "../hooks";
 import { formatMessageTime, getReadReceipt } from "../utils";
 
@@ -22,6 +22,12 @@ interface MessageListProps {
 	 * unattributable without them.
 	 */
 	isGroup: boolean;
+	/**
+	 * Whether the viewer shares their own read receipts. False hides the "Seen"
+	 * marker entirely — the setting is symmetric, so somebody who has stopped
+	 * sending theirs stops seeing everyone else's.
+	 */
+	areReceiptsShared: boolean;
 	hasMoreOlder: boolean;
 	isLoadingOlder: boolean;
 	onLoadOlder: () => void;
@@ -39,6 +45,7 @@ export function MessageList({
 	currentUserId,
 	participants,
 	isGroup,
+	areReceiptsShared,
 	hasMoreOlder,
 	isLoadingOlder,
 	onLoadOlder,
@@ -48,7 +55,7 @@ export function MessageList({
 	// The scroll container lives here rather than in the page, so everything that
 	// reads or writes scroll position sits in one component.
 	const { containerRef, handleScroll } = useMessageScroll({ messages, hasMoreOlder, isLoadingOlder, onLoadOlder });
-	const readReceipt = getReadReceipt(messages, participants, currentUserId);
+	const readReceipt = getReadReceipt(messages, participants, currentUserId, areReceiptsShared);
 	// Which message is open for editing, by id rather than by index: a page of
 	// older messages prepends and would shift every index under the editor.
 	const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
@@ -89,7 +96,11 @@ export function MessageList({
 						// faces stacked down the margin. A system line between two of
 						// someone's messages breaks the run, which is what makes the
 						// avatar reappear underneath it rather than leaving a bare bubble.
-						const isFirstOfRun = messages[index - 1]?.author?.id !== author?.id;
+						//
+						// An authorless message never continues a run, and never starts one
+						// anything else can join: two deleted accounts are not one person,
+						// and comparing `undefined` to `undefined` would say they were.
+						const isFirstOfRun = !author || messages[index - 1]?.author?.id !== author.id;
 						const isDeleted = Boolean(message.deletedAt);
 						const isEditing = editingMessageId === message.id;
 						// A tombstone has no content and no image left to change, so the
@@ -128,10 +139,13 @@ export function MessageList({
 										)}
 									>
 										{/* Only in groups: in a 1-1 the header already names the one
-										    person it could possibly be. */}
-										{!isMine && isGroup && isFirstOfRun && author && (
+										    person it could possibly be. A USER message with no
+										    author is one whose writer deleted their account —
+										    still theirs to have said, no longer theirs to be
+										    named for. */}
+										{!isMine && isGroup && isFirstOfRun && (
 											<p className="mb-0.5 text-xs font-semibold text-slate-700">
-												{author.displayName}
+												{author ? author.displayName : DELETED_AUTHOR_NAME}
 											</p>
 										)}
 

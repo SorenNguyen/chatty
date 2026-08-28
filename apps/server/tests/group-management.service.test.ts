@@ -720,7 +720,7 @@ describe("membership linearisation", () => {
 });
 
 describe("system messages", () => {
-	it("has a database constraint tying kind to whether an author exists", async () => {
+	it("has a database constraint refusing a system line that claims an author", async () => {
 		const minhId = await createUser("minh");
 		const anId = await createUser("an");
 		const binhId = await createUser("binh");
@@ -728,14 +728,29 @@ describe("system messages", () => {
 
 		await expect(
 			prisma.message.create({
-				data: { conversationId: group.id, kind: "USER", content: "missing author" },
-			}),
-		).rejects.toThrow(/Message_kind_author_consistency/);
-		await expect(
-			prisma.message.create({
 				data: { conversationId: group.id, authorId: minhId, kind: "SYSTEM", content: "wrong author" },
 			}),
 		).rejects.toThrow(/Message_kind_author_consistency/);
+	});
+
+	it("allows a USER message with no author, which is what a deleted account leaves", async () => {
+		// The constraint used to forbid this, because until phase 13 nothing could
+		// delete a user and "authorId is null" and "kind is SYSTEM" were two
+		// spellings of one fact. They are not any more: the messages of a deleted
+		// account stay in the conversation with nobody to point at, and `kind` is
+		// what tells the two apart. Pinned here so the relaxation is deliberate
+		// rather than something a later migration quietly tightens back up.
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const group = await createGroup(minhId, [anId, binhId]);
+
+		const orphaned = await prisma.message.create({
+			data: { conversationId: group.id, kind: "USER", content: "written by someone since deleted" },
+			select: { id: true, kind: true, authorId: true },
+		});
+
+		expect(orphaned).toMatchObject({ kind: "USER", authorId: null });
 	});
 
 	it("records who added whom", async () => {
