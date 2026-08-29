@@ -32,6 +32,8 @@ function renderList(overrides: Partial<React.ComponentProps<typeof MessageList>>
 		onEditMessage: vi.fn(),
 		onDeleteMessage: vi.fn(),
 		onHideMessage: vi.fn(),
+		onToggleReaction: vi.fn(),
+		onReplyToMessage: vi.fn(),
 		...overrides,
 	};
 
@@ -59,6 +61,31 @@ describe("MessageList", () => {
 
 		expect(screen.getByText("first")).toBeInTheDocument();
 		expect(screen.getByText("second")).toBeInTheDocument();
+	});
+
+	it("keeps a reaction inside the author's message run", () => {
+		renderList({
+			messages: [
+				makeMessage("m1", "an", "first", null, {
+					reactions: [{ kind: "heart", userIds: ["minh"] }],
+				}),
+				makeMessage("m2", "an", "second"),
+			],
+			isGroup: true,
+		});
+
+		expect(screen.getAllByText("an")).toHaveLength(1);
+	});
+
+	it("marks the time when a conversation resumes after a long pause", () => {
+		renderList({
+			messages: [
+				makeMessage("m1", "an", "morning", null, { createdAt: "2026-08-23T08:00:00.000Z" }),
+				makeMessage("m2", "an", "back now", null, { createdAt: "2026-08-23T10:00:00.000Z" }),
+			],
+		});
+
+		expect(screen.getByLabelText(/Conversation resumed at/i)).toBeInTheDocument();
 	});
 
 	it("keeps the name of an author who is no longer in the conversation", () => {
@@ -100,17 +127,22 @@ describe("MessageList", () => {
 
 		expect(screen.getByText("written before they left")).toBeInTheDocument();
 		expect(screen.getByText("Deleted account")).toBeInTheDocument();
-		// Still a bubble, unlike a system line: somebody said this.
-		expect(document.querySelector(".rounded-2xl")).not.toBeNull();
+		// Still a message, unlike a system line: somebody said this, so it carries
+		// the actions menu a system line has nothing to put in.
+		//
+		// This used to assert on a `.rounded-2xl` class, which is the one thing the
+		// conventions here say not to query by. It broke the first time the bubble's
+		// radius changed and had never said anything about behaviour.
+		expect(screen.getByRole("button", { name: "Message actions" })).toBeInTheDocument();
 	});
 
 	it("renders a group event as a line of its own", () => {
 		renderList({ messages: [makeSystemMessage("s1", "An added Binh")], isGroup: true });
 
 		expect(screen.getByText("An added Binh")).toBeInTheDocument();
-		// No bubble, because it is not from anyone: a system line sits centred
-		// between the two columns rather than on one side of them.
-		expect(document.querySelector(".rounded-2xl")).toBeNull();
+		// Nobody wrote it, so there is nothing to edit, unsend or hide — and so no
+		// actions menu, which is what tells it apart from a message in the DOM.
+		expect(screen.queryByRole("button", { name: "Message actions" })).not.toBeInTheDocument();
 	});
 
 	it("shows an empty state when there are no messages", () => {

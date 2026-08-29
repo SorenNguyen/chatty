@@ -1,3 +1,4 @@
+export { AuthCard } from "./auth-card";
 export { ConfirmEmailForm } from "./confirm-email-form";
 export { ForgotPasswordForm } from "./forgot-password-form";
 export { LoginForm } from "./login-form";

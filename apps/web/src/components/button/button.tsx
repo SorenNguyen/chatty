@@ -1,8 +1,9 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { cn } from "@/utils/cn";
+import type { ButtonVariant } from "@/types/button";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-	variant?: "primary" | "ghost";
+	variant?: ButtonVariant;
 	children: ReactNode;
 }
 
@@ -20,6 +21,9 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
  *
  * Every genuine submit in this app already says `type="submit"` explicitly, so
  * this default costs nothing and closes the same trap in the other three forms.
+ *
+ * `danger` is outlined rather than filled, and that is the decision rather than
+ * the style: a solid red block invites the click it exists to slow down.
  */
 export function Button({ variant = "primary", type = "button", className, children, ...rest }: ButtonProps) {
 	return (
@@ -28,10 +32,13 @@ export function Button({ variant = "primary", type = "button", className, childr
 			// `className` comes last so a caller's utility beats the defaults —
 			// that override is exactly what twMerge inside cn() exists to resolve.
 			className={cn(
-				"inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition",
-				"disabled:cursor-not-allowed disabled:opacity-50",
-				variant === "primary" && "bg-blue-600 text-white hover:bg-blue-700",
-				variant === "ghost" && "text-slate-600 hover:bg-slate-100",
+				"inline-flex items-center justify-center gap-2 rounded-control px-4 py-2 text-[13px] transition",
+				"outline-none focus-visible:ring-3 focus-visible:ring-ink/15",
+				"disabled:cursor-not-allowed disabled:opacity-[0.32]",
+				variant === "primary" && "bg-ink font-semibold text-paper hover:bg-ink/90",
+				variant === "outline" && "border border-ink font-semibold text-ink hover:bg-ink/5",
+				variant === "ghost" && "font-medium text-ink-soft hover:bg-ink/5",
+				variant === "danger" && "border border-signal font-semibold text-signal hover:bg-signal-soft",
 				className,
 			)}
 			{...rest}

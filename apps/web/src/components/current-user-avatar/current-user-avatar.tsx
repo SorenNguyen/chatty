@@ -1,9 +1,10 @@
 import type { CurrentUserDTO } from "@chatty/shared-types";
 import { useRef, useState } from "react";
-import { Loader2, X } from "lucide-react";
+import { Loader2, Upload } from "lucide-react";
 import { api } from "@/api/client";
 import { Avatar } from "@/components/avatar";
 import { Button } from "@/components/button";
+import { AVATAR_UPLOAD_HINT } from "@/constants/avatar-upload";
 import { useAuth } from "@/hooks/use-auth";
 import type { AvatarSize } from "@/types/avatar";
 
@@ -13,13 +14,17 @@ interface CurrentUserAvatarProps {
 }
 
 /**
- * Your own avatar, and the only control that changes it.
+ * Your own avatar, and the only controls that change it.
  *
- * Clicking the picture opens the file dialog; the small x removes it. Shared
- * rather than owned by `features/chat` because the profile screen shows the
- * same control, and features must not import from each other.
+ * The picture used to be the button — click the face, get a file dialog — which
+ * is a thing you have to already know. Both actions are now named, because this
+ * only ever renders inside settings, where there is room to say what they do.
+ *
+ * Shared rather than owned by `features/profile` because it is the one control
+ * on that screen the sidebar also has a claim on, and features must not import
+ * from each other.
  */
-export function CurrentUserAvatar({ user, size = "md" }: CurrentUserAvatarProps) {
+export function CurrentUserAvatar({ user, size = "lg" }: CurrentUserAvatarProps) {
 	const setCurrentUser = useAuth((state) => state.setCurrentUser);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const [isSaving, setIsSaving] = useState(false);
@@ -57,56 +62,62 @@ export function CurrentUserAvatar({ user, size = "md" }: CurrentUserAvatarProps)
 	}
 
 	return (
-		<div className="relative">
-			<input
-				ref={fileInputRef}
-				type="file"
-				accept="image/*"
-				onChange={(event) => void handleFileSelected(event)}
-				className="hidden"
-			/>
-
-			<Button
-				variant="ghost"
-				onClick={() => fileInputRef.current?.click()}
-				disabled={isSaving}
-				aria-label="Change your profile picture"
-				className="rounded-full p-0 hover:opacity-80"
-			>
+		<div className="flex items-center gap-5">
+			<span className="relative">
 				<Avatar user={user} size={size} />
-			</Button>
+				{isSaving && (
+					<span
+						role="status"
+						aria-label="Saving your profile picture"
+						className="absolute inset-0 flex items-center justify-center rounded-lg bg-paper/70"
+					>
+						<Loader2 className="size-4 animate-spin text-ink-soft" />
+					</span>
+				)}
+			</span>
 
-			{isSaving && (
-				<span
-					role="status"
-					aria-label="Saving your profile picture"
-					className="absolute inset-0 flex items-center justify-center rounded-full bg-white/70"
-				>
-					<Loader2 className="size-4 animate-spin text-slate-600" />
-				</span>
-			)}
+			<div className="flex min-w-0 flex-col gap-2.5">
+				<input
+					ref={fileInputRef}
+					type="file"
+					accept="image/*"
+					onChange={(event) => void handleFileSelected(event)}
+					className="hidden"
+				/>
 
-			{user.avatarUrl && !isSaving && (
-				<Button
-					variant="ghost"
-					onClick={() => void handleRemove()}
-					aria-label="Remove your profile picture"
-					className="absolute -right-1 -top-1 size-4 rounded-full border border-slate-200 bg-white p-0 text-slate-500 hover:bg-slate-100"
-				>
-					<X className="size-3" />
-				</Button>
-			)}
+				<div className="flex items-center gap-2">
+					<Button
+						variant="outline"
+						onClick={() => fileInputRef.current?.click()}
+						disabled={isSaving}
+						aria-label="Change your profile picture"
+						className="px-3.5 py-2"
+					>
+						<Upload className="size-3.5" />
+						Upload a photo
+					</Button>
 
-			{error && (
-				// Absolutely positioned so a long message cannot push the sidebar
-				// header's layout around; z-10 keeps it above the conversation list.
-				<p
-					role="alert"
-					className="absolute left-0 top-full z-10 mt-1 w-48 rounded-md bg-red-50 px-2 py-1 text-xs text-red-700 shadow-sm"
-				>
-					{error}
-				</p>
-			)}
+					{user.avatarUrl && (
+						<Button
+							variant="ghost"
+							onClick={() => void handleRemove()}
+							disabled={isSaving}
+							aria-label="Remove your profile picture"
+							className="px-3 py-2"
+						>
+							Remove
+						</Button>
+					)}
+				</div>
+
+				{error ? (
+					<p role="alert" className="eyebrow text-signal">
+						{error}
+					</p>
+				) : (
+					<p className="meta text-ink-faint">{AVATAR_UPLOAD_HINT}</p>
+				)}
+			</div>
 		</div>
 	);
 }

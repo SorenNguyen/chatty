@@ -26,3 +26,12 @@ export const MAX_BROWSER_TIMEOUT_MS = 2_147_483_647;
  * client needs something to put above the bubble, and this is it.
  */
 export const DELETED_AUTHOR_NAME = "Deleted account";
+
+/** What a picture with no caption says in the sidebar, where it cannot be shown. */
+export const ATTACHMENT_PREVIEW_TEXT = "Sent an image";
+
+/** A conversation that exists but has nothing in it yet — created, never used. */
+export const EMPTY_CONVERSATION_TEXT = "No messages yet";
+
+/** What a quoted image with no caption says, where the picture cannot be shown. */
+export const IMAGE_ONLY_QUOTE_TEXT = "Photo";

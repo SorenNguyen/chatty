@@ -87,7 +87,7 @@ export function RegisterForm() {
 				onChange={(event) => setFields((current) => ({ ...current, password: event.target.value }))}
 			/>
 
-			{errors.form && <p className="text-sm text-red-600">{errors.form}</p>}
+			{errors.form && <p className="text-[13px] text-signal">{errors.form}</p>}
 
 			<Button type="submit" disabled={isSubmitting}>
 				{isSubmitting ? "Creating account…" : "Create account"}

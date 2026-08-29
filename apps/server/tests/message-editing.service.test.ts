@@ -92,7 +92,15 @@ describe("message lifecycle", () => {
 			sendMessage(authorId, conversationId, { content: "same time one" }),
 			sendMessage(authorId, conversationId, { content: "same time two" }),
 		]);
-		const sharedTimestamp = new Date("2026-08-29T08:00:00.000Z");
+		// Taken from one of the messages rather than written as a calendar date.
+		// This was a hardcoded 2026-08-29, chosen because it was safely in the
+		// future — and it stopped being in the future on 2026-08-29, at which
+		// point both messages moved to *before* the participant's `joinedAt` and
+		// the unread query correctly stopped counting either of them. The test
+		// then failed for a reason that had nothing to do with what it checks,
+		// which is the tie-break on `(createdAt, id)` when two messages share a
+		// timestamp. A value derived from the rows cannot rot.
+		const sharedTimestamp = new Date(sent[1]!.createdAt);
 		await prisma.message.updateMany({
 			where: { id: { in: sent.map((message) => message.id) } },
 			data: { createdAt: sharedTimestamp },

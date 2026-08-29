@@ -1,4 +1,4 @@
-import type { MessageDTO } from "@chatty/shared-types";
+import type { MessageDTO, ReactionKind } from "@chatty/shared-types";
 import { useCallback, type Dispatch, type SetStateAction } from "react";
 import { api } from "@/api/client";
 import { useSocketEvent } from "./use-socket-event";
@@ -6,6 +6,7 @@ import { useSocketEvent } from "./use-socket-event";
 interface MessageActions {
 	editMessage: (messageId: string, content: string) => void;
 	deleteMessage: (messageId: string) => void;
+	toggleReaction: (messageId: string, kind: ReactionKind) => void;
 }
 
 /**
@@ -69,5 +70,18 @@ export function useMessageActions(
 		[conversationId],
 	);
 
-	return { editMessage, deleteMessage };
+	// Same shape as the two above, and for the same reason: the server broadcasts
+	// `message:updated` carrying the whole reaction list, so this fires and waits
+	// for nothing. Applying an optimistic count here as well would render the
+	// change twice and drift the moment two people react at once.
+	const toggleReaction = useCallback(
+		(messageId: string, kind: ReactionKind) => {
+			if (!conversationId) return;
+
+			void api.toggleReaction(conversationId, messageId, kind);
+		},
+		[conversationId],
+	);
+
+	return { editMessage, deleteMessage, toggleReaction };
 }

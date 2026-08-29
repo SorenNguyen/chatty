@@ -1,8 +1,15 @@
 export { getAttachmentDisplaySize } from "./attachment-size";
+export { getClusterPosition } from "./cluster-position";
+export { getConversationPreview } from "./conversation-preview";
+export { formatConversationTime } from "./conversation-time";
 export { getConversationTitle } from "./conversation-title";
 export { getDirectPeer } from "./direct-peer";
+export { formatDayLabel, isNewDay } from "./format-day";
 export { formatMessageTime } from "./format-time";
+export { formatRemaining } from "./format-remaining";
 export { formatLastSeen } from "./format-last-seen";
+export { hasMessageTimeGap, isWithinMessageBurst } from "./message-spacing";
 export { getReadReceipt } from "./read-receipt";
+export { getReactionSummary } from "./reaction-summary";
 export { getSearchResultTitle } from "./search-result-title";
 export { getTypingMessage } from "./typing-message";

@@ -331,6 +331,20 @@ section "28. Boolean const without is/has/should/can prefix"
 }
 
 # ---------------------------------------------------------------------------
+section "29. Tailwind's default palette instead of the design tokens"
+{
+  # Phase 16 replaced slate/blue/red/green with a declared palette in
+  # `styles/globals.css`. Nothing enforced it, and nothing could: a stray
+  # `bg-slate-100` typechecks, lints, renders, and is simply the wrong colour on
+  # a page that has no other grey on it. Every colour a component names must
+  # come from @theme, so a numbered Tailwind swatch is always a mistake here.
+  #
+  # `bg-white` and `text-black` are in the list for the same reason: the paper
+  # is ivory, and pure white beside it reads as a rendering bug.
+  ts_files | xargs grep -nE '(bg|text|border|ring|from|to|via|fill|stroke|accent|decoration|outline|shadow|divide|placeholder)-(slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-[0-9]|(bg|text|border)-(white|black)([^a-z-]|$)' 2>/dev/null | report
+}
+
+# ---------------------------------------------------------------------------
 printf '\n\033[1m== Summary\033[0m\n'
 TOTAL="$(cat "$TOTAL_FILE")"
 printf '  %s total hit(s) across all sections. Fix the top sections first: 3-7 are the ones that cause real bugs.\n' "$TOTAL"

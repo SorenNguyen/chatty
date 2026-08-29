@@ -3,22 +3,19 @@ import type {
 	ConversationLeftEvent,
 	ConversationReadEvent,
 	ConversationUpdatedEvent,
+	MessageDTO,
 } from "@chatty/shared-types";
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { LogOut, Settings } from "lucide-react";
 import { api } from "@/api/client";
-import { Button } from "@/components/button";
-import { CurrentUserAvatar } from "@/components/current-user-avatar";
 import { useAuth } from "@/hooks/use-auth";
+import { cn } from "@/utils/cn";
 import {
 	ConversationHeader,
 	ConversationMessageSearch,
-	ConversationList,
+	ConversationSidebar,
 	GroupMembersPanel,
 	MessageInput,
 	MessageList,
-	NewConversationPanel,
 } from "../components";
 import {
 	useConversationMessages,
@@ -37,6 +34,10 @@ export function ChatPage() {
 	const [conversations, setConversations] = useState<ConversationDTO[]>([]);
 	const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
 	const [isManagingGroup, setIsManagingGroup] = useState(false);
+	// The reply target lives here rather than in the composer, because the message
+	// is picked in the list and answered in the composer — two siblings, so the
+	// state belongs to the parent that owns both.
+	const [replyTo, setReplyTo] = useState<MessageDTO | null>(null);
 	const [requestedMessageId, setRequestedMessageId] = useState<string | null>(null);
 	const [isConversationSearchOpen, setIsConversationSearchOpen] = useState(false);
 
@@ -62,6 +63,7 @@ export function ChatPage() {
 		loadNewer,
 		editMessage,
 		deleteMessage,
+		toggleReaction,
 		hideMessage,
 		targetMessageId,
 	} = useConversationMessages(selectedConversationId, handleConversationsChanged, requestedMessageId);
@@ -190,43 +192,19 @@ export function ChatPage() {
 	if (!currentUser) return null;
 
 	return (
-		<div className="flex h-screen bg-white">
-			<aside className="flex w-80 flex-col border-r border-slate-200">
-				<header className="flex items-center gap-3 border-b border-slate-200 px-4 py-3">
-					<CurrentUserAvatar user={currentUser} />
+		<div className="flex h-dvh overflow-hidden bg-paper">
+			<ConversationSidebar
+				currentUser={currentUser}
+				conversations={conversations}
+				selectedConversationId={selectedConversationId}
+				onlineUserIds={onlineUserIds}
+				onSelect={handleConversationSelected}
+				onConversationStarted={handleConversationStarted}
+				onSignOut={logout}
+				className={cn(selectedConversation && "max-md:hidden")}
+			/>
 
-					<div className="min-w-0 flex-1">
-						<p className="truncate text-sm font-semibold text-slate-900">{currentUser.displayName}</p>
-						<p className="truncate text-xs text-slate-500">@{currentUser.handle}</p>
-					</div>
-
-					<Link
-						to="/profile"
-						aria-label="Account settings"
-						className="rounded-lg px-2 py-2 text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
-					>
-						<Settings className="size-4" />
-					</Link>
-
-					<Button variant="ghost" onClick={logout} aria-label="Sign out" className="px-2">
-						<LogOut className="size-4" />
-					</Button>
-				</header>
-
-				<NewConversationPanel onConversationStarted={handleConversationStarted} />
-
-				<div className="flex-1 overflow-y-auto">
-					<ConversationList
-						conversations={conversations}
-						currentUserId={currentUser.id}
-						selectedConversationId={selectedConversationId}
-						onlineUserIds={onlineUserIds}
-						onSelect={handleConversationSelected}
-					/>
-				</div>
-			</aside>
-
-			<main className="flex flex-1 flex-col">
+			<main className={cn("min-w-0 flex-1 flex-col", selectedConversation ? "flex" : "hidden md:flex")}>
 				{selectedConversation ? (
 					<>
 						<ConversationHeader
@@ -236,6 +214,10 @@ export function ChatPage() {
 							typingUserIds={typingUserIds}
 							onToggleGroupMembers={() => setIsManagingGroup((current) => !current)}
 							isManagingGroup={isManagingGroup}
+							onBack={() => {
+								setReplyTo(null);
+								setSelectedConversationId(null);
+							}}
 							onOpenMessageSearch={() => {
 								setIsManagingGroup(false);
 								setRequestedMessageId(null);
@@ -278,16 +260,22 @@ export function ChatPage() {
 								onEditMessage={editMessage}
 								onDeleteMessage={deleteMessage}
 								onHideMessage={hideMessage}
+								onToggleReaction={toggleReaction}
+								onReplyToMessage={setReplyTo}
 								targetMessageId={targetMessageId}
 								onReturnToLatest={closeMessageSearch}
 							/>
 						</div>
 
-						<MessageInput conversationId={selectedConversation.id} />
+						<MessageInput
+							conversationId={selectedConversation.id}
+							replyTo={replyTo}
+							onCancelReply={() => setReplyTo(null)}
+						/>
 					</>
 				) : (
 					<div className="flex flex-1 items-center justify-center">
-						<p className="text-sm text-slate-500">
+						<p className="text-sm text-ink-faint">
 							Pick a conversation, or search for someone to start one.
 						</p>
 					</div>

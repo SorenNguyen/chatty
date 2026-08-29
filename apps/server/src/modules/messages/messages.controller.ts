@@ -5,6 +5,7 @@ import {
 	listMessagesQuerySchema,
 	messageContextQuerySchema,
 	sendMessageSchema,
+	toggleReactionSchema,
 } from "./messages.schema.js";
 import * as messagesService from "./messages.service.js";
 
@@ -26,6 +27,7 @@ export async function sendMessageController(req: Request, res: Response): Promis
 
 	const message = await messagesService.sendMessage(req.userId!, conversationId, {
 		content,
+		...(input.replyToId ? { replyToId: input.replyToId } : {}),
 		...(req.file ? { attachment: req.file.buffer } : {}),
 	});
 	res.status(201).json(message);
@@ -89,4 +91,22 @@ export async function hideMessageController(req: Request, res: Response): Promis
 		req.params.messageId as string,
 	);
 	res.status(204).send();
+}
+
+/**
+ * PUT rather than POST: the request states what the caller's reaction of this
+ * kind should be, and sending it twice settles on the same place it started —
+ * which is what a toggle is. 200 with the message, because the message is what
+ * the caller renders.
+ */
+export async function toggleReactionController(req: Request, res: Response): Promise<void> {
+	const input = toggleReactionSchema.parse(req.body);
+
+	const message = await messagesService.toggleReaction(
+		req.userId!,
+		req.params.conversationId as string,
+		req.params.messageId as string,
+		input,
+	);
+	res.status(200).json(message);
 }

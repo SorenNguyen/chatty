@@ -15,6 +15,7 @@ describe("MessageActions", () => {
 				onEdit={vi.fn()}
 				onDeleteForEveryone={vi.fn()}
 				onDeleteForMe={vi.fn()}
+				reactedKinds={[]}
 				authorActionExpiresAt="2026-08-29T08:00:01.000Z"
 				align="end"
 			/>,
@@ -36,6 +37,7 @@ describe("MessageActions", () => {
 				onEdit={vi.fn()}
 				onDeleteForEveryone={vi.fn()}
 				onDeleteForMe={vi.fn()}
+				reactedKinds={[]}
 				authorActionExpiresAt="2099-08-29T08:00:00.000Z"
 				align="end"
 			/>,

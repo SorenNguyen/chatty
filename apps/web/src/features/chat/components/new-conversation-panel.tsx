@@ -63,27 +63,34 @@ export function NewConversationPanel({ onConversationStarted }: NewConversationP
 	}
 
 	return (
-		<div className="border-b border-slate-200 p-3">
+		<div className="px-5 pb-4">
+			{/* A ruled line, not a pill. The sidebar already has one bordered box on
+			    it — the conversation you are in — and a second one competing for the
+			    same attention at the top is what made the old sidebar read as a form. */}
 			<form onSubmit={search}>
-				<div className="relative">
-					<Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+				<div className="flex items-center gap-2.5 border-b border-rule pb-2.5 transition-colors focus-within:border-ink">
+					<Search className="size-[15px] shrink-0 text-ink-faint" />
 					<input
 						value={query}
 						onChange={(event) => setQuery(event.target.value)}
-						placeholder="Find someone by name or email"
+						placeholder="Name, @handle or email"
 						aria-label="Find someone"
-						className="w-full rounded-lg border border-slate-300 py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+						className="min-w-0 flex-1 bg-transparent text-[13.5px] text-ink outline-none placeholder:text-ink-faint"
 					/>
 				</div>
 			</form>
 
 			<SelectedParticipants participants={selectedUsers} onRemove={handleRemoveUser} />
 
-			{isSearching && <p className="mt-2 text-xs text-slate-500">Searching…</p>}
-			{(searchError || createError) && <p className="mt-2 text-xs text-red-600">{searchError || createError}</p>}
+			{isSearching && <p className="eyebrow mt-3 text-ink-faint">Searching…</p>}
+			{(searchError || createError) && (
+				<p role="alert" className="eyebrow mt-3 text-signal">
+					{searchError || createError}
+				</p>
+			)}
 
 			{results.length > 0 && (
-				<ul className="mt-2 flex max-h-48 flex-col gap-1 overflow-y-auto">
+				<ul className="mt-3 flex max-h-48 flex-col gap-0.5 overflow-y-auto">
 					{results.map((user) => {
 						const isSelected = selectedUsers.some((selected) => selected.id === user.id);
 
@@ -98,14 +105,16 @@ export function NewConversationPanel({ onConversationStarted }: NewConversationP
 									// accessible name, not decoration.
 									aria-label={`${user.displayName} @${user.handle}`}
 									className={cn(
-										"w-full items-center justify-start gap-2 px-3 py-2 font-normal",
-										isSelected && "bg-blue-50 text-blue-700 hover:bg-blue-100",
+										"w-full items-center justify-start gap-2.5 px-2 py-2 font-normal",
+										isSelected && "bg-ink/5 text-ink",
 									)}
 								>
 									<Avatar user={user} size="sm" />
 									<span className="flex min-w-0 flex-1 flex-col">
-										<span className="w-full truncate text-left">{user.displayName}</span>
-										<span className="w-full truncate text-left text-xs text-slate-500">
+										<span className="w-full truncate text-left text-[13px] font-medium text-ink">
+											{user.displayName}
+										</span>
+										<span className="meta w-full truncate text-left text-ink-faint">
 											@{user.handle}
 										</span>
 									</span>
@@ -117,7 +126,7 @@ export function NewConversationPanel({ onConversationStarted }: NewConversationP
 			)}
 
 			{isGroup && (
-				<div className="mt-3">
+				<div className="mt-4">
 					<TextField
 						label="Group name (optional)"
 						value={groupName}
@@ -128,7 +137,7 @@ export function NewConversationPanel({ onConversationStarted }: NewConversationP
 			)}
 
 			{selectedUsers.length > 0 && (
-				<Button onClick={() => void handleCreate()} disabled={isCreating} className="mt-3 w-full">
+				<Button onClick={() => void handleCreate()} disabled={isCreating} className="mt-4 w-full">
 					{isGroup
 						? `Create group with ${selectedUsers.length} people`
 						: `Chat with ${selectedUsers[0]!.displayName}`}

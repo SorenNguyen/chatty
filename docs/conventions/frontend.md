@@ -176,12 +176,12 @@ The project uses Tailwind CSS with the `cn()` helper (`@/utils/cn`).
 
   ```tsx
   // Wrong
-  className={["px-3 py-2", isActive ? "bg-blue-600" : "bg-gray-100"].join(" ")}
+  className={["px-3 py-2", isActive ? "bg-ink" : "bg-rule-soft"].join(" ")}
 
   // Right
   className={cn(
       "px-3 py-2",
-      isActive && "bg-blue-600 text-white",
+      isActive && "bg-ink text-paper",
       isDisabled && "opacity-50",
       !isActive && !isDisabled && "bg-gray-100",
   )}
@@ -190,6 +190,63 @@ The project uses Tailwind CSS with the `cn()` helper (`@/utils/cn`).
 - Complex class logic goes into a helper function outside the JSX, never inline.
 
 `cn()` is not cosmetic: `twMerge` resolves conflicting Tailwind utilities so a caller's `className` prop can actually override a component's defaults. String concatenation cannot do that — in CSS the more specific rule wins, not the last one in the string.
+
+---
+
+## Colour and type — the palette is declared, not chosen
+
+Every colour a component names comes from `@theme` in `src/styles/globals.css`. There is no
+`bg-slate-100` in this app and there must not be one: it renders perfectly well and is simply the
+wrong colour on a page that has no other grey on it. `scripts/audit-rules.sh` section 29 fails the
+build on any numbered Tailwind swatch, and on `bg-white` / `text-black` — the paper is ivory, and
+pure white beside it reads as a rendering bug.
+
+| Token | For |
+| --- | --- |
+| `paper`, `paper-raised` | the sheet, and anything sitting on top of it |
+| `ink`, `ink-soft`, `ink-faint` | text, in three strengths |
+| `rule`, `rule-soft` | hairline borders and separators |
+| `signal` | **only** an unread count, the conversation you are in, and something you cannot undo |
+| `signal-soft` | the ground under a destructive hover, and a search hit |
+| `live` | presence, which is a different kind of fact from a notification |
+| `tint-*` / `tint-*-ink` | avatar grounds, always used as a pair — via `@/constants/avatar-colors` |
+
+Three fonts and one rule about when each applies:
+
+- `font-sans` (Archivo) is everything you read.
+- `font-display` (Instrument Serif) is the wordmark and a dialog's title. Nothing else.
+- **`font-mono` (IBM Plex Mono) is anything a machine produced** — a timestamp, a handle, a count, an
+  avatar's initials. That one rule is most of the personality, so two utilities exist to spend it in
+  one place rather than in forty files:
+  - `eyebrow` — a label, byline or status: mono, uppercase, tracked out, 10px.
+  - `meta` — a machine's own output: mono, tabular, 10.5px, so a number changing width does not
+    shift the row it sits in.
+
+  Neither sets a colour. That is the caller's, which is what keeps `eyebrow text-signal` from being a
+  fight between two classes.
+
+Fonts are **self-hosted** through `@fontsource/*`, imported at the top of `globals.css`. Not a
+preference: `nginx.conf.template` sets `style-src 'self'; font-src 'self'`, and a `<link>` to Google
+Fonts needs both relaxed. Add a weight by importing it there, and only if the design uses it.
+
+Icons get square caps and mitred joins from one base-layer rule, because lucide ships them round and
+a rounded tick beside a hairline border belongs to a different drawing.
+
+---
+
+## Dialogs
+
+`hooks/use-dialog.ts` is the only focus trap. It gives a `<div role="dialog">` Escape-to-close, Tab
+wrapped inside the panel, and focus moved into it on open; the caller owns the state and passes a
+**stable** `onClose` — a new function each render re-binds the listener.
+
+Use it for anything that covers the page. Do not write a second one: two copies of a focus trap are
+two chances for one of them to lose a case, which is why the edit-history dialog and the settings
+dialog share this one.
+
+A dialog is not automatically the right answer. `GroupMembersPanel` deliberately stayed an inline
+panel — it acts on the conversation on screen, and covering the thing you are editing the membership
+of is worse than sitting above it.
 
 ---
 

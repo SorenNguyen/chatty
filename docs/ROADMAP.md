@@ -155,7 +155,9 @@ comment in `packages/shared-types` and ADR 0006's consequences section.
 **Group management lives inline, not in a modal.** The app has no modal/dialog primitive declared
 anywhere in its conventions; `GroupMembersPanel` follows the same pattern `NewConversationPanel`
 already established — render inline, toggled from a button in `ConversationHeader` — rather than
-introduce one.
+introduce one. **Phase 16 introduced one** (`hooks/use-dialog.ts`) and this panel deliberately did
+not move into it: group management acts on the conversation on screen, and a dialog that covers the
+conversation you are editing the membership of is worse than a panel above it.
 
 **`useUserSearch` extracted from `NewConversationPanel`.** Adding a member needed the exact same
 search-loading-error state machine a second time; per "no duplicate helper," the first copy was
@@ -213,6 +215,11 @@ needs both and features may not import from each other.
 app renders inline — starting a conversation, managing a group — but those act on the conversation on
 screen. This one edits the account, and putting it in the chat sidebar would mean `features/chat`
 importing from `features/profile`, which the frontend conventions rule out.
+
+**Phase 16 kept the route and stopped it replacing the screen.** `/profile` now renders `ChatPage`
+and a dialog over it, composed as siblings in `app.tsx` — which is the one place both are in scope,
+so the cross-feature import is still not made. The URL is unchanged, so the deep link still works and
+Back closes the dialog.
 
 **Only the changed field is sent.** The server accepts both, but a request carrying a field nobody
 touched can overwrite an edit made in another tab.
@@ -1052,6 +1059,136 @@ delete-for-me remains available, including on a tombstone. Search is scoped to t
 uses a stable `(createdAt, id)` cursor, and returns an explicit `hasMore` rather than making the client
 guess from page length.
 
+## Phase 16 — one look, and settings that do not cost you the conversation — `done`
+
+The app worked and looked like four people had styled it. This phase replaces the slate-and-blue
+Tailwind defaults with a single declared design, and moves account settings off a full page and on
+top of the chat. The design was drawn first, on a canvas, and the code follows it rather than the
+other way round.
+
+| # | Item | Status |
+| --- | --- | --- |
+| 59 | One palette and one type system, declared as tokens | Done |
+| 60 | Settings as a dialog over the chat, with `/profile` still deep-linking | Done |
+| 61 | Split `MessageList`, and give the thread a day rule | Done |
+| 62 | Wordmark at the top of the sidebar, account at the bottom | Done |
+
+### Item 59: ink on paper
+
+Everything comes from `@theme` in `styles/globals.css`, so no component names a colour that is not
+in the palette — an ivory sheet, near-black ink at three strengths, hairline rules, and **one**
+colour. Vermilion marks exactly three things: an unread count, the conversation you are in, and
+something you cannot undo. `--live` is the single exception, because presence is a different kind of
+fact from a notification and giving them the same red made an online dot read as a demand.
+
+Two rules carry most of the personality, and both are one line each:
+
+- **Anything a machine produced is set in mono** — a timestamp, a handle, a count, an avatar's
+  initials. Two custom utilities (`eyebrow`, `meta`) exist so that is five classes in one place
+  rather than in forty files.
+- **Icons are drawn like the rules on the page**: `svg { stroke-linecap: square; stroke-linejoin:
+  miter }` in the base layer. lucide ships every icon with round joins, and a rounded tick beside a
+  hairline border was the one thing that made early drafts look like a different app from the waist
+  down.
+
+**The fonts are self-hosted, and that was a CSP decision rather than a preference.**
+`nginx.conf.template` sets `style-src 'self'; font-src 'self'`. A `<link>` to Google Fonts needs both
+relaxed and adds a third-party runtime dependency to an app that has none anywhere else, so Archivo,
+IBM Plex Mono and Instrument Serif come from `@fontsource/*` and Vite fingerprints them into the
+bundle. Only the four weights the design uses: Archivo alone ships nine, and each one is a file
+somebody downloads.
+
+**The avatar is a rounded square with a tinted ground and a dark initial**, not a circle with white
+text on a saturated fill. The tints are stored as *pairs* — a ground and an ink that is legible on it
+— because the failure mode of hashing a name into a generated hue is that it eventually lands on
+yellow. A group is ink-filled and carries the group's own initials rather than a generic icon, which
+had made every group in a sidebar look like the same conversation. The presence mark is a square too,
+so it never reads as a notification dot.
+
+**The destructive button is outlined, not filled.** A solid red block invites the click it exists to
+slow down.
+
+### Item 60: settings, over the chat
+
+Renaming yourself is twenty seconds of work, and paying for it with the conversation you were reading
+is a bad trade. `SettingsModal` renders over `ChatPage`, and `app.tsx` composes the two as siblings on
+the `/profile` route — the only place both are in scope, so `features/profile` still does not import
+from `features/chat`. Closing is a `navigate("/chat")` rather than a piece of state, which is what
+makes the browser's Back button close the dialog for free.
+
+**`hooks/use-dialog.ts` is the first shared dialog primitive** — Escape, a focus trap, and focus moved
+into the panel on open. It exists because the edit-history dialog and this one needed the identical
+thing from different features, which is the case the frontend conventions say to lift into `src/hooks`
+rather than copy. Two copies of a focus trap are two chances for one of them to lose a case.
+
+The nav rows are renamed: "Password" rather than "Security", "Delete account" rather than "Danger
+zone". Both old names described a *kind* of setting; a row is more useful when it names the thing it
+will let you do. **`AVATAR_UPLOAD_HINT` says 5 MB, not the 2 MB on the design canvas** — the design was
+guessing and `MAX_AVATAR_BYTES` is the thing that actually enforces it.
+
+### Item 61: the message list, in four files
+
+`MessageList` was one file holding the scroll container, the run-grouping, the read receipt, the
+editor state, the bubble, the tombstone, the system line and the attachment. It is now the container
+plus `MessageRow`, `SystemMessage` and `DaySeparator`, and what stayed in the container is exactly
+what a row cannot answer on its own: where the day changes, where a run begins, which single message
+the "Seen" marker sits on, and which one is open for editing.
+
+**A bubble's bottom corner is cut to 2px on the side the message came from.** That notch, not the
+fill, is what says who spoke — it survives a glance, a screenshot, and anyone who cannot tell the ink
+block from the paper one by colour.
+
+**The thread gained a day rule, and `formatMessageTime` lost its date.** It used to print `23/08 09:41`
+on every bubble because a wall of bare times told you nothing about which day you were in. The rule
+states the day once, above the first message of it, so keeping the date on the bubble underneath would
+print it twice. `formatDayLabel` says "Today" and "Yesterday" rather than dating them, and drops the
+year inside the current one.
+
+**An incoming continuation shows its time on hover.** The design gives a run's later bubbles no line
+of their own, which would take their timestamps with them; revealing it on hover keeps the tight
+stacking and loses nothing. An *edited* one is shown outright — a marker saying "this is not what was
+sent" must not need to be discovered.
+
+**The actions menu now says how long is left.** Edit and delete-for-everyone expire eight hours after
+sending, and before this they simply stopped being there one day, which reads as a bug rather than as
+a rule. The countdown is derived from the server's own `authorActionExpiresAt` rather than from a copy
+of the window on this side, so the client cannot disagree with the deadline that will be enforced.
+The design's progress bar was dropped for exactly that reason: drawing a bar needs the *length* of the
+window, which would mean a second copy of "eight hours" to drift from the server's.
+
+### Item 62: the sidebar
+
+The wordmark and the search go to the top; the account chip goes to the bottom, where an account lives
+in every application shell people already use. It was in the header before, which put the thing you
+touch least at the top of the thing you scan most.
+
+Two things the rows gained, both because the design showed them and both real information the old
+sidebar dropped:
+
+- **A timestamp**, shorter the more recent it is — minutes, then a clock time, then "Yest.", then a
+  weekday, then a date. Computed from whole calendar days rather than elapsed hours, or an hour of
+  daylight saving would decide whether last night counted as yesterday.
+- **A preview that is never blank.** A picture with no caption used to render an empty line, which
+  reads as a conversation with nothing in it — the one thing it is definitely not. A tombstone now
+  gets the sentence the thread shows rather than the empty string the server left behind.
+
+**`ChatPage` was over the 300-line limit after this**, and the audit said so. `ConversationSidebar`
+came out of it; every piece of state stayed in the page.
+
+### What was on the canvas and is not in the code
+
+Three, each for a stated reason rather than by omission:
+
+- **The eight-hour progress bar** — see item 61. It needs a duplicate of a server constant.
+- **A three-button hover strip beside each message.** Phase 15 decided on a single overflow button
+  and a menu, deliberately, and matching Telegram/Zalo/Messenger is worth more than matching a mock.
+- **"Read receipts" as its own settings row.** It is a checkbox on the profile form, where the other
+  privacy setting already is; splitting one form into two to gain a nav row is not an improvement.
+
+Also different from the canvas on purpose: the search placeholder says "Name, @handle or email"
+rather than "Find someone by @handle", because `searchUsers` matches all three and a placeholder that
+under-describes what works is the same class of lie as one that over-describes it.
+
 ## Known gaps not on the roadmap yet
 
 - **Handle placement.** Asking for a handle during registration is friction. Alternatives discussed:
@@ -1109,6 +1246,129 @@ guess from page length.
   first. See [ADR 0008](adr/0008-group-owner-role.md).
 - **Any member can still add a stranger to a group.** Deliberate (inviting is how a group grows), and
   the owner can undo it. Every add is now named in the log, which is what makes that acceptable.
+
+## Phase 17 — the grammar of a message cluster — `done`
+
+Phase 16 gave the app one look. This phase is about the geometry *inside* it: what a run of messages
+from one person is supposed to be, and the two things a message could not do yet.
+
+| # | Item | Status |
+| --- | --- | --- |
+| 63 | Geist + Geist Mono, and a Vietnamese subset the old pair did not have | Done |
+| 64 | Corner grammar: a run of messages is one shape, with one tail | Done |
+| 65 | Message meta moves into the gutter, off the vertical | Done |
+| 66 | Reactions | Done |
+| 67 | Replies | Done |
+| 68 | Quiet-time grouping and the mobile conversation flow | Done |
+
+### Item 63: one superfamily, and diacritics that do not fall out of the font
+
+Archivo and IBM Plex Mono were two unrelated designs, and every 10px label in the app was a seam
+between them. Geist and Geist Mono are one family — the mono is the sans redrawn on a fixed pitch —
+so a timestamp beside a sentence shares its skeleton rather than arguing with it.
+
+The half that was a **bug**, not a preference: neither of the old faces ships a `vietnamese` subset,
+so a display name or a message with diacritics fell back per glyph, mid-word. Both new faces carry
+one. Instrument Serif still does not and is therefore never allowed to hold user text — it is the
+wordmark and four fixed English headings, and that is now written down beside the import.
+
+The paper lost about half its chroma at the same time. At the old value the background read as aged
+newsprint, which dirtied every photograph posted on it.
+
+### Items 64 and 65: a run of messages is one object
+
+What shipped before put the same 2px notch on **every** bubble, so a burst of five messages showed
+five tails stuttering down one edge and the notch stopped meaning "the turn ends here" — it meant
+nothing, because it was everywhere.
+
+The rule, in `constants/message-cluster.ts` as two tables: **the side away from the tail never
+changes.** It stays at the full 10px for the whole height of the run, and that unbroken edge is what
+makes five bubbles read as one turn. Only the tail side moves — a 4px seam where a bubble meets its
+neighbour, and the 2px notch on the last one alone. The seam is 4px rather than 0 deliberately: a
+squared-off join between two bubbles of the same fill reads as a clipping fault, and the eye stops
+on it.
+
+A picture inside a bubble follows the corners around it — each of its own is the bubble's *minus the
+5px padding*, so 10 becomes 5 and both the seam and the notch collapse to 0. It was a flat
+`rounded-[7px]` before, a number that matched neither the bubble it sat in nor anything else.
+
+Four things close a run early, and each has a reason rather than a preference:
+
+- **A reply** — it points somewhere else, so it is a new turn even from the same person.
+- **A pause longer than five minutes** — adjacency is not continuity; two messages sent hours apart
+  are separate turns even if nobody spoke between them. A same-day pause of an hour also gets one
+  centred time marker so the reader is re-oriented without repeating the date.
+- **A tombstone** — nothing was said, so there is no turn to continue. It also takes no notch at all.
+- **A day rule or a system line**, as before.
+
+A reaction deliberately does **not** close the run. Its row reserves the clearance under the bubble,
+so a reaction landing between the second and third messages in a burst does not rewrite the corner
+grammar and make one author look like they took two separate turns.
+
+Item 65 is what made the ratio legible: every timestamp used to sit on its own line *under* its
+bubble, which prised a burst of five messages apart into five separate-looking statements. The time,
+the edited marker, the read receipt and the actions now sit in a gutter beside the bubble, on its
+centreline. The gutter is laid out at full width and only *faded* in, so hovering a message reveals
+its time without moving a pixel of the thread — and a run states its time once, at the end, rather
+than printing the same minute four times.
+
+The `⋯` lost its plate in the same pass. A white rounded chip beside a bubble reads as a second,
+smaller message; the affordance is now carried by the glyph lifting from faint to full ink.
+
+### Item 66: reactions
+
+A closed set of five, stored as a Postgres enum and drawn from the icon set in ink. Not "any emoji",
+for two reasons: a full-colour 😂 beside an ink bubble is the most saturated thing on a page that
+spends its one colour on unread counts and things you cannot undo, and a free text column makes "the
+same reaction" undecidable — U+2764 and U+2764 U+FE0F are two strings and one heart.
+
+Three decisions worth keeping:
+
+- **The composite primary key `(messageId, userId, kind)` is the toggle.** `deleteMany` reports how
+  many rows it removed; zero means create one. The database decides, not a client that would
+  disagree with itself across two tabs.
+- **The DTO names everyone rather than counting.** `userIds`, not `count` plus `isMine` — the
+  message is broadcast to the whole room as one payload, so anything answering "is this me?" would
+  be answering it for whoever happened to trigger the write. The viewer holds their own id.
+- **The chips hang off the edge *away* from the tail.** The tail side already carries the seams and
+  the notch; a chip there would sit on the one corner that says where a turn ends. They overlap the
+  bubble by exactly half, so a chip is unmistakably cut by the message it belongs to rather than
+  floating between that message and the next.
+
+Desktop keeps heart and reply as one-click hover actions; the overflow menu holds the other four
+reaction kinds and the less frequent edit/delete actions. Reactions of one kind stay grouped in one
+chip, and its hover title resolves the participant names instead of exposing only an unexplained
+count.
+
+A tombstone drops its reactions. The rows survive, but three hearts under "This message was deleted"
+reads as approval of the deletion.
+
+### Item 67: replies
+
+A self-relation on `Message`, not a copy of the quoted text. A copy goes stale the moment the
+original is edited and keeps showing words its author has since retracted — the two cases a quote
+most needs to be honest about. The quote is resolved on every read, so an edited parent re-quotes
+with its new text and a deleted one quotes as a tombstone.
+
+The security half is a rule no foreign key can express: **the parent must be in the same
+conversation.** A foreign key cannot say "and the same `conversationId`", so `sendMessage` checks it
+inside the same transaction that writes the message, scoped by conversation rather than fetched and
+compared — a miss is a miss whether the message is in another conversation or in none, which is also
+what stops the check from confirming that an id exists somewhere the sender cannot see.
+
+Visually the quote is a rule and two lines of type — no nested card, no fill, no second radius. It is
+clamped to one line on purpose: it is a pointer, not a quotation, and three lines of somebody else's
+message above a two-word answer inverts which of the two you are meant to read. An image reply adds a
+small signed thumbnail in both the bubble quote and the composer, so "replying to a photo" remains
+identifiable before and after the answer is sent.
+
+### Item 68: quiet intervals and mobile navigation
+
+The desktop shell keeps the conversation list and thread side by side. Below the medium breakpoint,
+the same state becomes a two-screen flow: the list fills the viewport, choosing a conversation opens
+the thread, and a labelled Back action returns to the list. Message meta moves below the bubble at
+that width instead of permanently buying a horizontal gutter, and the thread has no horizontal
+overflow at a 390px viewport.
 
 ## Verification bar
 

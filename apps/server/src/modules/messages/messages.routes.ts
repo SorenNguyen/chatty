@@ -9,6 +9,7 @@ import {
 	listMessageEditsController,
 	listMessagesController,
 	sendMessageController,
+	toggleReactionController,
 } from "./messages.controller.js";
 
 // Mounted at /conversations/:conversationId/messages — see app.ts
@@ -30,3 +31,6 @@ messagesRouter.patch("/:messageId", editMessageController);
 // is addressing is the message they wrote, and that is what goes — the row that
 // stays behind exists for read markers and paging cursors, not for them.
 messagesRouter.delete("/:messageId", deleteMessageController);
+// PUT, not POST: sending the same reaction twice settles where it started, which
+// is the whole behaviour. See the controller.
+messagesRouter.put("/:messageId/reactions", toggleReactionController);

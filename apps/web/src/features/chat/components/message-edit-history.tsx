@@ -1,8 +1,9 @@
 import type { MessageEditDTO } from "@chatty/shared-types";
-import { History, X } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { X } from "lucide-react";
+import { useEffect, useId, useState } from "react";
 import { api } from "@/api/client";
 import { Button } from "@/components/button";
+import { useDialog } from "@/hooks/use-dialog";
 
 interface MessageEditHistoryProps {
 	conversationId: string;
@@ -10,12 +11,19 @@ interface MessageEditHistoryProps {
 	onClose: () => void;
 }
 
+/**
+ * Every version of a message its author rewrote, newest first.
+ *
+ * Drawn as a timeline against a single hairline rather than as a stack of
+ * cards: what matters is the order things were said in, and a card per version
+ * makes four small edits look like four separate messages.
+ */
 export function MessageEditHistory({ conversationId, messageId, onClose }: MessageEditHistoryProps) {
 	const [edits, setEdits] = useState<MessageEditDTO[]>([]);
 	const [isLoading, setIsLoading] = useState(true);
 	const [error, setError] = useState("");
 	const titleId = useId();
-	const dialogRef = useRef<HTMLElement>(null);
+	const dialogRef = useDialog<HTMLElement>(onClose);
 
 	useEffect(() => {
 		let isCurrent = true;
@@ -38,37 +46,9 @@ export function MessageEditHistory({ conversationId, messageId, onClose }: Messa
 		};
 	}, [conversationId, messageId]);
 
-	useEffect(() => {
-		dialogRef.current?.focus();
-
-		function handleKeyDown(event: KeyboardEvent) {
-			if (event.key === "Escape") onClose();
-			if (event.key !== "Tab" || !dialogRef.current) return;
-
-			const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
-				"button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])",
-			);
-			const first = focusable[0];
-			const last = focusable[focusable.length - 1];
-			if (!first || !last) return;
-
-			if (event.shiftKey && document.activeElement === first) {
-				event.preventDefault();
-				last.focus();
-			} else if (!event.shiftKey && document.activeElement === last) {
-				event.preventDefault();
-				first.focus();
-			}
-		}
-
-		document.addEventListener("keydown", handleKeyDown);
-
-		return () => document.removeEventListener("keydown", handleKeyDown);
-	}, [onClose]);
-
 	return (
 		<div
-			className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-[2px]"
+			className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 p-4"
 			onPointerDown={(event) => {
 				if (event.target === event.currentTarget) onClose();
 			}}
@@ -79,45 +59,47 @@ export function MessageEditHistory({ conversationId, messageId, onClose }: Messa
 				aria-modal="true"
 				aria-labelledby={titleId}
 				tabIndex={-1}
-				className="max-h-[min(70vh,36rem)] w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl outline-none"
+				className="flex max-h-[min(70vh,36rem)] w-full max-w-md flex-col overflow-hidden rounded-panel border border-rule bg-paper shadow-modal outline-none"
 			>
-				<header className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-					<div className="flex items-center gap-3">
-						<span className="flex size-9 items-center justify-center rounded-full bg-blue-50 text-blue-600">
-							<History className="size-4" />
-						</span>
-						<div>
-							<h2 id={titleId} className="font-semibold text-slate-900">
-								Edit history
-							</h2>
-							<p className="text-xs text-slate-500">Previous versions of this message</p>
-						</div>
+				<header className="flex shrink-0 items-start justify-between gap-4 border-b border-rule px-6 py-5">
+					<div className="min-w-0">
+						<h2 id={titleId} className="font-display text-[22px] leading-none tracking-tight">
+							Edit history
+						</h2>
+						<p className="mt-2 text-[13px] text-ink-soft">What this message said before.</p>
 					</div>
 					<Button
 						variant="ghost"
 						onClick={onClose}
 						aria-label="Close edit history"
-						className="size-8 rounded-full p-0"
+						className="size-8 shrink-0 border border-rule p-0"
 					>
-						<X className="size-4" />
+						<X className="size-3.5" />
 					</Button>
 				</header>
-				<div className="max-h-[calc(min(70vh,36rem)-4.5rem)] overflow-y-auto p-4">
-					{isLoading && <p className="py-8 text-center text-sm text-slate-500">Loading edit history…</p>}
-					{error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+
+				<div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+					{isLoading && <p className="eyebrow py-8 text-center text-ink-faint">Loading edit history…</p>}
+					{error && (
+						<p role="alert" className="eyebrow text-signal">
+							{error}
+						</p>
+					)}
 					{!isLoading && !error && edits.length === 0 && (
-						<p className="py-8 text-center text-sm text-slate-500">No previous versions.</p>
+						<p className="eyebrow py-8 text-center text-ink-faint">No previous versions.</p>
 					)}
 					{!isLoading && !error && edits.length > 0 && (
-						<ul className="space-y-3">
+						<ul className="flex flex-col gap-4 border-l border-rule pl-4">
 							{edits.map((edit) => (
-								<li key={edit.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3.5">
-									<p className="whitespace-pre-wrap wrap-break-word text-sm text-slate-800">
-										{edit.content || "No caption"}
-									</p>
-									<time className="mt-2 block text-xs text-slate-400">
+								<li key={edit.id}>
+									{/* The full date, not the thread's bare time: there is no
+									    day rule above this list to give a time its context. */}
+									<time dateTime={edit.editedAt} className="meta block text-ink-faint">
 										{new Date(edit.editedAt).toLocaleString()}
 									</time>
+									<p className="mt-1 whitespace-pre-wrap wrap-break-word text-[13px] text-ink-soft">
+										{edit.content || "No caption"}
+									</p>
 								</li>
 							))}
 						</ul>

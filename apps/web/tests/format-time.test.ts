@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { formatDayLabel, isNewDay } from "@/features/chat/utils/format-day";
 import { formatMessageTime } from "@/features/chat/utils/format-time";
 
 // "Today" is relative to the clock, so the clock is pinned — otherwise these
@@ -15,25 +16,58 @@ afterEach(() => {
 });
 
 describe("formatMessageTime", () => {
-	it("shows only the time for a message sent today", () => {
+	it("shows the time and nothing else for a message sent today", () => {
 		const formatted = formatMessageTime(new Date("2026-08-23T09:05:00").toISOString());
 
-		expect(formatted).not.toMatch(/\d{2}\/\d{2}/);
 		expect(formatted).toMatch(/\d{2}:\d{2}/);
+		expect(formatted).not.toMatch(/\d{2}\/\d{2}/);
 	});
 
-	it("includes the date for a message from another day", () => {
-		// Scrolling back through history is unreadable when every line is just a
-		// time with no indication of which day it belongs to.
+	it("still shows only the time for a message from another day", () => {
+		// The date used to be prepended here. It moved to the day rule the list
+		// draws above the first message of each day, so printing it again beside
+		// every bubble underneath would say the same thing twice.
 		const formatted = formatMessageTime(new Date("2026-08-21T09:05:00").toISOString());
 
-		expect(formatted).toMatch(/\d{2}\/\d{2}/);
 		expect(formatted).toMatch(/\d{2}:\d{2}/);
+		expect(formatted).not.toMatch(/\d{2}\/\d{2}/);
+	});
+});
+
+describe("formatDayLabel", () => {
+	it("names today and yesterday rather than dating them", () => {
+		expect(formatDayLabel(new Date("2026-08-23T00:01:00").toISOString())).toBe("Today");
+		expect(formatDayLabel(new Date("2026-08-22T23:59:00").toISOString())).toBe("Yesterday");
 	});
 
-	it("treats earlier today as today, not as another day", () => {
-		const formatted = formatMessageTime(new Date("2026-08-23T00:01:00").toISOString());
+	it("dates anything older, and drops the year inside the current one", () => {
+		const label = formatDayLabel(new Date("2026-08-01T09:00:00").toISOString());
 
-		expect(formatted).not.toMatch(/\d{2}\/\d{2}/);
+		expect(label).toMatch(/1/);
+		expect(label).not.toMatch(/2026/);
+	});
+
+	it("carries the year once the day is in a different one", () => {
+		expect(formatDayLabel(new Date("2025-12-31T09:00:00").toISOString())).toMatch(/2025/);
+	});
+});
+
+describe("isNewDay", () => {
+	it("treats the first message of a list as opening a day", () => {
+		expect(isNewDay(NOW.toISOString(), undefined)).toBe(true);
+	});
+
+	it("keeps two messages from the same day together", () => {
+		expect(
+			isNewDay(new Date("2026-08-23T23:59:00").toISOString(), new Date("2026-08-23T00:00:00").toISOString()),
+		).toBe(false);
+	});
+
+	it("splits a run that crosses midnight", () => {
+		// One minute apart, two days apart. Comparing elapsed time rather than
+		// calendar days would put these under one rule.
+		expect(
+			isNewDay(new Date("2026-08-23T00:00:00").toISOString(), new Date("2026-08-22T23:59:00").toISOString()),
+		).toBe(true);
 	});
 });

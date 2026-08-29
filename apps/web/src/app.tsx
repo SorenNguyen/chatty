@@ -5,7 +5,7 @@ import { ForgotPasswordPage } from "@/features/auth/pages/forgot-password-page";
 import { LoginPage } from "@/features/auth/pages/login-page";
 import { ResetPasswordPage } from "@/features/auth/pages/reset-password-page";
 import { ChatPage } from "@/features/chat/pages/chat-page";
-import { ProfilePage } from "@/features/profile/pages/profile-page";
+import { SettingsPage } from "@/features/profile/pages/settings-page";
 import { useAuth } from "@/hooks/use-auth";
 
 export function App() {
@@ -21,8 +21,8 @@ export function App() {
 	// the moment before the stored token has been checked.
 	if (isRestoring) {
 		return (
-			<div className="flex min-h-screen items-center justify-center bg-slate-50">
-				<p className="text-sm text-slate-500">Loading…</p>
+			<div className="flex min-h-screen items-center justify-center bg-paper">
+				<p className="eyebrow text-ink-faint">Loading…</p>
 			</div>
 		);
 	}
@@ -40,7 +40,24 @@ export function App() {
 				    mailbox, which is regularly a phone that has never signed in. */}
 				<Route path="/confirm-email" element={<ConfirmEmailPage />} />
 				<Route path="/chat" element={currentUser ? <ChatPage /> : <Navigate to="/login" replace />} />
-				<Route path="/profile" element={currentUser ? <ProfilePage /> : <Navigate to="/login" replace />} />
+				{/* The chat and the dialog on top of it, as siblings, so a
+				    reload of /profile shows what a click on the settings icon
+				    shows and Back closes the dialog rather than leaving the app.
+				    Composed here because `features/profile` may not import a page
+				    from `features/chat` — the router is where both are in scope. */}
+				<Route
+					path="/profile"
+					element={
+						currentUser ? (
+							<>
+								<ChatPage />
+								<SettingsPage />
+							</>
+						) : (
+							<Navigate to="/login" replace />
+						)
+					}
+				/>
 				<Route path="*" element={<Navigate to={currentUser ? "/chat" : "/login"} replace />} />
 			</Routes>
 		</BrowserRouter>

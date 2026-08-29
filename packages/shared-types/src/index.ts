@@ -159,6 +159,54 @@ export interface AttachmentDTO {
  */
 export type MessageKind = "user" | "system";
 
+/**
+ * The closed set of marks a message can carry.
+ *
+ * Deliberately not "any emoji". The client draws each of these from the same
+ * icon set as the rest of the app, in ink, so a reaction stays part of the page
+ * instead of being the one full-colour object on it — and a closed set makes
+ * "the same reaction" decidable, which a free string does not: U+2764 and
+ * U+2764 U+FE0F are two strings and one heart.
+ */
+export type ReactionKind = "heart" | "thumbs-up" | "laugh" | "frown" | "angry";
+
+/**
+ * One kind of reaction on a message, and everyone who left it.
+ *
+ * `userIds` rather than a count plus an `isMine` flag, because this DTO is
+ * broadcast: the server sends one payload to every socket in the conversation,
+ * so anything answering "is this me?" would be answering it for whoever
+ * happened to trigger the write. The viewer holds their own id and decides.
+ * It also means a client can name the people without another request.
+ */
+export interface ReactionDTO {
+	kind: ReactionKind;
+	userIds: string[];
+}
+
+/**
+ * Just enough of the message a reply answers to quote it.
+ *
+ * Resolved live from the parent row rather than copied at send time, so an
+ * edited original re-quotes with its new text and a deleted one quotes as a
+ * tombstone instead of preserving words its author retracted.
+ *
+ * Not a whole `MessageDTO`: that would recurse — a reply to a reply to a reply
+ * would carry the entire chain down the wire — and the quote shows one line.
+ */
+export interface MessageReplyDTO {
+	id: string;
+	/** Null when the parent is a system line, or its author deleted their account. */
+	authorName: string | null;
+	/** Empty when the parent was an image with no caption, or was deleted. */
+	content: string;
+	hasAttachment: boolean;
+	/** Signed preview URL for the parent's image, or null after it is deleted. */
+	attachmentUrl: string | null;
+	/** True when the parent has since been deleted — quote it as a tombstone. */
+	isDeleted: boolean;
+}
+
 export interface MessageDTO {
 	id: string;
 	conversationId: string;
@@ -211,6 +259,14 @@ export interface MessageDTO {
 	 * bubble.
 	 */
 	deletedAt: string | null;
+	/**
+	 * Every reaction on this message, one entry per kind, empty when there are
+	 * none. Order is the server's and is stable: the kind that was first used on
+	 * this message comes first, so a chip does not jump position as counts change.
+	 */
+	reactions: ReactionDTO[];
+	/** The message this one answers, or null. */
+	replyTo: MessageReplyDTO | null;
 }
 
 export interface MessageContextDTO {
@@ -415,6 +471,25 @@ export interface MarkReadRequest {
  */
 export interface SendMessageRequest {
 	content?: string | undefined;
+	/**
+	 * The message this one answers.
+	 *
+	 * The server checks it belongs to the same conversation and refuses it
+	 * otherwise — without that, a reply could quote a message out of a
+	 * conversation the sender was never in and leak its text.
+	 */
+	replyToId?: string | undefined;
+}
+
+/**
+ * Body of `PUT /conversations/:conversationId/messages/:messageId/reactions`.
+ *
+ * A toggle, not an add: sending the kind you already left removes it. One
+ * endpoint rather than a POST and a DELETE, because the client never needs to
+ * know which of the two it is doing — the button is the same button.
+ */
+export interface ToggleReactionRequest {
+	kind: ReactionKind;
 }
 
 /**

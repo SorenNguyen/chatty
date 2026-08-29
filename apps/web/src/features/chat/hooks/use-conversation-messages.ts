@@ -1,4 +1,4 @@
-import type { MessageDTO } from "@chatty/shared-types";
+import type { MessageDTO, ReactionKind } from "@chatty/shared-types";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/api/client";
 import { MESSAGE_PAGE_SIZE } from "../constants/pagination";
@@ -16,6 +16,7 @@ interface ConversationMessages {
 	loadNewer: () => void;
 	editMessage: (messageId: string, content: string) => void;
 	deleteMessage: (messageId: string) => void;
+	toggleReaction: (messageId: string, kind: ReactionKind) => void;
 	hideMessage: (messageId: string) => void;
 	targetMessageId: string | null;
 }
@@ -45,7 +46,11 @@ export function useConversationMessages(
 	const [isLoadingNewer, setIsLoadingNewer] = useState(false);
 	const [targetMessageId, setTargetMessageId] = useState<string | null>(null);
 
-	const { editMessage, deleteMessage } = useMessageActions(conversationId, setMessages, onConversationsChanged);
+	const { editMessage, deleteMessage, toggleReaction } = useMessageActions(
+		conversationId,
+		setMessages,
+		onConversationsChanged,
+	);
 	const hideMessage = useCallback(
 		(messageId: string) => {
 			if (!conversationId) return;
@@ -162,6 +167,7 @@ export function useConversationMessages(
 		loadNewer,
 		editMessage,
 		deleteMessage,
+		toggleReaction,
 		hideMessage,
 		targetMessageId,
 	};

@@ -15,11 +15,13 @@ import type {
 	MessageContextDTO,
 	MessageEditDTO,
 	MessageSearchPageDTO,
+	ReactionKind,
 	RegisterRequest,
 	RenameConversationRequest,
 	RequestEmailChangeRequest,
 	RequestPasswordResetRequest,
 	ResetPasswordRequest,
+	ToggleReactionRequest,
 	TransferOwnershipRequest,
 	UpdateProfileRequest,
 	UserDTO,
@@ -219,15 +221,19 @@ export const api = {
 		content: string,
 		attachment?: File,
 		onProgress?: (percent: number) => void,
+		replyToId?: string,
 	): Promise<MessageDTO> {
 		const path = `/conversations/${conversationId}/messages`;
-		if (!attachment) return post<MessageDTO>(path, { content });
+		if (!attachment) return post<MessageDTO>(path, { content, ...(replyToId ? { replyToId } : {}) });
 
 		const body = new FormData();
 		body.append(ATTACHMENT_FIELD, attachment);
 		// Omitted rather than sent empty: an image with no caption is a message
 		// with no text, and the server trims what it gets either way.
 		if (content) body.append("content", content);
+		// Multer puts non-file fields on `req.body`, so the same Zod schema reads
+		// this whether the message arrived as JSON or as multipart.
+		if (replyToId) body.append("replyToId", replyToId);
 
 		return new Promise<MessageDTO>((resolve, reject) => {
 			const upload = new XMLHttpRequest();
@@ -304,6 +310,25 @@ export const api = {
 	 */
 	deleteMessage(conversationId: string, messageId: string): Promise<MessageDTO> {
 		return request<MessageDTO>(`/conversations/${conversationId}/messages/${messageId}`, { method: "DELETE" });
+	},
+
+	/**
+	 * Adds your reaction of this kind, or takes it off if it is already there.
+	 *
+	 * One call for both, so the caller never tracks which it is doing — the same
+	 * button does both, and a client that decided for itself would disagree with
+	 * the database the moment the same account reacted from a second tab.
+	 *
+	 * Like the other message writes, the response is not what renders it: the
+	 * server broadcasts `message:updated` with the whole reaction list.
+	 */
+	toggleReaction(conversationId: string, messageId: string, kind: ReactionKind): Promise<MessageDTO> {
+		const body: ToggleReactionRequest = { kind };
+
+		return request<MessageDTO>(`/conversations/${conversationId}/messages/${messageId}/reactions`, {
+			method: "PUT",
+			body: JSON.stringify(body),
+		});
 	},
 
 	/**

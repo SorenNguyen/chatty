@@ -117,7 +117,8 @@ log, hand it to somebody else — edit your own profile, change your password, o
 one, move the account to a new email address, turn read receipts off, delete the account entirely,
 send an image with or without a caption, rewrite or retract a recent message, inspect its edit
 history, remove any message from your own view, and search inside the open conversation for a message
-you half remember. Last-seen timestamps follow the privacy choice in profile settings.
+you half remember. Last-seen timestamps follow the privacy choice in account settings, which open as a dialog over the
+chat rather than replacing it.
 
 Deleting leaves a marked-out placeholder rather than a hole: the text is emptied and the image and its
 file are removed, but the row stays so that other people's read markers and the paging cursor still
@@ -138,12 +139,12 @@ the paging cursor still point at those rows. Read receipts can be turned off, an
 symmetric — hide yours and you stop seeing everyone else's, with nothing revealed retroactively when
 you turn them back on. See [docs/ROADMAP.md](docs/ROADMAP.md) phase 13.
 
-Verified by 336 server tests (against a real Postgres), 146 web tests, and 15 Playwright specs
+Verified by 353 server tests (against a real Postgres), 176 web tests, and 20 Playwright specs
 driving a real browser against a real server — plus typecheck, lint, the conventions audit, and a
 production image build. CI runs all of it except the browser suite on every push.
 
 **[docs/ROADMAP.md](docs/ROADMAP.md) is the current source of truth for what is done and what is
-next.** Phases 1 to 15 are complete. Phase 7 makes group and password-reset transitions safe under
+next.** Phases 1 to 16 are complete. Phase 7 makes group and password-reset transitions safe under
 concurrent requests: one conversation lock orders membership-sensitive writes, PostgreSQL enforces
 the owner/message invariants, and fault-injection tests prove partial writes do not escape. Phase 8
 adds editing and deleting your own messages, on the same lock, with the deletion kept as a tombstone
@@ -160,7 +161,21 @@ deleting the account — and it is where `Message.authorId` stopped cascading, s
 without taking half of everyone else's conversations with them. Phase 14 closed the four Known gaps
 that were defects rather than missing features: unread now starts when you joined a group, a second
 test run refuses rather than corrupting the first, the web app has a Content-Security-Policy, and
-attachment files left by a failed upload are swept.
+attachment files left by a failed upload are swept. Phase 16 gives the app one declared look instead
+of the framework's defaults — ink on ivory paper, one signal colour, everything a machine produced set
+in mono, self-hosted fonts so the Content-Security-Policy stays as strict as phase 14 left it — and
+moves account settings into a dialog over the chat, so changing your display name no longer costs you
+the conversation you were reading. `/profile` still deep-links to it and Back still closes it. Phase 17
+is the geometry inside that look: a run of messages from one person is now one shape with one tail
+rather than five bubbles each claiming their own, every timestamp moved off its own line into the
+gutter beside the bubble, and the type changed to Geist and Geist Mono — one superfamily, and the
+first pair in this app to ship a Vietnamese subset, so a name with diacritics no longer falls out of
+the font mid-word. It also adds the two things a message could not do: **reactions** (a closed set of
+five, grouped by kind with participant names on hover) and **replies** (a self-relation, so an edited
+original re-quotes itself, a deleted one quotes as a tombstone, and an image reply keeps a small
+thumbnail). Message bursts now break after a real pause rather than sticking together for hours, and
+the mobile layout is a deliberate conversation-list → thread → back flow instead of a squeezed
+two-column desktop shell.
 
 Largest known gaps:
 
@@ -184,9 +199,10 @@ Largest known gaps:
   same limits.
 - **An attachment URL works for anyone holding it, until it expires.** Signed and scoped to one image
   with a one-hour life, but bearer proof for that hour — see
-  [ADR 0007](docs/adr/0007-signed-attachment-urls.md). One image per message; no lightbox and no upload
-  progress. Files left behind by a send that failed midway are swept every six hours as of phase 14;
-  avatar files are not swept yet.
+  [ADR 0007](docs/adr/0007-signed-attachment-urls.md). Still one image per message — several would need
+  a gallery in the thread and an answer to what a mixed caption-plus-many-images looks like. Files left
+  behind by a send that failed midway are swept every six hours as of phase 14; avatar files are not
+  swept yet.
 - **Still no TLS, reverse proxy, load balancer or object storage.** The two API instances sit on
   separate ports rather than behind anything, and uploads are a shared volume — which works on one
   machine and does not survive per-machine disks. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).

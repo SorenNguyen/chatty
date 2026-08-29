@@ -46,8 +46,8 @@ export function ConversationMessageSearch({
 	}
 
 	return (
-		<div className="flex min-h-12 items-center gap-2 border-b border-slate-200 bg-white px-5">
-			<Search className="size-4 shrink-0 text-slate-400" />
+		<div className="flex min-h-12 shrink-0 items-center gap-2 border-b border-rule bg-paper-raised px-7">
+			<Search className="size-4 shrink-0 text-ink-faint" />
 			<input
 				ref={inputRef}
 				value={query}
@@ -64,18 +64,18 @@ export function ConversationMessageSearch({
 				}}
 				placeholder="Search in conversation"
 				aria-label="Search in conversation"
-				className="min-w-0 flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
+				className="min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-faint"
 			/>
-			{isSearching && <span className="text-xs text-slate-400">Searching…</span>}
-			{error && <span className="max-w-48 truncate text-xs text-red-600">{error}</span>}
-			{hasNoResults && !isSearching && <span className="text-xs text-slate-500">No results</span>}
+			{isSearching && <span className="eyebrow text-ink-faint">Searching…</span>}
+			{error && <span className="eyebrow max-w-48 truncate text-signal">{error}</span>}
+			{hasNoResults && !isSearching && <span className="eyebrow text-ink-faint">No results</span>}
 			{query.trim().length >= MESSAGE_SEARCH_MIN_LENGTH && results.length > 0 && (
-				<span className="shrink-0 text-xs tabular-nums text-slate-500">
+				<span className="meta shrink-0 text-ink-faint">
 					{activeIndex + 1} of {results.length}
 				</span>
 			)}
 			{hasMore && activeIndex === results.length - 1 && (
-				<Button variant="ghost" onClick={loadMore} disabled={isLoadingMore} className="shrink-0 px-2 text-xs">
+				<Button variant="ghost" onClick={loadMore} disabled={isLoadingMore} className="eyebrow shrink-0 px-2">
 					{isLoadingMore ? "Loading…" : "More"}
 				</Button>
 			)}
@@ -84,7 +84,7 @@ export function ConversationMessageSearch({
 				onClick={() => selectIndex(activeIndex - 1)}
 				disabled={activeIndex === 0 || results.length === 0}
 				aria-label="Newer search result"
-				className="size-8 p-0"
+				className="size-8 shrink-0 p-0"
 			>
 				<ChevronUp className="size-4" />
 			</Button>
@@ -93,11 +93,16 @@ export function ConversationMessageSearch({
 				onClick={() => selectIndex(activeIndex + 1)}
 				disabled={activeIndex >= results.length - 1}
 				aria-label="Older search result"
-				className="size-8 p-0"
+				className="size-8 shrink-0 p-0"
 			>
 				<ChevronDown className="size-4" />
 			</Button>
-			<Button variant="ghost" onClick={onClose} aria-label="Close conversation search" className="size-8 p-0">
+			<Button
+				variant="ghost"
+				onClick={onClose}
+				aria-label="Close conversation search"
+				className="size-8 shrink-0 p-0"
+			>
 				<X className="size-4" />
 			</Button>
 		</div>

@@ -1,5 +1,5 @@
-import type { MessageDTO } from "@chatty/shared-types";
-import type { MessageKind } from "@prisma/client";
+import type { MessageDTO, MessageReplyDTO, ReactionDTO, ReactionKind } from "@chatty/shared-types";
+import type { MessageKind, ReactionKind as PrismaReactionKind } from "@prisma/client";
 import { buildAttachmentUrl } from "../../lib/attachment-storage.js";
 import { toUserDTO, userSelect, type UserRow } from "../users/users.mapper.js";
 import { MESSAGE_AUTHOR_ACTION_WINDOW_MS } from "./messages.constants.js";
@@ -31,6 +31,43 @@ interface AttachmentRow {
 	byteSize: number;
 }
 
+interface ReactionRow {
+	userId: string;
+	kind: PrismaReactionKind;
+}
+
+/**
+ * The parent of a reply, read shallowly.
+ *
+ * Deliberately not `MessageRow`: nesting the full select into itself would make
+ * every message carry its parent's parent, and a thread five replies deep would
+ * send the whole chain down the wire to render one quoted line. One level, and
+ * only the columns the quote shows.
+ */
+interface ReplyParentRow {
+	id: string;
+	content: string;
+	deletedAt: Date | null;
+	author: { displayName: string } | null;
+	attachment: { id: string } | null;
+}
+
+/**
+ * The database spelling of a reaction, and the wire spelling.
+ *
+ * Two vocabularies on purpose, the same split `MessageKind` already makes: the
+ * enum is SHOUTING_SNAKE because that is what Postgres enums look like, and the
+ * DTO is kebab-case because that is what the rest of the client's types look
+ * like. Mapping in one place is what stops `THUMBS_UP` leaking into a className.
+ */
+const REACTION_KIND_TO_DTO: Record<PrismaReactionKind, ReactionKind> = {
+	HEART: "heart",
+	THUMBS_UP: "thumbs-up",
+	LAUGH: "laugh",
+	FROWN: "frown",
+	ANGRY: "angry",
+};
+
 export interface MessageRow {
 	id: string;
 	conversationId: string;
@@ -42,6 +79,8 @@ export interface MessageRow {
 	editedAt: Date | null;
 	deletedAt: Date | null;
 	attachment: AttachmentRow | null;
+	reactions: ReactionRow[];
+	replyTo: ReplyParentRow | null;
 }
 
 export const messageSelect = {
@@ -58,7 +97,60 @@ export const messageSelect = {
 	editedAt: true,
 	deletedAt: true,
 	attachment: { select: { id: true, width: true, height: true, byteSize: true } },
+	// Oldest first, which is what makes the chip order stable: a kind holds the
+	// position it was first used in rather than hopping about as counts change
+	// under it. Grouping happens in `toReactionDTOs`, not in SQL — the rows are a
+	// handful per message and a groupBy per message would be a second query.
+	reactions: { select: { userId: true, kind: true }, orderBy: { createdAt: "asc" } },
+	// One level deep. See `ReplyParentRow`.
+	replyTo: {
+		select: {
+			id: true,
+			content: true,
+			deletedAt: true,
+			author: { select: { displayName: true } },
+			attachment: { select: { id: true } },
+		},
+	},
 } as const;
+
+/**
+ * Rolls the reaction rows up into one entry per kind.
+ *
+ * A `Map` rather than an object literal because insertion order is the contract
+ * here — the rows arrive oldest-first and the chips render in that order.
+ */
+function toReactionDTOs(rows: ReactionRow[]): ReactionDTO[] {
+	const byKind = new Map<ReactionKind, string[]>();
+	for (const row of rows) {
+		const kind = REACTION_KIND_TO_DTO[row.kind];
+		const userIds = byKind.get(kind);
+		if (userIds) userIds.push(row.userId);
+		else byKind.set(kind, [row.userId]);
+	}
+
+	return [...byKind].map(([kind, userIds]) => ({ kind, userIds }));
+}
+
+/**
+ * Quotes the parent of a reply as it stands *now*.
+ *
+ * A deleted parent surrenders its text here rather than in the client: the
+ * server already empties `content` on delete, and this makes the quote obey the
+ * same rule even if a stale row ever slipped through.
+ */
+function toReplyDTO(row: ReplyParentRow): MessageReplyDTO {
+	const isDeleted = row.deletedAt !== null;
+
+	return {
+		id: row.id,
+		authorName: row.author?.displayName ?? null,
+		content: isDeleted ? "" : row.content,
+		hasAttachment: !isDeleted && row.attachment !== null,
+		attachmentUrl: !isDeleted && row.attachment ? buildAttachmentUrl(row.attachment.id) : null,
+		isDeleted,
+	};
+}
 
 export function toMessageDTO(row: MessageRow): MessageDTO {
 	return {
@@ -85,5 +177,10 @@ export function toMessageDTO(row: MessageRow): MessageDTO {
 				: null,
 		editedAt: row.editedAt?.toISOString() ?? null,
 		deletedAt: row.deletedAt?.toISOString() ?? null,
+		// A tombstone drops its reactions along with its text: they were left on
+		// something that no longer says anything, and leaving three hearts under
+		// "This message was deleted" reads as approval of the deletion.
+		reactions: row.deletedAt ? [] : toReactionDTOs(row.reactions),
+		replyTo: row.replyTo ? toReplyDTO(row.replyTo) : null,
 	};
 }

@@ -9,7 +9,12 @@ import { getIO, userRoom } from "../../lib/socket-bus.js";
 import { assertParticipant } from "../conversations/conversations.service.js";
 import { messageSelect, toMessageDTO } from "./messages.mapper.js";
 import { MESSAGE_AUTHOR_ACTION_WINDOW_MS } from "./messages.constants.js";
-import type { EditMessageInput, ListMessagesQuery, MessageContextQuery } from "./messages.schema.js";
+import type {
+	EditMessageInput,
+	ListMessagesQuery,
+	MessageContextQuery,
+	ToggleReactionInput,
+} from "./messages.schema.js";
 
 /**
  * What `sendMessage` takes. Not the Zod type: the image arrives as `req.file`
@@ -19,7 +24,18 @@ export interface SendMessageArgs {
 	/** Empty string for a message that is only an image. */
 	content: string;
 	attachment?: Buffer | undefined;
+	/** The message being answered, already validated as a string by the schema. */
+	replyToId?: string | undefined;
 }
+
+/** The wire spelling of a reaction kind, and the enum the database stores. */
+const REACTION_KIND_TO_COLUMN = {
+	heart: "HEART",
+	"thumbs-up": "THUMBS_UP",
+	laugh: "LAUGH",
+	frown: "FROWN",
+	angry: "ANGRY",
+} as const;
 
 export async function sendMessage(
 	currentUserId: string,
@@ -51,11 +67,28 @@ export async function sendMessage(
 
 		await assertParticipant(currentUserId, conversationId, transaction);
 
+		// The half of the reply rule no foreign key can express. Scoping the lookup
+		// by `conversationId` rather than fetching the message and comparing is
+		// deliberate: it cannot be got wrong by a later edit, and it never reveals
+		// that an id exists somewhere the sender cannot see — a miss is a miss
+		// whether the message is in another conversation or in none.
+		//
+		// Inside the transaction, after the membership re-check, so a reply racing
+		// with a kick is refused on the same honest ordering the send itself is.
+		if (input.replyToId) {
+			const parent = await transaction.message.findFirst({
+				where: { id: input.replyToId, conversationId },
+				select: { id: true },
+			});
+			if (!parent) throw new ValidationError("You can only reply to a message in this conversation");
+		}
+
 		const created = await transaction.message.create({
 			data: {
 				conversationId,
 				authorId: currentUserId,
 				content: input.content,
+				...(input.replyToId ? { replyToId: input.replyToId } : {}),
 				...(stored && attachmentId ? { attachment: { create: { id: attachmentId, ...stored } } } : {}),
 			},
 			select: messageSelect,
@@ -382,6 +415,62 @@ export async function deleteMessage(
 	// Nothing to announce when it was already a tombstone: everyone was told the
 	// first time, and a second event would only re-render what is already there.
 	if (!wasAlreadyDeleted) getIO().to(conversationId).emit("message:updated", messageDTO);
+
+	return messageDTO;
+}
+
+/**
+ * Adds or removes the caller's reaction of one kind on one message.
+ *
+ * A toggle rather than an add and a remove, because the caller never has to know
+ * which it is doing: the button that puts a heart on is the button that takes it
+ * off, and asking the client to track its own state would make a double-click
+ * across two tabs disagree with the database. The composite primary key does the
+ * deciding — `deleteMany` returns how many rows it removed, and zero means there
+ * was nothing there, so create one.
+ *
+ * Returns the whole message rather than the reaction, for the same reason
+ * `deleteMessage` returns the tombstone: what the client renders is the message,
+ * and re-reading it here is what makes the broadcast and the response identical.
+ */
+export async function toggleReaction(
+	currentUserId: string,
+	conversationId: string,
+	messageId: string,
+	input: ToggleReactionInput,
+): Promise<MessageDTO> {
+	await assertParticipant(currentUserId, conversationId);
+	const kind = REACTION_KIND_TO_COLUMN[input.kind];
+
+	const target = await prisma.message.findFirst({
+		// Scoped by conversation, so an id from a conversation the caller is not in
+		// is a 404 rather than a reaction landing somewhere they cannot see.
+		where: { id: messageId, conversationId },
+		select: { id: true, deletedAt: true, kind: true },
+	});
+	if (!target) throw new NotFoundError("Message not found");
+	// Both refusals are about there being nothing to react *to*. A tombstone has
+	// surrendered its content, and the mapper drops its reactions anyway — storing
+	// one would be a row nobody could ever see. A system line is the app talking.
+	if (target.deletedAt) throw new ValidationError("This message was deleted");
+	if (target.kind === "SYSTEM") throw new ValidationError("You cannot react to a system message");
+
+	const removed = await prisma.messageReaction.deleteMany({
+		where: { messageId, userId: currentUserId, kind },
+	});
+	if (removed.count === 0) {
+		await prisma.messageReaction.create({ data: { messageId, userId: currentUserId, kind } });
+	}
+
+	const message = await prisma.message.findUniqueOrThrow({ where: { id: messageId }, select: messageSelect });
+	const messageDTO = toMessageDTO(message);
+
+	// `message:updated`, not an event of its own. The DTO carries the whole
+	// reaction list, so a client replaces by id and has nothing to merge — and a
+	// merge that goes wrong on a reaction is a count that drifts and never
+	// recovers. It also means every surface that already renders an edit renders
+	// this, including the one that arrives while you are scrolled away.
+	getIO().to(conversationId).emit("message:updated", messageDTO);
 
 	return messageDTO;
 }

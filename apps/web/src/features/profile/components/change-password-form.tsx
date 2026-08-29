@@ -101,12 +101,12 @@ export function ChangePasswordForm() {
 			/>
 
 			{errors.form && (
-				<p role="alert" className="text-sm text-red-600">
+				<p role="alert" className="text-[13px] text-signal">
 					{errors.form}
 				</p>
 			)}
 			{isChanged && (
-				<p className="text-sm text-green-700">
+				<p className="text-[13px] text-live">
 					Password changed. Everywhere else you were signed in has been signed out.
 				</p>
 			)}

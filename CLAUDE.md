@@ -24,6 +24,8 @@ Read this before writing any code. It is the entry point: the conventions block 
 - Types: `interface over type` <!-- `type` still correct for unions/intersections/mapped types -->
 - React version: `18` <!-- turns off the React.FormEvent rule; revisit on upgrade to 19 -->
 - Styling helper: `cn()` <!-- @/utils/cn — Tailwind CSS v4 + clsx + tailwind-merge -->
+- Colours: `design tokens only` <!-- @theme in src/styles/globals.css; a numbered Tailwind swatch is a bug, audit 29 catches it -->
+- Fonts: `Archivo / IBM Plex Mono / Instrument Serif` <!-- self-hosted via @fontsource — the CSP is style-src 'self' -->
 - Button: `Button from @/components/button` <!-- build it before the first button is needed -->
 - Icons: `lucide-react`
 - Images: `raw <img> allowed` <!-- no Next.js image component in a Vite app -->
@@ -62,6 +64,8 @@ Naming, TypeScript, and code-style rules apply everywhere. Folder-structure rule
 - [ ] **Pure constants** (not derived from props/state) moved to the feature's `constants/`.
 - [ ] **Helper functions** (formatting, calculation) moved to the feature's `utils/`.
 - [ ] **Buttons / icons / images from the declared source only.** No mixing.
+- [ ] **Every colour from the palette.** `bg-slate-100` renders fine and is the wrong colour on a page
+      with no other grey on it. Anything a machine produced — a time, a handle, a count — is mono.
 - [ ] **No inline object type** in the signature — declare a `<ComponentName>Props` interface.
 - [ ] **Blank line before `return`** when there is logic above it.
 - [ ] **No duplicate helper.** Grep before writing `formatTime`, `getInitials`, ... — used in 2+ places
@@ -135,8 +139,9 @@ by reading the checklist against the diff:
 | constant *arrays* in feature component files | object maps, and anything under `src/components/` |
 | boolean *state* (`useState`) missing an `is`/`has` prefix | a plain `const startsRun = a !== b` |
 | — | types declared in a component file that belong in `types/` |
+| — | a Tailwind default swatch where a design token belongs |
 
-Sections 26-28 were added to close exactly those three. Assume the next gap is equally invisible:
+Sections 26-29 were added to close exactly those four. Assume the next gap is equally invisible:
 when a change adds files, read the **Component checklist** at the top of this file against them by
 hand. A 0-hit audit is evidence, not proof.
 

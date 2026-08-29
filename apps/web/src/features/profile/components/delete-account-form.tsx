@@ -45,11 +45,11 @@ export function DeleteAccountForm() {
 	if (!isConfirming) {
 		return (
 			<div className="flex flex-col gap-3">
-				<p className="text-sm text-slate-600">
+				<p className="text-[13px] leading-normal text-ink-soft">
 					Your account, your avatar and every session you have open are removed. Messages you have already
 					sent stay in their conversations, with your name taken off them.
 				</p>
-				<Button variant="ghost" onClick={() => setIsConfirming(true)} className="text-red-600 hover:bg-red-50">
+				<Button variant="danger" onClick={() => setIsConfirming(true)} className="self-start">
 					Delete my account
 				</Button>
 			</div>
@@ -58,7 +58,9 @@ export function DeleteAccountForm() {
 
 	return (
 		<form onSubmit={handleSubmit} className="flex flex-col gap-4">
-			<p className="text-sm text-slate-600">This cannot be undone. Enter your password to confirm.</p>
+			<p className="text-[13px] leading-normal text-ink-soft">
+				This cannot be undone. Enter your password to confirm.
+			</p>
 			{/* Distinct from the other two password fields on this page — see the note
 			    in change-email-form.tsx. */}
 			<TextField
@@ -74,7 +76,7 @@ export function DeleteAccountForm() {
 			/>
 
 			<div className="flex gap-2">
-				<Button type="submit" disabled={isDeleting} className="bg-red-600 hover:bg-red-700">
+				<Button type="submit" variant="danger" disabled={isDeleting}>
 					{isDeleting ? "Deleting…" : "Delete permanently"}
 				</Button>
 				<Button

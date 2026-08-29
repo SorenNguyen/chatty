@@ -11,11 +11,42 @@ test.describe("account", () => {
 		await page.getByRole("button", { name: "Save changes" }).click();
 		await expect(page.getByText("Profile saved")).toBeVisible();
 
-		await page.getByRole("link", { name: "Back to chat" }).click();
+		await page.getByRole("button", { name: "Close settings" }).click();
+		await expect(page.getByRole("dialog")).toHaveCount(0);
 
-		// The sidebar reads from the auth store, so this is what proves the
-		// refreshed profile was written back into it rather than only returned.
-		await expect(page.getByText("Rio Renamed")).toBeVisible();
+		// Scoped to the sidebar, and that is the assertion rather than a way of
+		// dodging a strict-mode violation: the dialog carries an account chip of
+		// its own, so an unscoped match would pass on the name the form had just
+		// echoed back. What is being proved is that the refreshed profile reached
+		// the auth store the sidebar reads from, not merely that it was returned.
+		await expect(page.getByRole("complementary").getByText("Rio Renamed")).toBeVisible();
+	});
+
+	test("settings open over the chat, and /profile still deep-links to them", async ({ page }) => {
+		// The point of the dialog. A settings screen that replaced the page cost
+		// you the conversation you were reading to change your own display name,
+		// and the URL is kept so the link a colleague sends still works.
+		const user = makeUser("Uma");
+		await register(page, user);
+
+		await page.getByLabel("Account settings").click();
+		await expect(page).toHaveURL(/\/profile$/);
+		await expect(page.getByRole("dialog")).toBeVisible();
+		// The chat is still there underneath rather than unmounted.
+		await expect(page.getByLabel("Find someone")).toBeVisible();
+
+		// Back closes the dialog, because closing it is a navigation.
+		await page.goBack();
+		await expect(page.getByRole("dialog")).toHaveCount(0);
+
+		// And a cold load of the URL lands in the same place, chat included.
+		await page.goto("/profile");
+		await expect(page.getByRole("dialog")).toBeVisible();
+		await expect(page.getByLabel("Find someone")).toBeVisible({ timeout: 15_000 });
+
+		await page.keyboard.press("Escape");
+		await expect(page.getByRole("dialog")).toHaveCount(0);
+		await expect(page).toHaveURL(/\/chat$/);
 	});
 
 	test("a changed password is the one that works afterwards", async ({ page }) => {
@@ -23,14 +54,14 @@ test.describe("account", () => {
 		await register(page, user);
 
 		await page.getByLabel("Account settings").click();
-		await page.getByRole("button", { name: "Security" }).click();
+		await page.getByRole("button", { name: "Password" }).click();
 		await page.getByLabel("Current password").fill(user.password);
 		await page.getByLabel("New password", { exact: true }).fill("BrandNewSecret456");
 		await page.getByLabel("Confirm new password").fill("BrandNewSecret456");
 		await page.getByRole("button", { name: "Change password" }).click();
 		await expect(page.getByText(/password changed/i)).toBeVisible();
 
-		await page.getByRole("link", { name: "Back to chat" }).click();
+		await page.getByRole("button", { name: "Close settings" }).click();
 		await page.getByLabel("Sign out").click();
 
 		await page.getByLabel("Email").fill(user.email);

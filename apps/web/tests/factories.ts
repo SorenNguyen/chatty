@@ -63,7 +63,10 @@ export function makeMessage(
 	// Last, and both defaulting to "never": a message that was neither edited nor
 	// deleted is what every existing test means by one, and adding these ahead of
 	// `attachment` would have rewritten every call site to say so.
-	overrides: Pick<Partial<MessageDTO>, "authorActionExpiresAt" | "editedAt" | "deletedAt"> = {},
+	overrides: Pick<
+		Partial<MessageDTO>,
+		"authorActionExpiresAt" | "createdAt" | "editedAt" | "deletedAt" | "reactions" | "replyTo"
+	> = {},
 ): MessageDTO {
 	return {
 		id,
@@ -76,6 +79,8 @@ export function makeMessage(
 		authorActionExpiresAt: "2099-08-23T18:00:00.000Z",
 		editedAt: null,
 		deletedAt: null,
+		reactions: [],
+		replyTo: null,
 		...overrides,
 	};
 }
@@ -100,6 +105,10 @@ export function makeSystemMessage(id: string, content: string): MessageDTO {
 		// there is nobody who may change it — the database refuses both.
 		editedAt: null,
 		deletedAt: null,
+		// A system line cannot be reacted to or replied to either — the service
+		// refuses both — so these are flat empties rather than overridable.
+		reactions: [],
+		replyTo: null,
 	};
 }
 

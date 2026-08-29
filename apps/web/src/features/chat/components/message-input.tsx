@@ -1,15 +1,27 @@
 import { useEffect, useRef, useState } from "react";
-import { ImagePlus, SendHorizontal, X } from "lucide-react";
+import { ArrowUp, CornerUpLeft, ImagePlus, X } from "lucide-react";
+import type { MessageDTO } from "@chatty/shared-types";
 import { Button } from "@/components/button";
 import { api } from "@/api/client";
+import { cn } from "@/utils/cn";
 import { ACCEPTED_IMAGE_TYPES } from "../constants/attachment";
+import { ATTACHMENT_PREVIEW_TEXT, DELETED_AUTHOR_NAME } from "../constants/message";
 import { useTypingNotifier } from "../hooks";
 
 interface MessageInputProps {
 	conversationId: string;
+	/** The message being answered, or null for an ordinary send. Owned by the page. */
+	replyTo: MessageDTO | null;
+	onCancelReply: () => void;
 }
 
-export function MessageInput({ conversationId }: MessageInputProps) {
+/**
+ * The composer: one bordered block with the field on top and its controls under
+ * it, rather than a row of a pill, a paperclip and a circle. The block is the
+ * same shape as the bubbles above it, which is what makes writing look like the
+ * beginning of the thread rather than a separate piece of furniture.
+ */
+export function MessageInput({ conversationId, replyTo, onCancelReply }: MessageInputProps) {
 	const [content, setContent] = useState("");
 	const [attachment, setAttachment] = useState<File | null>(null);
 	const [previewUrl, setPreviewUrl] = useState("");
@@ -65,13 +77,23 @@ export function MessageInput({ conversationId }: MessageInputProps) {
 		setUploadProgress(0);
 		setError("");
 		try {
-			await api.sendMessage(conversationId, content.trim(), attachment ?? undefined, setUploadProgress);
+			await api.sendMessage(
+				conversationId,
+				content.trim(),
+				attachment ?? undefined,
+				setUploadProgress,
+				replyTo?.id,
+			);
 			// Deliberately no local append: the server broadcasts this message back
 			// over the socket, and rendering from that one source keeps the sender's
 			// view on the same code path as everyone else's. Appending here too
 			// would show it twice.
 			setContent("");
 			setAttachment(null);
+			// Cleared only on success, alongside the text. A reply that failed to
+			// send still has a target, and making the sender re-pick it after a
+			// dropped connection loses the one piece of context they chose.
+			onCancelReply();
 		} catch (sendError) {
 			// The file is kept on failure — re-picking it after a dropped
 			// connection is the most annoying possible way to lose a photo.
@@ -82,66 +104,121 @@ export function MessageInput({ conversationId }: MessageInputProps) {
 	}
 
 	return (
-		<form onSubmit={handleSubmit} className="border-t border-slate-200 p-3">
-			{error && <p className="mb-2 text-xs text-red-600">{error}</p>}
-			{isSending && attachment && (
-				<div className="mb-2" role="status" aria-label={`Uploading image ${uploadProgress}%`}>
-					<div className="mb-1 flex justify-between text-xs text-slate-500">
-						<span>Uploading image</span>
-						<span>{uploadProgress}%</span>
+		<div className="shrink-0 bg-paper px-3 pb-3 pt-2 sm:px-5 sm:pb-4 md:px-7 md:pb-6">
+			<form
+				onSubmit={handleSubmit}
+				className={cn(
+					"flex flex-col rounded-bubble border bg-paper-raised focus-within:border-ink-faint",
+					replyTo ? "border-ink-faint" : "border-rule",
+				)}
+			>
+				{replyTo && (
+					<div className="flex items-start gap-2.5 border-b border-rule-soft px-4 py-2.5">
+						<CornerUpLeft aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-ink-faint" />
+						<div className="flex min-w-0 flex-col gap-0.5">
+							<span className="eyebrow text-ink-faint">
+								Replying to {replyTo.author?.displayName ?? DELETED_AUTHOR_NAME}
+							</span>
+							<span className="truncate text-[12.5px]/[1.45] text-ink-soft">
+								{replyTo.content || (replyTo.attachment ? ATTACHMENT_PREVIEW_TEXT : "")}
+							</span>
+						</div>
+						{replyTo.attachment && (
+							<img
+								src={replyTo.attachment.url}
+								alt=""
+								className="ml-auto size-10 shrink-0 rounded-control border border-rule object-cover"
+							/>
+						)}
+						<Button
+							variant="ghost"
+							onClick={onCancelReply}
+							aria-label="Cancel reply"
+							className={cn(
+								"size-6 shrink-0 p-0 text-ink-faint hover:bg-transparent hover:text-ink",
+								!replyTo.attachment && "ml-auto",
+							)}
+						>
+							<X className="size-3.5" />
+						</Button>
 					</div>
-					<div className="h-1.5 overflow-hidden rounded-full bg-slate-200">
-						<div
-							className="h-full rounded-full bg-blue-600 transition-[width]"
-							style={{ width: `${uploadProgress}%` }}
+				)}
+
+				{error && (
+					<p role="alert" className="eyebrow border-b border-rule-soft px-4 py-2.5 text-signal">
+						{error}
+					</p>
+				)}
+
+				{isSending && attachment && (
+					<div className="px-4 pt-3" role="status" aria-label={`Uploading image ${uploadProgress}%`}>
+						<div className="mb-1.5 flex justify-between">
+							<span className="eyebrow text-ink-faint">Uploading image</span>
+							<span className="meta text-ink-faint">{uploadProgress}%</span>
+						</div>
+						<div className="h-[3px] overflow-hidden rounded-badge bg-rule-soft">
+							<div className="h-full bg-ink transition-[width]" style={{ width: `${uploadProgress}%` }} />
+						</div>
+					</div>
+				)}
+
+				{previewUrl && (
+					<div className="relative m-4 mb-0 inline-block w-fit">
+						<img
+							src={previewUrl}
+							alt="Attached image preview"
+							className="h-20 rounded-control border border-rule object-cover"
 						/>
+						<Button
+							variant="ghost"
+							onClick={() => setAttachment(null)}
+							aria-label="Remove attached image"
+							className="absolute -right-2 -top-2 size-5 rounded-badge border border-rule bg-paper-raised p-0 text-ink-soft"
+						>
+							<X className="size-3" />
+						</Button>
 					</div>
-				</div>
-			)}
-
-			{previewUrl && (
-				<div className="relative mb-2 inline-block">
-					<img src={previewUrl} alt="Attached image preview" className="h-20 rounded-lg object-cover" />
-					<Button
-						variant="ghost"
-						onClick={() => setAttachment(null)}
-						aria-label="Remove attached image"
-						className="absolute -right-2 -top-2 size-5 rounded-full border border-slate-200 bg-white p-0 text-slate-500 hover:bg-slate-100"
-					>
-						<X className="size-3" />
-					</Button>
-				</div>
-			)}
-
-			<div className="flex items-center gap-2">
-				<input
-					ref={fileInputRef}
-					type="file"
-					accept={ACCEPTED_IMAGE_TYPES}
-					onChange={handleFileSelected}
-					className="hidden"
-				/>
-				<Button
-					variant="ghost"
-					onClick={() => fileInputRef.current?.click()}
-					disabled={isSending}
-					aria-label="Attach an image"
-					className="rounded-full px-2"
-				>
-					<ImagePlus className="size-4" />
-				</Button>
+				)}
 
 				<input
 					value={content}
 					onChange={handleChange}
-					placeholder="Type a message"
+					placeholder="Write a message"
 					aria-label="Message"
-					className="flex-1 rounded-full border border-slate-300 px-4 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+					className="bg-transparent px-4 pb-2.5 pt-3.5 text-sm text-ink outline-none placeholder:text-ink-faint"
 				/>
-				<Button type="submit" disabled={isSending || !hasSomethingToSend} className="rounded-full px-3">
-					<SendHorizontal className="size-4" />
-				</Button>
-			</div>
-		</form>
+
+				<div className="flex items-center justify-between gap-3 px-2.5 pb-2.5">
+					<input
+						ref={fileInputRef}
+						type="file"
+						accept={ACCEPTED_IMAGE_TYPES}
+						onChange={handleFileSelected}
+						className="hidden"
+					/>
+					<Button
+						variant="ghost"
+						onClick={() => fileInputRef.current?.click()}
+						disabled={isSending}
+						aria-label="Attach an image"
+						className="size-7 shrink-0 p-0"
+					>
+						<ImagePlus className="size-4" />
+					</Button>
+
+					<div className="flex items-center gap-3">
+						<span className="eyebrow text-ink-faint max-sm:hidden">Enter to send</span>
+						<Button
+							type="submit"
+							disabled={isSending || !hasSomethingToSend}
+							aria-label="Send message"
+							className="size-8 shrink-0 p-0"
+						>
+							<ArrowUp className="size-4" />
+						</Button>
+					</div>
+				</div>
+			</form>
+		</div>
 	);
 }

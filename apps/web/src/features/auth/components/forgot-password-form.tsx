@@ -41,9 +41,9 @@ export function ForgotPasswordForm() {
 
 	if (isSent) {
 		return (
-			<p className="text-sm text-slate-600">
-				If an account exists for <span className="font-medium text-slate-900">{email.trim()}</span>, a reset
-				link is on its way. It is good for one hour.
+			<p className="text-[13px] leading-normal text-ink-soft">
+				If an account exists for <span className="font-semibold text-ink">{email.trim()}</span>, a reset link is
+				on its way. It is good for one hour.
 			</p>
 		);
 	}

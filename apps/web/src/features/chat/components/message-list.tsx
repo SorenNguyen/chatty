@@ -1,15 +1,13 @@
-import type { MessageDTO, ParticipantDTO } from "@chatty/shared-types";
-import { useEffect, useState } from "react";
-import { Avatar } from "@/components/avatar";
+import type { MessageDTO, ParticipantDTO, ReactionKind } from "@chatty/shared-types";
+import { Fragment, useEffect, useState } from "react";
 import { Button } from "@/components/button";
-import { MessageActions } from "./message-actions";
-import { MessageAttachment } from "./message-attachment";
-import { MessageEditor } from "./message-editor";
-import { MessageEditHistory } from "./message-edit-history";
-import { cn } from "@/utils/cn";
-import { DELETED_AUTHOR_NAME, DELETED_MESSAGE_TEXT, EDITED_MESSAGE_LABEL } from "../constants/message";
 import { useMessageScroll } from "../hooks";
-import { formatMessageTime, getReadReceipt } from "../utils";
+import { getClusterPosition, getReadReceipt, hasMessageTimeGap, isNewDay, isWithinMessageBurst } from "../utils";
+import { DaySeparator } from "./day-separator";
+import { MessageEditHistory } from "./message-edit-history";
+import { MessageRow } from "./message-row";
+import { MessageTimeSeparator } from "./message-time-separator";
+import { SystemMessage } from "./system-message";
 
 interface MessageListProps {
 	messages: MessageDTO[];
@@ -44,10 +42,21 @@ interface MessageListProps {
 	onEditMessage: (messageId: string, content: string) => void;
 	onDeleteMessage: (messageId: string) => void;
 	onHideMessage: (messageId: string) => void;
+	onToggleReaction: (messageId: string, kind: ReactionKind) => void;
+	/** Puts a message in the composer's reply slot. Owned by the page, which owns the composer. */
+	onReplyToMessage: (message: MessageDTO) => void;
 	targetMessageId?: string | null;
 	onReturnToLatest?: () => void;
 }
 
+/**
+ * The thread: day rules, system lines and message rows, in one scroll container.
+ *
+ * What stays here rather than moving into `MessageRow` is everything a row
+ * cannot answer on its own — where the day changes, where a run of messages from
+ * one person begins, which single message the "Seen" marker belongs on, and
+ * which one is open for editing.
+ */
 export function MessageList({
 	messages,
 	currentUserId,
@@ -63,6 +72,8 @@ export function MessageList({
 	onEditMessage,
 	onDeleteMessage,
 	onHideMessage,
+	onToggleReaction,
+	onReplyToMessage,
 	targetMessageId,
 	onReturnToLatest,
 }: MessageListProps) {
@@ -87,195 +98,154 @@ export function MessageList({
 	}
 
 	return (
-		<div ref={containerRef} onScroll={handleScroll} className="h-full overflow-y-auto">
-			{targetMessageId && onReturnToLatest && (
-				<div className="sticky top-2 z-10 flex justify-center">
-					<Button
-						variant="ghost"
-						onClick={onReturnToLatest}
-						className="border border-slate-200 bg-white px-3 py-1.5 text-xs shadow-sm"
-					>
-						Return to latest messages
-					</Button>
-				</div>
-			)}
-			{isLoadingOlder && <p className="py-3 text-center text-xs text-slate-500">Loading earlier messages…</p>}
+		<div ref={containerRef} onScroll={handleScroll} className="h-full overflow-y-auto bg-paper">
+			{/* `justify-end` on a wrapper that is at least as tall as the viewport is
+			    what makes a short conversation sit on the composer rather than
+			    hanging from the header with a screen of empty paper under it. It
+			    does nothing once the thread is long enough to scroll. */}
+			<div className="flex min-h-full flex-col justify-end">
+				{targetMessageId && onReturnToLatest && (
+					<div className="sticky top-3 z-10 flex justify-center">
+						<Button
+							variant="outline"
+							onClick={onReturnToLatest}
+							className="eyebrow bg-paper-raised px-3.5 py-2 text-ink-soft"
+						>
+							Return to latest messages
+						</Button>
+					</div>
+				)}
 
-			{!hasMoreOlder && messages.length > 0 && (
-				<p className="py-3 text-center text-xs text-slate-400">This is the beginning of the conversation.</p>
-			)}
+				{isLoadingOlder && <p className="eyebrow py-4 text-center text-ink-faint">Loading earlier messages…</p>}
 
-			{messages.length === 0 ? (
-				<p className="p-6 text-center text-sm text-slate-500">No messages yet. Say hello.</p>
-			) : (
-				<div className="flex flex-col gap-2 p-4">
-					{messages.map((message, index) => {
-						// "An added Binh", "Chi left the group". No author, no bubble, no
-						// side — it is about the conversation rather than from anyone in
-						// it, so it reads centred and out of the two columns.
-						if (message.kind === "system") {
+				{!hasMoreOlder && messages.length > 0 && (
+					<p className="eyebrow py-4 text-center text-ink-faint">
+						This is the beginning of the conversation.
+					</p>
+				)}
+
+				{messages.length === 0 ? (
+					<p className="p-8 text-center text-sm text-ink-faint">No messages yet. Say hello.</p>
+				) : (
+					<div className="flex flex-col px-3 pb-4 pt-2 sm:px-5 md:px-8 md:pb-5">
+						{messages.map((message, index) => {
+							const previous = messages[index - 1];
+							const isFirstOfDay = isNewDay(message.createdAt, previous?.createdAt);
+							const hasLongPause =
+								!isFirstOfDay && hasMessageTimeGap(message.createdAt, previous?.createdAt);
+
+							if (message.kind === "system") {
+								return (
+									<Fragment key={message.id}>
+										{isFirstOfDay && <DaySeparator isoTimestamp={message.createdAt} />}
+										{hasLongPause && <MessageTimeSeparator isoTimestamp={message.createdAt} />}
+										<SystemMessage content={message.content} createdAt={message.createdAt} />
+									</Fragment>
+								);
+							}
+
+							const author = message.author;
+							// One avatar and one byline per run of messages from the same
+							// person. Repeating them on every line turns a paragraph typed in
+							// three bursts into three faces stacked down the margin. A system
+							// line or a change of day between two of someone's messages breaks
+							// the run, which is what makes the avatar reappear underneath it
+							// rather than leaving a bare bubble.
+							//
+							// An authorless message never continues a run, and never starts one
+							// anything else can join: two deleted accounts are not one person,
+							// and comparing `undefined` to `undefined` would say they were.
+							// A tombstone breaks the run on both sides and belongs to no one:
+							// nothing was said, so there is no turn for it to continue or to
+							// carry on from. Without this a deleted message in the middle of a
+							// burst leaves the two halves seamed together as though it were
+							// still there.
+							const isDeleted = Boolean(message.deletedAt);
+							// A reply opens a run of its own even from the same person: it
+							// points somewhere else, so it is a new turn, and it takes full
+							// corners on top to say so. A pause longer than the burst window
+							// also starts a turn; otherwise two messages five hours apart would
+							// be seamed together just because nobody else spoke in between.
+							const isWithinPreviousBurst = isWithinMessageBurst(message.createdAt, previous?.createdAt);
+							const isFirstOfRun =
+								!author ||
+								isDeleted ||
+								isFirstOfDay ||
+								!isWithinPreviousBurst ||
+								Boolean(message.replyTo) ||
+								Boolean(previous?.deletedAt) ||
+								previous?.author?.id !== author.id;
+							// The one message of a run that states its time without being asked.
+							// A run ends at a change of author, a system line, a new day, or the
+							// end of the list.
+							const next = messages[index + 1];
+							const isWithinNextBurst = next
+								? isWithinMessageBurst(next.createdAt, message.createdAt)
+								: false;
+							const isLastOfRun =
+								!author ||
+								isDeleted ||
+								!next ||
+								next.kind === "system" ||
+								!isWithinNextBurst ||
+								Boolean(next.replyTo) ||
+								Boolean(next.deletedAt) ||
+								next.author?.id !== author.id ||
+								isNewDay(next.createdAt, message.createdAt);
+							const clusterPosition = getClusterPosition(isFirstOfRun, isLastOfRun);
+
 							return (
-								<p key={message.id} className="py-1 text-center text-xs text-slate-500">
-									{message.content}
-								</p>
+								<Fragment key={message.id}>
+									{isFirstOfDay && <DaySeparator isoTimestamp={message.createdAt} />}
+									{hasLongPause && <MessageTimeSeparator isoTimestamp={message.createdAt} />}
+									<MessageRow
+										message={message}
+										isMine={author?.id === currentUserId}
+										isGroup={isGroup}
+										isFirstOfRun={isFirstOfRun}
+										clusterPosition={clusterPosition}
+										isTargeted={message.id === targetMessageId}
+										isEditing={editingMessageId === message.id}
+										receipt={readReceipt?.messageId === message.id ? readReceipt : null}
+										onStartEdit={() => setEditingMessageId(message.id)}
+										onSaveEdit={(content) => handleSaveEdit(message.id, content)}
+										onCancelEdit={() => setEditingMessageId(null)}
+										onDeleteForEveryone={() => onDeleteMessage(message.id)}
+										onDeleteForMe={() => onHideMessage(message.id)}
+										onShowHistory={() => setHistoryMessageId(message.id)}
+										currentUserId={currentUserId}
+										participants={participants}
+										onToggleReaction={(kind) => onToggleReaction(message.id, kind)}
+										onReply={() => onReplyToMessage(message)}
+										// The quoted original may be outside the loaded page, in
+										// which case there is nothing to scroll to and this is a
+										// no-op rather than a jump to the wrong place.
+										onJumpToReplyOriginal={() =>
+											document
+												.getElementById(`message-${message.replyTo?.id}`)
+												?.scrollIntoView({ block: "center", behavior: "smooth" })
+										}
+									/>
+								</Fragment>
 							);
-						}
+						})}
 
-						const author = message.author;
-						const isMine = author?.id === currentUserId;
-						// One avatar per run of messages from the same person. Repeating it
-						// on every line turns a paragraph typed in three bursts into three
-						// faces stacked down the margin. A system line between two of
-						// someone's messages breaks the run, which is what makes the
-						// avatar reappear underneath it rather than leaving a bare bubble.
-						//
-						// An authorless message never continues a run, and never starts one
-						// anything else can join: two deleted accounts are not one person,
-						// and comparing `undefined` to `undefined` would say they were.
-						const isFirstOfRun = !author || messages[index - 1]?.author?.id !== author.id;
-						const isDeleted = Boolean(message.deletedAt);
-						const isEditing = editingMessageId === message.id;
-						// A tombstone has no content and no image left to change, so the
-						// two actions have nothing to act on — the row stays only to hold
-						// its place in the order.
-						const canModify = isMine && !isDeleted;
-
-						return (
-							<div
-								id={`message-${message.id}`}
-								key={message.id}
-								className={cn(
-									"flex flex-col rounded-lg transition",
-									message.id === targetMessageId && "bg-blue-100/70 ring-4 ring-blue-100",
-									isMine ? "items-end" : "items-start",
-								)}
-							>
-								{/* `group` so the hover that reveals the actions is the whole
-								    row rather than the buttons themselves, which are invisible
-								    until it happens and so cannot be hovered first. */}
-								<div
-									className={cn(
-										"group flex max-w-[70%] items-end gap-2",
-										isMine && "flex-row-reverse",
-									)}
+						{hasMoreNewer && (
+							<div className="mt-5 text-center">
+								<Button
+									variant="outline"
+									onClick={onLoadNewer}
+									disabled={isLoadingNewer}
+									className="eyebrow bg-paper-raised px-3.5 py-2 text-ink-soft"
 								>
-									{/* The spacer keeps a run's later bubbles aligned with its
-									    first one; without it they slide under the avatar. */}
-									{!isMine &&
-										(isFirstOfRun && author ? (
-											<Avatar user={author} size="sm" />
-										) : (
-											<span className="size-8 shrink-0" />
-										))}
-
-									<div
-										className={cn(
-											"rounded-2xl px-3 py-2",
-											isDeleted
-												? "border border-dashed border-slate-300 bg-transparent text-slate-500"
-												: isMine
-													? "bg-blue-600 text-white"
-													: "bg-slate-100 text-slate-900",
-										)}
-									>
-										{/* Only in groups: in a 1-1 the header already names the one
-										    person it could possibly be. A USER message with no
-										    author is one whose writer deleted their account —
-										    still theirs to have said, no longer theirs to be
-										    named for. */}
-										{!isMine && isGroup && isFirstOfRun && (
-											<p className="mb-0.5 text-xs font-semibold text-slate-700">
-												{author ? author.displayName : DELETED_AUTHOR_NAME}
-											</p>
-										)}
-
-										{isDeleted ? (
-											<p className="text-sm italic">{DELETED_MESSAGE_TEXT}</p>
-										) : isEditing ? (
-											<MessageEditor
-												initialContent={message.content}
-												hasAttachment={Boolean(message.attachment)}
-												onSave={(content) => handleSaveEdit(message.id, content)}
-												onCancel={() => setEditingMessageId(null)}
-											/>
-										) : (
-											<>
-												{message.attachment && (
-													<div className={cn(message.content && "mb-1.5")}>
-														<MessageAttachment
-															attachment={message.attachment}
-															caption={message.content}
-														/>
-													</div>
-												)}
-												{/* Skipped entirely for an image with no caption, so
-												    the bubble does not carry an empty line under
-												    the picture. */}
-												{message.content && (
-													<p className="whitespace-pre-wrap wrap-break-word text-sm">
-														{message.content}
-													</p>
-												)}
-											</>
-										)}
-
-										<p
-											className={cn(
-												"mt-1 text-[10px]",
-												isDeleted || !isMine ? "text-slate-500" : "text-blue-100",
-											)}
-										>
-											{formatMessageTime(message.createdAt)}
-											{/* Not "edited at 14:12": the useful fact is that what
-											    you are reading is not what was sent, and a second
-											    timestamp beside the first mostly asks which is which. */}
-											{message.editedAt && !isDeleted && (
-												<Button
-													variant="ghost"
-													onClick={() => setHistoryMessageId(message.id)}
-													className="ml-1 p-0 text-[10px] text-inherit underline-offset-2 hover:bg-transparent hover:underline"
-												>
-													· {EDITED_MESSAGE_LABEL}
-												</Button>
-											)}
-										</p>
-									</div>
-
-									{!isEditing && (
-										<MessageActions
-											{...(canModify && {
-												onEdit: () => setEditingMessageId(message.id),
-												onDeleteForEveryone: () => onDeleteMessage(message.id),
-											})}
-											onDeleteForMe={() => onHideMessage(message.id)}
-											authorActionExpiresAt={message.authorActionExpiresAt}
-											align={isMine ? "end" : "start"}
-										/>
-									)}
-								</div>
-
-								{readReceipt?.messageId === message.id && (
-									<p className="mt-0.5 pr-1 text-[10px] text-slate-400">
-										{isGroup ? `Seen by ${readReceipt.readerCount}` : "Seen"}
-									</p>
-								)}
+									{isLoadingNewer ? "Loading newer messages…" : "Load newer messages"}
+								</Button>
 							</div>
-						);
-					})}
-					{hasMoreNewer && (
-						<div className="pb-2 pt-1 text-center">
-							<Button
-								variant="ghost"
-								onClick={onLoadNewer}
-								disabled={isLoadingNewer}
-								className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs shadow-sm"
-							>
-								{isLoadingNewer ? "Loading newer messages…" : "Load newer messages"}
-							</Button>
-						</div>
-					)}
-				</div>
-			)}
+						)}
+					</div>
+				)}
+			</div>
+
 			{historyMessageId && messages[0] && (
 				<MessageEditHistory
 					conversationId={messages[0].conversationId}

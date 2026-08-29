@@ -56,13 +56,13 @@ export function LoginForm() {
 				onChange={(event) => setFields((current) => ({ ...current, password: event.target.value }))}
 			/>
 
-			{errors.form && <p className="text-sm text-red-600">{errors.form}</p>}
+			{errors.form && <p className="text-[13px] text-signal">{errors.form}</p>}
 
 			<Button type="submit" disabled={isSubmitting}>
 				{isSubmitting ? "Signing in…" : "Sign in"}
 			</Button>
 
-			<Link to="/forgot-password" className="text-center text-sm font-medium text-slate-500 hover:text-slate-800">
+			<Link to="/forgot-password" className="eyebrow text-center text-ink-faint hover:text-ink">
 				Forgot your password?
 			</Link>
 		</form>

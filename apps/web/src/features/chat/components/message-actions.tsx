@@ -1,13 +1,22 @@
-import { MoreHorizontal, Pencil, Trash2, UserRoundX, X } from "lucide-react";
+import { CornerUpLeft, Heart, MoreHorizontal, Pencil, Trash2, UserRoundX, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/button";
 import { cn } from "@/utils/cn";
+import type { ReactionKind } from "@chatty/shared-types";
 import { MAX_BROWSER_TIMEOUT_MS } from "../constants/message";
+import { REACTION_OPTIONS } from "../constants/reactions";
+import { formatRemaining } from "../utils";
 
 interface MessageActionsProps {
 	onEdit?: () => void;
 	onDeleteForEveryone?: () => void;
 	onDeleteForMe: () => void;
+	/** Absent on a message there is nothing left to answer — a tombstone. */
+	onReply?: (() => void) | undefined;
+	/** Absent for the same reason. Which kinds exist is the server's list, not this component's. */
+	onToggleReaction?: ((kind: ReactionKind) => void) | undefined;
+	/** Which kinds the viewer has already left, so the picker can show them as set. */
+	reactedKinds: ReactionKind[];
 	authorActionExpiresAt: string | null;
 	align: "start" | "end";
 }
@@ -17,6 +26,9 @@ export function MessageActions({
 	onEdit,
 	onDeleteForEveryone,
 	onDeleteForMe,
+	onReply,
+	onToggleReaction,
+	reactedKinds,
 	authorActionExpiresAt,
 	align,
 }: MessageActionsProps) {
@@ -97,9 +109,48 @@ export function MessageActions({
 	}, [isOpen, isChoosingDeleteScope]);
 
 	const canChangeForEveryone = !hasAuthorActionsExpired && Boolean(onEdit || onDeleteForEveryone);
+	// Recomputed on each render of an open menu rather than ticked on a timer:
+	// a menu is open for seconds, and a second interval per message on screen
+	// costs more than the minute of precision it would buy.
+	const remainingLabel = isOpen && canChangeForEveryone ? formatRemaining(authorActionExpiresAt) : null;
+	const isHeartReacted = reactedKinds.includes("heart");
 
 	return (
-		<div ref={rootRef} className="relative shrink-0">
+		<div
+			ref={rootRef}
+			className={cn(
+				"relative flex shrink-0 items-center",
+				"max-sm:opacity-70 sm:opacity-0 sm:transition-opacity",
+				"sm:group-hover:opacity-100 sm:focus-within:opacity-100",
+				isOpen && "sm:opacity-100",
+			)}
+		>
+			{onToggleReaction && (
+				<Button
+					variant="ghost"
+					onClick={() => onToggleReaction("heart")}
+					aria-label="React with Heart"
+					aria-pressed={isHeartReacted}
+					className={cn(
+						"size-6 p-0 hover:bg-transparent hover:text-ink max-sm:hidden",
+						isHeartReacted ? "text-signal" : "text-ink-faint",
+					)}
+				>
+					<Heart className={cn("size-3.5", isHeartReacted && "fill-current")} />
+				</Button>
+			)}
+
+			{onReply && (
+				<Button
+					variant="ghost"
+					onClick={onReply}
+					aria-label="Reply to message"
+					className="size-6 p-0 text-ink-faint hover:bg-transparent hover:text-ink max-sm:hidden"
+				>
+					<CornerUpLeft className="size-3.5" />
+				</Button>
+			)}
+
 			<Button
 				variant="ghost"
 				onClick={() => {
@@ -109,11 +160,7 @@ export function MessageActions({
 				aria-label="Message actions"
 				aria-haspopup="menu"
 				aria-expanded={isOpen}
-				className={cn(
-					"size-8 rounded-full border border-slate-200 bg-white p-0 text-slate-500 shadow-sm",
-					"opacity-70 hover:bg-slate-50 hover:text-slate-800 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100",
-					isOpen && "opacity-100",
-				)}
+				className={cn("size-6 p-0 text-ink-faint hover:bg-transparent hover:text-ink", isOpen && "text-ink")}
 			>
 				<MoreHorizontal className="size-4" />
 			</Button>
@@ -123,19 +170,19 @@ export function MessageActions({
 					role="menu"
 					aria-label="Message actions"
 					className={cn(
-						"absolute bottom-full z-30 mb-1.5 w-52 overflow-hidden rounded-xl border border-slate-200",
-						"bg-white p-1.5 text-sm shadow-xl shadow-slate-900/10",
+						"absolute bottom-full z-30 mb-2 w-56 overflow-hidden rounded-control border border-rule",
+						"bg-paper-raised p-1.5 text-[13px] shadow-lift",
 						align === "end" ? "right-0" : "left-0",
 					)}
 				>
 					{isChoosingDeleteScope ? (
 						<>
-							<p className="px-2.5 py-2 text-xs font-medium text-slate-500">Delete this message</p>
+							<p className="eyebrow px-2.5 py-2 text-ink-faint">Delete this message</p>
 							<Button
 								variant="ghost"
 								role="menuitem"
 								onClick={onDeleteForMe}
-								className="w-full justify-start px-2.5 py-2 text-slate-700"
+								className="w-full justify-start px-2.5 py-2 text-ink"
 							>
 								<UserRoundX className="size-4" />
 								Delete for me
@@ -145,7 +192,7 @@ export function MessageActions({
 									variant="ghost"
 									role="menuitem"
 									onClick={onDeleteForEveryone}
-									className="w-full justify-start px-2.5 py-2 text-red-600 hover:bg-red-50"
+									className="w-full justify-start px-2.5 py-2 text-signal hover:bg-signal-soft"
 								>
 									<Trash2 className="size-4" />
 									Delete for everyone
@@ -155,7 +202,7 @@ export function MessageActions({
 								variant="ghost"
 								role="menuitem"
 								onClick={() => setIsChoosingDeleteScope(false)}
-								className="w-full justify-start px-2.5 py-2 text-slate-500"
+								className="w-full justify-start px-2.5 py-2 text-ink-faint"
 							>
 								<X className="size-4" />
 								Cancel
@@ -163,6 +210,51 @@ export function MessageActions({
 						</>
 					) : (
 						<>
+							{onToggleReaction && (
+								<div className="flex items-center gap-0.5 px-1 pb-1.5 pt-0.5">
+									{REACTION_OPTIONS.map((option) => {
+										const isReacted = reactedKinds.includes(option.kind);
+
+										return (
+											<Button
+												key={option.kind}
+												variant="ghost"
+												role="menuitem"
+												aria-pressed={isReacted}
+												aria-label={option.label}
+												onClick={() => {
+													setIsOpen(false);
+													onToggleReaction(option.kind);
+												}}
+												className={cn(
+													"size-8 rounded-control p-0",
+													isReacted
+														? "bg-signal-soft text-signal hover:bg-signal-soft"
+														: "text-ink-soft hover:bg-ink/5 hover:text-ink",
+												)}
+											>
+												<option.Icon className={cn("size-4", isReacted && "fill-current")} />
+											</Button>
+										);
+									})}
+								</div>
+							)}
+
+							{onReply && (
+								<Button
+									variant="ghost"
+									role="menuitem"
+									onClick={() => {
+										setIsOpen(false);
+										onReply();
+									}}
+									className="w-full justify-start px-2.5 py-2 text-ink"
+								>
+									<CornerUpLeft className="size-4" />
+									Reply
+								</Button>
+							)}
+
 							{canChangeForEveryone && onEdit && (
 								<Button
 									variant="ghost"
@@ -171,7 +263,7 @@ export function MessageActions({
 										setIsOpen(false);
 										onEdit();
 									}}
-									className="w-full justify-start px-2.5 py-2 text-slate-700"
+									className="w-full justify-start px-2.5 py-2 text-ink"
 								>
 									<Pencil className="size-4" />
 									Edit message
@@ -181,11 +273,19 @@ export function MessageActions({
 								variant="ghost"
 								role="menuitem"
 								onClick={() => setIsChoosingDeleteScope(true)}
-								className="w-full justify-start px-2.5 py-2 text-red-600 hover:bg-red-50"
+								className="w-full justify-start px-2.5 py-2 text-signal hover:bg-signal-soft"
 							>
 								<Trash2 className="size-4" />
 								Delete message
 							</Button>
+							{/* Without this the two actions above simply vanish one day
+							    and look like a bug rather than like a deadline. */}
+							{remainingLabel && (
+								<div className="mt-1 flex items-center justify-between gap-2 border-t border-rule-soft px-2.5 pb-1 pt-2">
+									<span className="eyebrow text-ink-faint">Window</span>
+									<span className="meta text-ink-faint">{remainingLabel}</span>
+								</div>
+							)}
 						</>
 					)}
 				</div>

@@ -95,12 +95,12 @@ export function ChangeEmailForm({ user }: ChangeEmailFormProps) {
 			/>
 
 			{errors.form && (
-				<p role="alert" className="text-sm text-red-600">
+				<p role="alert" className="text-[13px] text-signal">
 					{errors.form}
 				</p>
 			)}
 			{pendingEmail && (
-				<p className="text-sm text-green-700">
+				<p className="text-[13px] text-live">
 					Check {pendingEmail} for a confirmation link. Your address stays {user.email} until you open it.
 				</p>
 			)}

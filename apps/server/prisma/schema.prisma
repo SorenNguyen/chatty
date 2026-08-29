@@ -55,6 +55,7 @@ model User {
   passwordResetTokens PasswordResetToken[]
   emailChangeTokens   EmailChangeToken[]
   hiddenMessages      MessageHiddenFor[]
+  reactions           MessageReaction[]
 }
 
 enum PresenceVisibility {
@@ -330,6 +331,20 @@ model Message {
   /// see the column as drift and offer to drop it.
   searchVector   Unsupported("tsvector")?
 
+  /// The message this one answers, or null for an ordinary message.
+  ///
+  /// A self-relation rather than a copy of the quoted text. A copy would go
+  /// stale the moment the original was edited, and would keep showing the words
+  /// of a message its author had since deleted — the two cases a quote most
+  /// needs to be honest about. The client renders the parent's *current* state,
+  /// so a deleted parent quotes as a tombstone.
+  ///
+  /// The service checks the parent is in the same conversation. Nothing in the
+  /// schema can: a foreign key cannot say "and the same conversationId", so that
+  /// rule lives in `sendMessage` and is tested there. Without it, a reply could
+  /// quote a message out of a conversation the sender is not in.
+  replyToId      String?
+
   conversation Conversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   // SetNull, not Cascade. Cascade would delete every message a departing user
   // ever wrote — gutting other people's conversations, and hard-deleting rows
@@ -339,11 +354,58 @@ model Message {
   attachment   Attachment?
   edits        MessageEdit[]
   hiddenFor    MessageHiddenFor[]
+  reactions    MessageReaction[]
+  // SetNull, not Cascade: a reply outlives the message it answers. Messages are
+  // never hard-deleted anyway (see `deletedAt`), so this only fires when a whole
+  // conversation goes — and then the reply is going with it regardless.
+  replyTo      Message?           @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies      Message[]          @relation("MessageReplies")
   // The GIN index on `searchVector` lives in the phase 12 migration: Prisma
   // cannot express an index method, and an `@@index` here would create a second,
   // useless btree one alongside it.
 
   @@index([conversationId, createdAt])
+  @@index([replyToId])
+}
+
+/// The fixed set of things a message can be marked with.
+///
+/// An enum rather than a free `String` of emoji, for the same reason `MessageKind`
+/// is one: the set is small, closed, and the client draws each of these from the
+/// icon set in ink rather than rendering a glyph from whatever emoji font the
+/// reader's OS happens to ship. A free column would also make "the same reaction"
+/// undecidable — U+2764 and U+2764 U+FE0F are different strings and one heart.
+enum ReactionKind {
+  HEART
+  THUMBS_UP
+  LAUGH
+  FROWN
+  ANGRY
+}
+
+/// One person marking one message, once per kind.
+///
+/// The composite primary key *is* the toggle: reacting twice with the same kind
+/// is a delete, and the database refuses the duplicate rather than the service
+/// having to check for one first. One person may leave several different kinds
+/// on the same message, which is why `kind` is part of the key rather than a
+/// unique on `(messageId, userId)` alone.
+model MessageReaction {
+  messageId String
+  userId    String
+  kind      ReactionKind
+  createdAt DateTime     @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  // Cascade, unlike everything else pointing at a User here. A reaction carries
+  // no history worth keeping without the person who left it: nothing points at
+  // it, and the count simply drops by one. Messages get SetNull because they are
+  // somebody's words and other people's read markers point at them; a reaction
+  // is neither.
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([messageId, userId, kind])
+  @@index([messageId])
 }
 
 model MessageEdit {
