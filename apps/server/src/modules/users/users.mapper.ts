@@ -19,6 +19,8 @@ export const userSelect = {
 	displayName: true,
 	avatarUpdatedAt: true,
 	createdAt: true,
+	lastSeenAt: true,
+	presenceVisibility: true,
 } as const;
 
 export interface UserRow {
@@ -27,9 +29,14 @@ export interface UserRow {
 	displayName: string;
 	avatarUpdatedAt: Date | null;
 	createdAt: Date;
+	lastSeenAt: Date | null;
+	presenceVisibility: "EVERYONE" | "CONTACTS" | "NOBODY";
 }
 
-export function toUserDTO(row: UserRow): UserDTO {
+export function toUserDTO(row: UserRow, isContact = false): UserDTO {
+	const canSeeLastSeen =
+		row.presenceVisibility === "EVERYONE" || (row.presenceVisibility === "CONTACTS" && isContact);
+
 	return {
 		id: row.id,
 		handle: row.handle,
@@ -37,5 +44,6 @@ export function toUserDTO(row: UserRow): UserDTO {
 		// Derived, never stored — see the field's doc comment in shared-types.
 		avatarUrl: buildAvatarUrl(row.id, row.avatarUpdatedAt),
 		createdAt: row.createdAt.toISOString(),
+		lastSeenAt: canSeeLastSeen ? (row.lastSeenAt?.toISOString() ?? null) : null,
 	};
 }

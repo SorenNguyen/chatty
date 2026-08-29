@@ -10,9 +10,14 @@ interface ConversationMessages {
 	messages: MessageDTO[];
 	hasMoreOlder: boolean;
 	isLoadingOlder: boolean;
+	hasMoreNewer: boolean;
+	isLoadingNewer: boolean;
 	loadOlder: () => void;
+	loadNewer: () => void;
 	editMessage: (messageId: string, content: string) => void;
 	deleteMessage: (messageId: string) => void;
+	hideMessage: (messageId: string) => void;
+	targetMessageId: string | null;
 }
 
 /**
@@ -31,12 +36,23 @@ interface ConversationMessages {
 export function useConversationMessages(
 	conversationId: string | null,
 	onConversationsChanged: () => void,
+	requestedMessageId: string | null = null,
 ): ConversationMessages {
 	const [messages, setMessages] = useState<MessageDTO[]>([]);
 	const [hasMoreOlder, setHasMoreOlder] = useState(false);
 	const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+	const [hasMoreNewer, setHasMoreNewer] = useState(false);
+	const [isLoadingNewer, setIsLoadingNewer] = useState(false);
+	const [targetMessageId, setTargetMessageId] = useState<string | null>(null);
 
 	const { editMessage, deleteMessage } = useMessageActions(conversationId, setMessages, onConversationsChanged);
+	const hideMessage = useCallback(
+		(messageId: string) => {
+			if (!conversationId) return;
+			void api.hideMessage(conversationId, messageId);
+		},
+		[conversationId],
+	);
 
 	useEffect(() => {
 		if (!conversationId) {
@@ -48,23 +64,33 @@ export function useConversationMessages(
 
 		let isCurrent = true;
 
-		void api.listMessages(conversationId, { limit: MESSAGE_PAGE_SIZE }).then((page) => {
+		const request = requestedMessageId
+			? api.getMessageContext(conversationId, requestedMessageId, MESSAGE_PAGE_SIZE)
+			: api.listMessages(conversationId, { limit: MESSAGE_PAGE_SIZE }).then((page) => ({
+					messages: [...page].reverse(),
+					hasMoreOlder: page.length === MESSAGE_PAGE_SIZE,
+					hasMoreNewer: false,
+				}));
+
+		void request.then((page) => {
 			// Switching conversations quickly can land an older response after a
 			// newer one; without this the wrong conversation's messages appear.
 			if (!isCurrent) return;
 
 			// The API returns newest-first for pagination; the view reads oldest-first.
-			setMessages([...page].reverse());
+			setMessages(page.messages);
 			// A full page probably means more exist. When the total is an exact
 			// multiple of the page size this costs one empty request at the end,
 			// which is cheaper than asking the server for a count every time.
-			setHasMoreOlder(page.length === MESSAGE_PAGE_SIZE);
+			setHasMoreOlder(page.hasMoreOlder);
+			setHasMoreNewer(page.hasMoreNewer);
+			setTargetMessageId(requestedMessageId);
 		});
 
 		return () => {
 			isCurrent = false;
 		};
-	}, [conversationId]);
+	}, [conversationId, requestedMessageId]);
 
 	const loadOlder = useCallback(() => {
 		const oldestMessage = messages[0];
@@ -79,6 +105,32 @@ export function useConversationMessages(
 			})
 			.finally(() => setIsLoadingOlder(false));
 	}, [conversationId, messages, isLoadingOlder, hasMoreOlder]);
+
+	const loadNewer = useCallback(() => {
+		const newestMessage = messages[messages.length - 1];
+		if (!conversationId || !newestMessage || isLoadingNewer || !hasMoreNewer) return;
+		setIsLoadingNewer(true);
+		void api
+			.listMessages(conversationId, { limit: MESSAGE_PAGE_SIZE, after: newestMessage.id })
+			.then((page) => {
+				setMessages((current) => [...current, ...page]);
+				setHasMoreNewer(page.length === MESSAGE_PAGE_SIZE);
+			})
+			.finally(() => setIsLoadingNewer(false));
+	}, [conversationId, messages, isLoadingNewer, hasMoreNewer]);
+
+	useSocketEvent(
+		"message:hidden",
+		useCallback(
+			(event: { conversationId: string; messageId: string }) => {
+				if (event.conversationId === conversationId) {
+					setMessages((current) => current.filter((message) => message.id !== event.messageId));
+				}
+				onConversationsChanged();
+			},
+			[conversationId, onConversationsChanged],
+		),
+	);
 
 	useSocketEvent(
 		"message:new",
@@ -100,5 +152,17 @@ export function useConversationMessages(
 		),
 	);
 
-	return { messages, hasMoreOlder, isLoadingOlder, loadOlder, editMessage, deleteMessage };
+	return {
+		messages,
+		hasMoreOlder,
+		isLoadingOlder,
+		loadOlder,
+		hasMoreNewer,
+		isLoadingNewer,
+		loadNewer,
+		editMessage,
+		deleteMessage,
+		hideMessage,
+		targetMessageId,
+	};
 }

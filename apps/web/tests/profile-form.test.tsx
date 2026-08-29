@@ -119,4 +119,14 @@ describe("ProfileForm", () => {
 
 		expect(screen.getByText(/hides theirs from you/)).toBeInTheDocument();
 	});
+
+	it("saves last-seen privacy independently from the profile fields", async () => {
+		const typist = userEvent.setup();
+		render(<ProfileForm user={user} />);
+
+		await typist.selectOptions(screen.getByLabelText("Who can see your last seen"), "nobody");
+		await typist.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(updateProfile).toHaveBeenCalledWith({ presenceVisibility: "nobody" });
+	});
 });

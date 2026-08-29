@@ -24,6 +24,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
 		displayName: user.displayName,
 		handle: user.handle,
 		readReceiptsEnabled: user.readReceiptsEnabled,
+		presenceVisibility: user.presenceVisibility,
 	});
 	const [errors, setErrors] = useState({ displayName: "", handle: "", form: "" });
 	const [isSaving, setIsSaving] = useState(false);
@@ -36,7 +37,8 @@ export function ProfileForm({ user }: ProfileFormProps) {
 	const hasChanges =
 		displayName !== user.displayName ||
 		handle !== user.handle ||
-		fields.readReceiptsEnabled !== user.readReceiptsEnabled;
+		fields.readReceiptsEnabled !== user.readReceiptsEnabled ||
+		fields.presenceVisibility !== user.presenceVisibility;
 
 	function validate() {
 		const nextErrors = { displayName: "", handle: "", form: "" };
@@ -66,6 +68,9 @@ export function ProfileForm({ user }: ProfileFormProps) {
 			...(handle !== user.handle && { handle }),
 			...(fields.readReceiptsEnabled !== user.readReceiptsEnabled && {
 				readReceiptsEnabled: fields.readReceiptsEnabled,
+			}),
+			...(fields.presenceVisibility !== user.presenceVisibility && {
+				presenceVisibility: fields.presenceVisibility,
 			}),
 		};
 
@@ -127,6 +132,27 @@ export function ProfileForm({ user }: ProfileFormProps) {
 						Turning this off hides your “Seen” from everyone, and hides theirs from you.
 					</span>
 				</span>
+			</label>
+
+			<label className="flex flex-col gap-1.5 text-sm text-slate-900">
+				<span className="font-medium">Who can see your last seen</span>
+				<select
+					aria-label="Who can see your last seen"
+					value={fields.presenceVisibility}
+					onChange={(event) => {
+						setIsSaved(false);
+						setFields((current) => ({
+							...current,
+							presenceVisibility: event.target.value as CurrentUserDTO["presenceVisibility"],
+						}));
+					}}
+					className="rounded-lg border border-slate-300 bg-white px-3 py-2 outline-none focus:border-blue-500"
+				>
+					<option value="everyone">Everyone</option>
+					<option value="contacts">People you chat with</option>
+					<option value="nobody">Nobody</option>
+				</select>
+				<span className="text-xs text-slate-500">Online status is still shown while you are connected.</span>
 			</label>
 
 			{errors.form && (

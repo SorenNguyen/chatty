@@ -4,6 +4,9 @@ import { uploadAttachment } from "../../middlewares/upload-image.js";
 import {
 	deleteMessageController,
 	editMessageController,
+	getMessageContextController,
+	hideMessageController,
+	listMessageEditsController,
 	listMessagesController,
 	sendMessageController,
 } from "./messages.controller.js";
@@ -13,6 +16,9 @@ export const messagesRouter = Router({ mergeParams: true });
 
 messagesRouter.use(requireAuth);
 messagesRouter.get("/", listMessagesController);
+messagesRouter.get("/:messageId/context", getMessageContextController);
+messagesRouter.get("/:messageId/edits", listMessageEditsController);
+messagesRouter.delete("/:messageId/me", hideMessageController);
 // `uploadAttachment` parses a multipart body and passes anything else straight
 // through, so this one route takes a text message and an image without a branch
 // in front of it — and without a second write path to secure.

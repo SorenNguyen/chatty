@@ -1,12 +1,13 @@
 export { ConversationAvatar } from "./conversation-avatar";
 export { ConversationHeader } from "./conversation-header";
+export { ConversationMessageSearch } from "./conversation-message-search";
 export { ConversationList } from "./conversation-list";
 export { GroupMembersPanel } from "./group-members-panel";
 export { MessageActions } from "./message-actions";
 export { MessageAttachment } from "./message-attachment";
 export { MessageEditor } from "./message-editor";
+export { MessageEditHistory } from "./message-edit-history";
 export { MessageInput } from "./message-input";
 export { MessageList } from "./message-list";
-export { MessageSearchPanel } from "./message-search-panel";
 export { NewConversationPanel } from "./new-conversation-panel";
 export { SelectedParticipants } from "./selected-participants";

@@ -6,6 +6,6 @@ import * as searchService from "./search.service.js";
 
 export async function searchMessagesController(req: Request, res: Response): Promise<void> {
 	const query = searchMessagesQuerySchema.parse(req.query);
-	const results = await searchService.searchMessages(req.userId!, query);
-	res.status(200).json(results);
+	const page = await searchService.searchMessages(req.userId!, query);
+	res.status(200).json(page);
 }

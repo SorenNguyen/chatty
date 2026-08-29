@@ -105,4 +105,32 @@ test.describe("two people, one conversation", () => {
 		await sender.close();
 		await viewer.close();
 	});
+
+	test("searches the open conversation and jumps to the exact message", async ({ browser }) => {
+		const aliceUser = makeUser("Ari");
+		const bobUser = makeUser("Bea");
+		const alice = await browser.newContext();
+		const bob = await browser.newContext();
+		const alicePage = await alice.newPage();
+		const bobPage = await bob.newPage();
+
+		await register(bobPage, bobUser);
+		await register(alicePage, aliceUser);
+		await startDirectChat(alicePage, bobUser);
+		await sendMessage(alicePage, "ordinary message");
+		await expect(messages(alicePage).getByText("ordinary message")).toBeVisible({ timeout: 15_000 });
+		await sendMessage(alicePage, "the release codename is blue-orchid");
+		await expect(messages(alicePage).getByText("the release codename is blue-orchid")).toBeVisible({
+			timeout: 15_000,
+		});
+
+		await alicePage.getByRole("button", { name: "Search in conversation" }).click();
+		await alicePage.getByRole("textbox", { name: "Search in conversation" }).fill("blue-orchid");
+		await expect(alicePage.getByText("1 of 1")).toBeVisible({ timeout: 15_000 });
+		await expect(messages(alicePage).getByText("the release codename is blue-orchid")).toBeVisible();
+		await expect(alicePage.getByRole("button", { name: "Return to latest messages" })).toBeVisible();
+
+		await alice.close();
+		await bob.close();
+	});
 });

@@ -4,6 +4,7 @@ export { useMessageActions } from "./use-message-actions";
 export { useMessageScroll } from "./use-message-scroll";
 export { useMessageSearch } from "./use-message-search";
 export { usePresence } from "./use-presence";
+export { usePresenceLastSeenSync } from "./use-presence-last-seen-sync";
 export { useSocketEvent } from "./use-socket-event";
 export { useTypingNotifier } from "./use-typing-notifier";
 export { useTypingParticipants } from "./use-typing-participants";

@@ -1,5 +1,6 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { api } from "@/api/client";
 import { MessageList } from "@/features/chat/components/message-list";
 import { makeAttachment, makeMessage, makeOrphanedMessage, makeParticipant, makeSystemMessage } from "./factories";
 
@@ -13,6 +14,8 @@ const messages = [makeMessage("m1", "minh", "first"), makeMessage("m2", "an", "s
 const FIXED_EDITED_AT = "2026-08-23T10:05:00.000Z";
 const FIXED_DELETED_AT = "2026-08-23T10:06:00.000Z";
 
+afterEach(() => vi.restoreAllMocks());
+
 function renderList(overrides: Partial<React.ComponentProps<typeof MessageList>> = {}) {
 	const props = {
 		messages,
@@ -23,8 +26,12 @@ function renderList(overrides: Partial<React.ComponentProps<typeof MessageList>>
 		hasMoreOlder: false,
 		isLoadingOlder: false,
 		onLoadOlder: vi.fn(),
+		hasMoreNewer: false,
+		isLoadingNewer: false,
+		onLoadNewer: vi.fn(),
 		onEditMessage: vi.fn(),
 		onDeleteMessage: vi.fn(),
+		onHideMessage: vi.fn(),
 		...overrides,
 	};
 
@@ -163,37 +170,71 @@ describe("MessageList", () => {
 
 		expect(onLoadOlder).not.toHaveBeenCalled();
 	});
+
+	it("renders one newer-page control for the list, not one per message", () => {
+		renderList({ hasMoreNewer: true });
+
+		expect(screen.getAllByRole("button", { name: "Load newer messages" })).toHaveLength(1);
+	});
 });
 
 describe("MessageList editing and deleting", () => {
 	const mine = makeMessage("m1", "minh", "mine");
 	const theirs = makeMessage("m2", "an", "theirs");
 
+	function openMessageActions() {
+		fireEvent.click(screen.getByLabelText("Message actions"));
+	}
+
 	it("offers edit and delete on your own message", () => {
 		renderList({ messages: [mine] });
+		openMessageActions();
 
-		expect(screen.getByLabelText("Edit message")).toBeInTheDocument();
-		expect(screen.getByLabelText("Delete message")).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "Edit message" })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "Delete message" })).toBeInTheDocument();
 	});
 
-	it("offers neither on someone else's", () => {
+	it("offers delete-for-me but not editing on someone else's", () => {
 		renderList({ messages: [theirs] });
+		openMessageActions();
 
 		expect(screen.queryByLabelText("Edit message")).not.toBeInTheDocument();
-		expect(screen.queryByLabelText("Delete message")).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole("menuitem", { name: "Delete message" }));
+		expect(screen.getByRole("menuitem", { name: "Delete for me" })).toBeInTheDocument();
+		expect(screen.queryByRole("menuitem", { name: "Delete for everyone" })).not.toBeInTheDocument();
 	});
 
-	it("offers neither on a message already deleted", () => {
-		// A tombstone has no text and no image left to act on.
-		renderList({ messages: [makeMessage("m1", "minh", "", null, { deletedAt: FIXED_DELETED_AT })] });
+	it("allows a tombstone to be removed for the current user", () => {
+		const { onHideMessage } = renderList({
+			messages: [makeMessage("m1", "minh", "", null, { deletedAt: FIXED_DELETED_AT })],
+		});
+		openMessageActions();
+		fireEvent.click(screen.getByRole("menuitem", { name: "Delete message" }));
 
 		expect(screen.queryByLabelText("Edit message")).not.toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "Delete for me" })).toBeInTheDocument();
+		expect(screen.queryByRole("menuitem", { name: "Delete for everyone" })).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole("menuitem", { name: "Delete for me" }));
+		expect(onHideMessage).toHaveBeenCalledWith("m1");
+	});
+
+	it("hides author-only actions after their 8-hour deadline", () => {
+		renderList({
+			messages: [makeMessage("m1", "minh", "old", null, { authorActionExpiresAt: "2000-01-01T00:00:00.000Z" })],
+		});
+		openMessageActions();
+
+		expect(screen.queryByLabelText("Edit message")).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole("menuitem", { name: "Delete message" }));
+		expect(screen.getByRole("menuitem", { name: "Delete for me" })).toBeInTheDocument();
+		expect(screen.queryByRole("menuitem", { name: "Delete for everyone" })).not.toBeInTheDocument();
 	});
 
 	it("reports the new text once the author saves", () => {
 		const { onEditMessage } = renderList({ messages: [mine] });
 
-		fireEvent.click(screen.getByLabelText("Edit message"));
+		openMessageActions();
+		fireEvent.click(screen.getByRole("menuitem", { name: "Edit message" }));
 		fireEvent.change(screen.getByLabelText("Edit message"), { target: { value: "mine, fixed" } });
 		fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
@@ -205,7 +246,8 @@ describe("MessageList editing and deleting", () => {
 		// onto a message nobody actually changed.
 		const { onEditMessage } = renderList({ messages: [mine] });
 
-		fireEvent.click(screen.getByLabelText("Edit message"));
+		openMessageActions();
+		fireEvent.click(screen.getByRole("menuitem", { name: "Edit message" }));
 
 		expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
 		expect(onEditMessage).not.toHaveBeenCalled();
@@ -214,7 +256,8 @@ describe("MessageList editing and deleting", () => {
 	it("does not let a text-only message be emptied", () => {
 		const { onEditMessage } = renderList({ messages: [mine] });
 
-		fireEvent.click(screen.getByLabelText("Edit message"));
+		openMessageActions();
+		fireEvent.click(screen.getByRole("menuitem", { name: "Edit message" }));
 		fireEvent.change(screen.getByLabelText("Edit message"), { target: { value: "   " } });
 
 		expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
@@ -226,7 +269,8 @@ describe("MessageList editing and deleting", () => {
 			messages: [makeMessage("m1", "minh", "look", makeAttachment())],
 		});
 
-		fireEvent.click(screen.getByLabelText("Edit message"));
+		openMessageActions();
+		fireEvent.click(screen.getByRole("menuitem", { name: "Edit message" }));
 		fireEvent.change(screen.getByLabelText("Edit message"), { target: { value: "" } });
 		fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
@@ -236,7 +280,8 @@ describe("MessageList editing and deleting", () => {
 	it("abandons the edit on cancel", () => {
 		const { onEditMessage } = renderList({ messages: [mine] });
 
-		fireEvent.click(screen.getByLabelText("Edit message"));
+		openMessageActions();
+		fireEvent.click(screen.getByRole("menuitem", { name: "Edit message" }));
 		fireEvent.change(screen.getByLabelText("Edit message"), { target: { value: "never mind" } });
 		fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
@@ -249,17 +294,19 @@ describe("MessageList editing and deleting", () => {
 		// only one nobody can undo — the server empties the row and removes the file.
 		const { onDeleteMessage } = renderList({ messages: [mine] });
 
-		fireEvent.click(screen.getByLabelText("Delete message"));
+		openMessageActions();
+		fireEvent.click(screen.getByRole("menuitem", { name: "Delete message" }));
 
 		expect(onDeleteMessage).not.toHaveBeenCalled();
-		expect(screen.getByLabelText("Confirm delete")).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "Delete for everyone" })).toBeInTheDocument();
 	});
 
 	it("deletes once the author confirms", () => {
 		const { onDeleteMessage } = renderList({ messages: [mine] });
 
-		fireEvent.click(screen.getByLabelText("Delete message"));
-		fireEvent.click(screen.getByLabelText("Confirm delete"));
+		openMessageActions();
+		fireEvent.click(screen.getByRole("menuitem", { name: "Delete message" }));
+		fireEvent.click(screen.getByRole("menuitem", { name: "Delete for everyone" }));
 
 		expect(onDeleteMessage).toHaveBeenCalledWith("m1");
 	});
@@ -267,11 +314,12 @@ describe("MessageList editing and deleting", () => {
 	it("keeps the message when the author backs out", () => {
 		const { onDeleteMessage } = renderList({ messages: [mine] });
 
-		fireEvent.click(screen.getByLabelText("Delete message"));
-		fireEvent.click(screen.getByLabelText("Keep message"));
+		openMessageActions();
+		fireEvent.click(screen.getByRole("menuitem", { name: "Delete message" }));
+		fireEvent.click(screen.getByRole("menuitem", { name: "Cancel" }));
 
 		expect(onDeleteMessage).not.toHaveBeenCalled();
-		expect(screen.getByLabelText("Delete message")).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "Delete message" })).toBeInTheDocument();
 	});
 
 	it("stands a placeholder in for a deleted message", () => {
@@ -294,6 +342,24 @@ describe("MessageList editing and deleting", () => {
 		renderList({ messages: [makeMessage("m1", "minh", "fixed", null, { editedAt: FIXED_EDITED_AT })] });
 
 		expect(screen.getByText(/edited/)).toBeInTheDocument();
+	});
+
+	it("opens exactly one accessible edit-history dialog and closes it with Escape", async () => {
+		vi.spyOn(api, "listMessageEdits").mockResolvedValue([
+			{ id: "e1", content: "before", editedAt: FIXED_EDITED_AT },
+		]);
+		renderList({
+			messages: [
+				makeMessage("m1", "minh", "first fixed", null, { editedAt: FIXED_EDITED_AT }),
+				makeMessage("m2", "an", "second fixed", null, { editedAt: FIXED_EDITED_AT }),
+			],
+		});
+
+		fireEvent.click(screen.getAllByText(/edited/)[0]!);
+		await waitFor(() => expect(screen.getAllByRole("dialog")).toHaveLength(1));
+		expect(await screen.findByText("before")).toBeInTheDocument();
+		fireEvent.keyDown(document, { key: "Escape" });
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 	});
 
 	it("does not mark a message nobody touched", () => {

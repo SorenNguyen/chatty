@@ -28,7 +28,8 @@ test.describe("editing and deleting a message", () => {
 		await sendMessage(alicePage, "meet at 5");
 		await expect(messages(bobPage).getByText("meet at 5")).toBeVisible({ timeout: 15_000 });
 
-		await alicePage.getByLabel("Edit message").click();
+		await alicePage.getByLabel("Message actions").click();
+		await alicePage.getByRole("menuitem", { name: "Edit message" }).click();
 		await alicePage.getByLabel("Edit message").fill("meet at 6");
 		await alicePage.getByRole("button", { name: "Save" }).click();
 
@@ -37,6 +38,12 @@ test.describe("editing and deleting a message", () => {
 		await expect(messages(bobPage).getByText("meet at 5")).toHaveCount(0);
 		// Replaced in place, not appended — otherwise both versions would show.
 		await expect(messages(bobPage).getByText(/edited/)).toBeVisible();
+		await messages(bobPage)
+			.getByText(/edited/)
+			.click();
+		await expect(bobPage.getByRole("dialog", { name: "Edit history" })).toBeVisible();
+		await expect(bobPage.getByRole("dialog").getByText("meet at 5")).toBeVisible();
+		await bobPage.getByLabel("Close edit history").click();
 
 		await alice.close();
 		await bob.close();
@@ -59,12 +66,13 @@ test.describe("editing and deleting a message", () => {
 		await sendMessage(alicePage, "sent to the wrong person");
 		await expect(messages(bobPage).getByText("sent to the wrong person")).toBeVisible({ timeout: 15_000 });
 
-		await alicePage.getByLabel("Delete message").click();
+		await alicePage.getByLabel("Message actions").click();
+		await alicePage.getByRole("menuitem", { name: "Delete message" }).click();
 		// Still there: the delete asks first, and this is the half a unit test
 		// cannot tell apart from a button that silently did nothing.
 		await expect(messages(bobPage).getByText("sent to the wrong person")).toBeVisible();
 
-		await alicePage.getByLabel("Confirm delete").click();
+		await alicePage.getByRole("menuitem", { name: "Delete for everyone" }).click();
 
 		await expect(messages(bobPage).getByText("This message was deleted")).toBeVisible({ timeout: 15_000 });
 		await expect(messages(bobPage).getByText("sent to the wrong person")).toHaveCount(0);
@@ -76,7 +84,7 @@ test.describe("editing and deleting a message", () => {
 		await bob.close();
 	});
 
-	test("nobody is offered the buttons on someone else's message", async ({ browser }) => {
+	test("a recipient may delete for themselves but may not edit", async ({ browser }) => {
 		const aliceUser = makeUser("Anh");
 		const bobUser = makeUser("Bao");
 
@@ -93,9 +101,17 @@ test.describe("editing and deleting a message", () => {
 		await sendMessage(alicePage, "mine to change");
 		await expect(messages(bobPage).getByText("mine to change")).toBeVisible({ timeout: 15_000 });
 
-		await expect(bobPage.getByLabel("Edit message")).toHaveCount(0);
-		await expect(bobPage.getByLabel("Delete message")).toHaveCount(0);
-		await expect(alicePage.getByLabel("Edit message")).toBeVisible();
+		await bobPage.getByLabel("Message actions").click();
+		await expect(bobPage.getByRole("menuitem", { name: "Edit message" })).toHaveCount(0);
+		await expect(bobPage.getByRole("menuitem", { name: "Delete message" })).toBeVisible();
+		await alicePage.getByLabel("Message actions").click();
+		await expect(alicePage.getByRole("menuitem", { name: "Edit message" })).toBeVisible();
+
+		await bobPage.getByRole("menuitem", { name: "Delete message" }).click();
+		await bobPage.getByRole("menuitem", { name: "Delete for me" }).click();
+		await expect(messages(bobPage).getByText("mine to change")).toHaveCount(0);
+		await expect(bobPage.getByRole("complementary").getByText("mine to change")).toHaveCount(0);
+		await expect(messages(alicePage).getByText("mine to change")).toBeVisible();
 
 		await alice.close();
 		await bob.close();

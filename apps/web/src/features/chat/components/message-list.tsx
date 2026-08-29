@@ -1,9 +1,11 @@
 import type { MessageDTO, ParticipantDTO } from "@chatty/shared-types";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Avatar } from "@/components/avatar";
+import { Button } from "@/components/button";
 import { MessageActions } from "./message-actions";
 import { MessageAttachment } from "./message-attachment";
 import { MessageEditor } from "./message-editor";
+import { MessageEditHistory } from "./message-edit-history";
 import { cn } from "@/utils/cn";
 import { DELETED_AUTHOR_NAME, DELETED_MESSAGE_TEXT, EDITED_MESSAGE_LABEL } from "../constants/message";
 import { useMessageScroll } from "../hooks";
@@ -31,6 +33,9 @@ interface MessageListProps {
 	hasMoreOlder: boolean;
 	isLoadingOlder: boolean;
 	onLoadOlder: () => void;
+	hasMoreNewer: boolean;
+	isLoadingNewer: boolean;
+	onLoadNewer: () => void;
 	/**
 	 * Both write over HTTP and return once the server has accepted. Neither
 	 * updates this list — the `message:updated` broadcast does, so the author
@@ -38,6 +43,9 @@ interface MessageListProps {
 	 */
 	onEditMessage: (messageId: string, content: string) => void;
 	onDeleteMessage: (messageId: string) => void;
+	onHideMessage: (messageId: string) => void;
+	targetMessageId?: string | null;
+	onReturnToLatest?: () => void;
 }
 
 export function MessageList({
@@ -49,8 +57,14 @@ export function MessageList({
 	hasMoreOlder,
 	isLoadingOlder,
 	onLoadOlder,
+	hasMoreNewer,
+	isLoadingNewer,
+	onLoadNewer,
 	onEditMessage,
 	onDeleteMessage,
+	onHideMessage,
+	targetMessageId,
+	onReturnToLatest,
 }: MessageListProps) {
 	// The scroll container lives here rather than in the page, so everything that
 	// reads or writes scroll position sits in one component.
@@ -59,6 +73,13 @@ export function MessageList({
 	// Which message is open for editing, by id rather than by index: a page of
 	// older messages prepends and would shift every index under the editor.
 	const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+	const [historyMessageId, setHistoryMessageId] = useState<string | null>(null);
+
+	useEffect(() => {
+		if (!targetMessageId) return;
+
+		document.getElementById(`message-${targetMessageId}`)?.scrollIntoView({ block: "center" });
+	}, [targetMessageId, messages]);
 
 	function handleSaveEdit(messageId: string, content: string) {
 		setEditingMessageId(null);
@@ -67,6 +88,17 @@ export function MessageList({
 
 	return (
 		<div ref={containerRef} onScroll={handleScroll} className="h-full overflow-y-auto">
+			{targetMessageId && onReturnToLatest && (
+				<div className="sticky top-2 z-10 flex justify-center">
+					<Button
+						variant="ghost"
+						onClick={onReturnToLatest}
+						className="border border-slate-200 bg-white px-3 py-1.5 text-xs shadow-sm"
+					>
+						Return to latest messages
+					</Button>
+				</div>
+			)}
 			{isLoadingOlder && <p className="py-3 text-center text-xs text-slate-500">Loading earlier messages…</p>}
 
 			{!hasMoreOlder && messages.length > 0 && (
@@ -109,7 +141,15 @@ export function MessageList({
 						const canModify = isMine && !isDeleted;
 
 						return (
-							<div key={message.id} className={cn("flex flex-col", isMine ? "items-end" : "items-start")}>
+							<div
+								id={`message-${message.id}`}
+								key={message.id}
+								className={cn(
+									"flex flex-col rounded-lg transition",
+									message.id === targetMessageId && "bg-blue-100/70 ring-4 ring-blue-100",
+									isMine ? "items-end" : "items-start",
+								)}
+							>
 								{/* `group` so the hover that reveals the actions is the whole
 								    row rather than the buttons themselves, which are invisible
 								    until it happens and so cannot be hovered first. */}
@@ -189,14 +229,27 @@ export function MessageList({
 											{/* Not "edited at 14:12": the useful fact is that what
 											    you are reading is not what was sent, and a second
 											    timestamp beside the first mostly asks which is which. */}
-											{message.editedAt && !isDeleted && ` · ${EDITED_MESSAGE_LABEL}`}
+											{message.editedAt && !isDeleted && (
+												<Button
+													variant="ghost"
+													onClick={() => setHistoryMessageId(message.id)}
+													className="ml-1 p-0 text-[10px] text-inherit underline-offset-2 hover:bg-transparent hover:underline"
+												>
+													· {EDITED_MESSAGE_LABEL}
+												</Button>
+											)}
 										</p>
 									</div>
 
-									{canModify && !isEditing && (
+									{!isEditing && (
 										<MessageActions
-											onEdit={() => setEditingMessageId(message.id)}
-											onDelete={() => onDeleteMessage(message.id)}
+											{...(canModify && {
+												onEdit: () => setEditingMessageId(message.id),
+												onDeleteForEveryone: () => onDeleteMessage(message.id),
+											})}
+											onDeleteForMe={() => onHideMessage(message.id)}
+											authorActionExpiresAt={message.authorActionExpiresAt}
+											align={isMine ? "end" : "start"}
 										/>
 									)}
 								</div>
@@ -209,7 +262,26 @@ export function MessageList({
 							</div>
 						);
 					})}
+					{hasMoreNewer && (
+						<div className="pb-2 pt-1 text-center">
+							<Button
+								variant="ghost"
+								onClick={onLoadNewer}
+								disabled={isLoadingNewer}
+								className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs shadow-sm"
+							>
+								{isLoadingNewer ? "Loading newer messages…" : "Load newer messages"}
+							</Button>
+						</div>
+					)}
 				</div>
+			)}
+			{historyMessageId && messages[0] && (
+				<MessageEditHistory
+					conversationId={messages[0].conversationId}
+					messageId={historyMessageId}
+					onClose={() => setHistoryMessageId(null)}
+				/>
 			)}
 		</div>
 	);

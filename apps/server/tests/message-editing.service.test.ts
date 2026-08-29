@@ -5,7 +5,14 @@ import { findAttachmentPath } from "../src/lib/attachment-storage.js";
 import { ForbiddenError, NotFoundError, ValidationError } from "../src/lib/errors.js";
 import { prisma } from "../src/lib/prisma.js";
 import { listConversationsForUser, markConversationRead } from "../src/modules/conversations/conversations.service.js";
-import { deleteMessage, editMessage, listMessages, sendMessage } from "../src/modules/messages/messages.service.js";
+import {
+	deleteMessage,
+	editMessage,
+	hideMessageForUser,
+	listMessageEdits,
+	listMessages,
+	sendMessage,
+} from "../src/modules/messages/messages.service.js";
 import { installFakeIO, type FakeIO } from "./fake-io.js";
 
 const UPLOAD_DIR = ".data/test-uploads";
@@ -14,6 +21,100 @@ let fakeIO: FakeIO;
 
 beforeEach(() => {
 	fakeIO = installFakeIO();
+});
+
+describe("message lifecycle", () => {
+	it("keeps every previous version when a message is edited", async () => {
+		const { conversationId, authorId } = await makeConversation();
+		const sent = await sendMessage(authorId, conversationId, { content: "first version" });
+		await editMessage(authorId, conversationId, sent.id, { content: "second version" });
+		await editMessage(authorId, conversationId, sent.id, { content: "current version" });
+
+		const edits = await listMessageEdits(authorId, conversationId, sent.id);
+
+		expect(edits.map((edit) => edit.content)).toEqual(["second version", "first version"]);
+	});
+
+	it("refuses edits after 8 hours", async () => {
+		const { conversationId, authorId } = await makeConversation();
+		const sent = await sendMessage(authorId, conversationId, { content: "old message" });
+		await prisma.message.update({
+			where: { id: sent.id },
+			data: { createdAt: new Date(Date.now() - 9 * 60 * 60 * 1000) },
+		});
+
+		await expect(editMessage(authorId, conversationId, sent.id, { content: "rewrite" })).rejects.toThrow(
+			"Messages can only be edited for 8 hours",
+		);
+	});
+
+	it("publishes the author action deadline with each user message", async () => {
+		const { conversationId, authorId } = await makeConversation();
+		const sent = await sendMessage(authorId, conversationId, { content: "time boxed" });
+
+		expect(Date.parse(sent.authorActionExpiresAt!) - Date.parse(sent.createdAt)).toBe(8 * 60 * 60 * 1000);
+	});
+
+	it("hides a message only from the user who chose delete for me", async () => {
+		const { conversationId, authorId, peerId } = await makeConversation();
+		const sent = await sendMessage(authorId, conversationId, { content: "keep for others" });
+
+		await hideMessageForUser(peerId, conversationId, sent.id);
+
+		expect((await listMessages(peerId, conversationId, { limit: 50 })).map((message) => message.id)).not.toContain(
+			sent.id,
+		);
+		expect((await listMessages(authorId, conversationId, { limit: 50 })).map((message) => message.id)).toContain(
+			sent.id,
+		);
+		const [peerConversation] = await listConversationsForUser(peerId);
+		expect(peerConversation!.lastMessage).toBeNull();
+		expect(peerConversation!.unreadCount).toBe(0);
+		const [authorConversation] = await listConversationsForUser(authorId);
+		expect(authorConversation!.lastMessage?.id).toBe(sent.id);
+	});
+
+	it("reveals the previous sidebar message after the newest is hidden", async () => {
+		const { conversationId, authorId, peerId } = await makeConversation();
+		const first = await sendMessage(authorId, conversationId, { content: "keep this preview" });
+		const newest = await sendMessage(authorId, conversationId, { content: "hide this preview" });
+
+		await hideMessageForUser(peerId, conversationId, newest.id);
+
+		const [conversation] = await listConversationsForUser(peerId);
+		expect(conversation!.lastMessage?.id).toBe(first.id);
+		expect(conversation!.unreadCount).toBe(1);
+	});
+
+	it("counts unread messages correctly when the read marker shares their timestamp", async () => {
+		const { conversationId, authorId, peerId } = await makeConversation();
+		const sent = await Promise.all([
+			sendMessage(authorId, conversationId, { content: "same time one" }),
+			sendMessage(authorId, conversationId, { content: "same time two" }),
+		]);
+		const sharedTimestamp = new Date("2026-08-29T08:00:00.000Z");
+		await prisma.message.updateMany({
+			where: { id: { in: sent.map((message) => message.id) } },
+			data: { createdAt: sharedTimestamp },
+		});
+		const [earlierId] = sent.map((message) => message.id).sort();
+		await markConversationRead(peerId, conversationId, { messageId: earlierId! });
+
+		const [conversation] = await listConversationsForUser(peerId);
+		expect(conversation!.unreadCount).toBe(1);
+	});
+
+	it("allows a shared tombstone to be hidden for one user", async () => {
+		const { conversationId, authorId, peerId } = await makeConversation();
+		const sent = await sendMessage(authorId, conversationId, { content: "retracted" });
+		await deleteMessage(authorId, conversationId, sent.id);
+
+		await hideMessageForUser(peerId, conversationId, sent.id);
+
+		expect((await listMessages(peerId, conversationId, { limit: 50 })).map((message) => message.id)).not.toContain(
+			sent.id,
+		);
+	});
 });
 
 afterAll(async () => {
@@ -186,6 +287,19 @@ describe("editMessage", () => {
 });
 
 describe("deleteMessage", () => {
+	it("refuses delete for everyone after 8 hours", async () => {
+		const { conversationId, authorId } = await makeConversation();
+		const sent = await sendMessage(authorId, conversationId, { content: "too old to retract" });
+		await prisma.message.update({
+			where: { id: sent.id },
+			data: { createdAt: new Date(Date.now() - 9 * 60 * 60 * 1000) },
+		});
+
+		await expect(deleteMessage(authorId, conversationId, sent.id)).rejects.toThrow(
+			"Messages can only be deleted for everyone for 8 hours",
+		);
+	});
+
 	it("empties the text and marks the message deleted", async () => {
 		const { conversationId, authorId } = await makeConversation();
 		const sent = await sendMessage(authorId, conversationId, { content: "said too much" });

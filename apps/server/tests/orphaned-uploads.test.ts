@@ -2,10 +2,11 @@ import { access, mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { env } from "../src/config/env.js";
-import { sweepOrphanedAttachments } from "../src/lib/orphaned-uploads.js";
+import { sweepOrphanedAttachments, sweepOrphanedAvatars } from "../src/lib/orphaned-uploads.js";
 import { prisma } from "../src/lib/prisma.js";
 
 const attachmentsDirectory = path.resolve(env.UPLOAD_DIR, "attachments");
+const avatarsDirectory = path.resolve(env.UPLOAD_DIR, "avatars");
 
 /** An hour and a bit, so a file aged with it is unambiguously past the grace period. */
 const WELL_PAST_GRACE_MS = 61 * 60 * 1000;
@@ -24,7 +25,21 @@ const WELL_PAST_GRACE_MS = 61 * 60 * 1000;
 beforeEach(async () => {
 	await rm(attachmentsDirectory, { recursive: true, force: true });
 	await mkdir(attachmentsDirectory, { recursive: true });
+	await rm(avatarsDirectory, { recursive: true, force: true });
+	await mkdir(avatarsDirectory, { recursive: true });
 });
+
+async function writeAvatarFile(userId: string, ageMs = 0): Promise<string> {
+	const filePath = path.join(avatarsDirectory, `${userId}.webp`);
+	await writeFile(filePath, "not really an avatar");
+
+	if (ageMs > 0) {
+		const when = new Date(Date.now() - ageMs);
+		await utimes(filePath, when, when);
+	}
+
+	return filePath;
+}
 
 /**
  * Writes a file where an attachment would live, optionally backdated.
@@ -121,5 +136,47 @@ describe("sweepOrphanedAttachments", () => {
 		await expect(sweepOrphanedAttachments()).resolves.toBe(1);
 		await expect(exists(orphan)).resolves.toBe(false);
 		await expect(exists(kept)).resolves.toBe(true);
+	});
+});
+
+describe("sweepOrphanedAvatars", () => {
+	it("removes an old avatar after its user row is gone", async () => {
+		const orphan = await writeAvatarFile("deleted-user", WELL_PAST_GRACE_MS);
+
+		await expect(sweepOrphanedAvatars()).resolves.toBe(1);
+		await expect(exists(orphan)).resolves.toBe(false);
+	});
+
+	it("keeps the avatar of a user whose profile references it", async () => {
+		const user = await prisma.user.create({
+			data: {
+				email: "avatar-owner@chatty.test",
+				handle: "avatarowner",
+				displayName: "Avatar owner",
+				passwordHash: "not-a-real-hash",
+				avatarUpdatedAt: new Date(),
+			},
+			select: { id: true },
+		});
+		const kept = await writeAvatarFile(user.id, WELL_PAST_GRACE_MS);
+
+		await expect(sweepOrphanedAvatars()).resolves.toBe(0);
+		await expect(exists(kept)).resolves.toBe(true);
+	});
+
+	it("removes a stale file when the user has cleared their avatar", async () => {
+		const user = await prisma.user.create({
+			data: {
+				email: "cleared-avatar@chatty.test",
+				handle: "clearedavatar",
+				displayName: "Cleared avatar",
+				passwordHash: "not-a-real-hash",
+			},
+			select: { id: true },
+		});
+		const orphan = await writeAvatarFile(user.id, WELL_PAST_GRACE_MS);
+
+		await expect(sweepOrphanedAvatars()).resolves.toBe(1);
+		await expect(exists(orphan)).resolves.toBe(false);
 	});
 });

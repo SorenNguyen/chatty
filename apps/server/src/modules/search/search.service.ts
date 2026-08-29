@@ -1,4 +1,4 @@
-import type { MessageSearchResultDTO } from "@chatty/shared-types";
+import type { MessageSearchPageDTO, MessageSearchResultDTO } from "@chatty/shared-types";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
 import { messageSelect, toMessageDTO } from "../messages/messages.mapper.js";
@@ -47,13 +47,22 @@ async function findMatchingMessageIds(currentUserId: string, query: SearchMessag
 			AND m."deletedAt" IS NULL
 			-- "An added Binh" is the log of something that happened, not something
 			-- anyone said. Searching your messages should not surface it.
-			AND m."kind" = 'USER'
-			${query.before ? Prisma.sql`AND m."createdAt" < ${new Date(query.before)}` : Prisma.empty}
+				AND m."kind" = 'USER'
+				AND NOT EXISTS (
+					SELECT 1 FROM "MessageHiddenFor" h
+					WHERE h."messageId" = m."id" AND h."userId" = ${currentUserId}
+				)
+				${query.conversationId ? Prisma.sql`AND m."conversationId" = ${query.conversationId}` : Prisma.empty}
+				${
+					query.before && query.beforeId
+						? Prisma.sql`AND (m."createdAt", m."id") < (${new Date(query.before)}, ${query.beforeId})`
+						: Prisma.empty
+				}
 		-- Newest first, not by rank. In a chat, the thing you are looking for is
 		-- almost always the recent one, and a relevance score would put a
 		-- three-year-old message above this morning's for saying the word twice.
-		ORDER BY m."createdAt" DESC
-		LIMIT ${query.limit}
+		ORDER BY m."createdAt" DESC, m."id" DESC
+		LIMIT ${query.limit + 1}
 	`;
 
 	return rows.map((row) => row.id);
@@ -70,12 +79,11 @@ async function findMatchingMessageIds(currentUserId: string, query: SearchMessag
  * Leaving a conversation therefore removes it from your search, which is the
  * same rule the sidebar follows — a group you left disappears from it entirely.
  */
-export async function searchMessages(
-	currentUserId: string,
-	query: SearchMessagesQuery,
-): Promise<MessageSearchResultDTO[]> {
-	const matchingIds = await findMatchingMessageIds(currentUserId, query);
-	if (matchingIds.length === 0) return [];
+export async function searchMessages(currentUserId: string, query: SearchMessagesQuery): Promise<MessageSearchPageDTO> {
+	const matchingIdsWithLookahead = await findMatchingMessageIds(currentUserId, query);
+	const hasMore = matchingIdsWithLookahead.length > query.limit;
+	const matchingIds = matchingIdsWithLookahead.slice(0, query.limit);
+	if (matchingIds.length === 0) return { results: [], hasMore: false };
 
 	const messages = await prisma.message.findMany({
 		where: { id: { in: matchingIds } },
@@ -93,7 +101,7 @@ export async function searchMessages(
 		},
 	});
 
-	return messages.map((message) => ({
+	const results: MessageSearchResultDTO[] = messages.map((message) => ({
 		message: toMessageDTO(message),
 		conversation: {
 			id: message.conversation.id,
@@ -102,4 +110,6 @@ export async function searchMessages(
 			participants: message.conversation.participants.map((participant) => toUserDTO(participant.user)),
 		},
 	}));
+
+	return { results, hasMore };
 }

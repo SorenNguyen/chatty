@@ -1,6 +1,11 @@
 import type { Request, Response } from "express";
 import { ValidationError } from "../../lib/errors.js";
-import { editMessageSchema, listMessagesQuerySchema, sendMessageSchema } from "./messages.schema.js";
+import {
+	editMessageSchema,
+	listMessagesQuerySchema,
+	messageContextQuerySchema,
+	sendMessageSchema,
+} from "./messages.schema.js";
 import * as messagesService from "./messages.service.js";
 
 // req.userId is always set here: requireAuth runs before these controllers (see messages.routes.ts)
@@ -55,4 +60,33 @@ export async function listMessagesController(req: Request, res: Response): Promi
 	const conversationId = req.params.conversationId as string;
 	const messages = await messagesService.listMessages(req.userId!, conversationId, query);
 	res.status(200).json(messages);
+}
+
+export async function getMessageContextController(req: Request, res: Response): Promise<void> {
+	const query = messageContextQuerySchema.parse(req.query);
+	const context = await messagesService.getMessageContext(
+		req.userId!,
+		req.params.conversationId as string,
+		req.params.messageId as string,
+		query,
+	);
+	res.status(200).json(context);
+}
+
+export async function listMessageEditsController(req: Request, res: Response): Promise<void> {
+	const edits = await messagesService.listMessageEdits(
+		req.userId!,
+		req.params.conversationId as string,
+		req.params.messageId as string,
+	);
+	res.status(200).json(edits);
+}
+
+export async function hideMessageController(req: Request, res: Response): Promise<void> {
+	await messagesService.hideMessageForUser(
+		req.userId!,
+		req.params.conversationId as string,
+		req.params.messageId as string,
+	);
+	res.status(204).send();
 }

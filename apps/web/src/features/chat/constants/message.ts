@@ -13,6 +13,9 @@ export const DELETED_MESSAGE_TEXT = "This message was deleted";
 /** Marker beside the timestamp of a message its author rewrote. */
 export const EDITED_MESSAGE_LABEL = "edited";
 
+/** Browsers clamp larger delays and may fire them immediately instead. */
+export const MAX_BROWSER_TIMEOUT_MS = 2_147_483_647;
+
 /**
  * What stands in for the name of someone who deleted their account.
  *

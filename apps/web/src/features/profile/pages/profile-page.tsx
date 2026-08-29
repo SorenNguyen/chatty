@@ -1,66 +1,86 @@
+import { useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { Link } from "react-router-dom";
 import { CurrentUserAvatar } from "@/components/current-user-avatar";
+import { Button } from "@/components/button";
 import { useAuth } from "@/hooks/use-auth";
+import { cn } from "@/utils/cn";
 import { ChangeEmailForm, ChangePasswordForm, DeleteAccountForm, ProfileForm } from "../components";
+import { SETTINGS_NAVIGATION } from "../constants/settings";
+import type { SettingsSection } from "../types/settings";
 
-/**
- * Account settings, on its own route rather than a panel inside the chat.
- *
- * Every other secondary surface in this app renders inline — starting a
- * conversation, managing a group — because those act on the conversation that
- * is on screen. This one does not: it edits the account, and putting it in the
- * chat sidebar would mean `features/chat` importing from `features/profile`,
- * which the frontend conventions rule out. A route keeps the two features
- * apart and gives the screen a URL worth having.
- */
+/** Account settings in the same quiet, two-column shell as the conversation view. */
 export function ProfilePage() {
 	const currentUser = useAuth((state) => state.currentUser);
+	const [activeSection, setActiveSection] = useState<SettingsSection>("profile");
 
-	// The route in app.tsx already redirects when there is no session; this keeps
-	// TypeScript honest without an assertion, the same way ChatPage does.
 	if (!currentUser) return null;
 
+	const activeItem = SETTINGS_NAVIGATION.find((item) => item.id === activeSection) ?? SETTINGS_NAVIGATION[0]!;
+
 	return (
-		<main className="min-h-screen bg-slate-50 p-4">
-			<div className="mx-auto flex w-full max-w-lg flex-col gap-6">
-				<Link
-					to="/chat"
-					className="flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-900"
-				>
-					<ArrowLeft className="size-4" />
-					Back to chat
-				</Link>
+		<main className="flex h-screen overflow-hidden bg-white">
+			<aside className="flex w-[352px] shrink-0 flex-col border-r border-slate-200 max-sm:w-20">
+				<header className="flex h-[72px] shrink-0 items-center gap-3 border-b border-slate-200 px-4 max-sm:justify-center max-sm:px-2">
+					<Link
+						to="/chat"
+						aria-label="Back to chat"
+						className="flex size-9 items-center justify-center rounded-full text-slate-600 hover:bg-slate-100"
+					>
+						<ArrowLeft className="size-5" />
+					</Link>
+					<h1 className="text-base font-semibold text-slate-900 max-sm:hidden">Settings</h1>
+				</header>
 
-				<section className="rounded-2xl bg-white p-6 shadow-sm">
-					<div className="mb-6 flex items-center gap-4">
-						<CurrentUserAvatar user={currentUser} />
-						<div className="min-w-0">
-							<h1 className="truncate text-lg font-semibold text-slate-900">{currentUser.displayName}</h1>
-							<p className="truncate text-sm text-slate-500">@{currentUser.handle}</p>
-						</div>
+				<div className="flex items-center gap-3 border-b border-slate-200 px-5 py-4 max-sm:justify-center max-sm:px-2">
+					<CurrentUserAvatar user={currentUser} />
+					<div className="min-w-0 max-sm:hidden">
+						<p className="truncate text-sm font-semibold text-slate-900">{currentUser.displayName}</p>
+						<p className="truncate text-xs text-slate-500">@{currentUser.handle}</p>
 					</div>
+				</div>
 
-					<ProfileForm user={currentUser} />
-				</section>
+				<nav aria-label="Settings categories" className="py-2">
+					{SETTINGS_NAVIGATION.map((item) => (
+						<Button
+							key={item.id}
+							variant="ghost"
+							onClick={() => setActiveSection(item.id)}
+							aria-current={activeSection === item.id ? "page" : undefined}
+							aria-label={item.label}
+							className={cn(
+								"w-full border-l-2 px-5 py-3 text-left text-sm transition max-sm:px-2 max-sm:text-center max-sm:text-xs",
+								activeSection === item.id
+									? "border-blue-600 bg-blue-50 font-medium text-blue-700"
+									: "border-transparent text-slate-600 hover:bg-slate-50 hover:text-slate-900",
+							)}
+						>
+							{item.label}
+						</Button>
+					))}
+				</nav>
+			</aside>
 
-				<section className="rounded-2xl bg-white p-6 shadow-sm">
-					<h2 className="mb-4 text-base font-semibold text-slate-900">Change email</h2>
-					<ChangeEmailForm user={currentUser} />
-				</section>
+			<section className="min-w-0 flex-1 overflow-y-auto">
+				<div className="mx-auto w-full max-w-xl px-6 py-12 sm:px-10">
+					<header className="mb-8 border-b border-slate-200 pb-5">
+						<h2
+							className={cn(
+								"text-xl font-semibold",
+								activeSection === "danger" ? "text-red-700" : "text-slate-900",
+							)}
+						>
+							{activeItem.label}
+						</h2>
+						<p className="mt-1 text-sm text-slate-500">{activeItem.description}</p>
+					</header>
 
-				<section className="rounded-2xl bg-white p-6 shadow-sm">
-					<h2 className="mb-4 text-base font-semibold text-slate-900">Change password</h2>
-					<ChangePasswordForm />
-				</section>
-
-				{/* Last, and visually apart from the rest: everything above this line is
-				    reversible and nothing below it is. */}
-				<section className="rounded-2xl border border-red-200 bg-white p-6 shadow-sm">
-					<h2 className="mb-4 text-base font-semibold text-red-700">Delete account</h2>
-					<DeleteAccountForm />
-				</section>
-			</div>
+					{activeSection === "profile" && <ProfileForm user={currentUser} />}
+					{activeSection === "email" && <ChangeEmailForm user={currentUser} />}
+					{activeSection === "security" && <ChangePasswordForm />}
+					{activeSection === "danger" && <DeleteAccountForm />}
+				</div>
+			</section>
 		</main>
 	);
 }

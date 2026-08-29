@@ -11,17 +11,17 @@ datasource db {
 }
 
 model User {
-  id                String    @id @default(cuid())
-  email             String    @unique
+  id                  String             @id @default(cuid())
+  email               String             @unique
   // Public, unique identifier used to find someone. Display names are not
   // unique — two people called "Minh" are indistinguishable in search results —
   // and email is deliberately never returned by search, so without a handle
   // there is no safe way to tell two accounts apart.
   // Always stored lowercase: Postgres unique indexes are case-sensitive, so
   // normalising on write is what makes "Minh" and "minh" the same handle.
-  handle            String    @unique
-  passwordHash      String
-  displayName       String
+  handle              String             @unique
+  passwordHash        String
+  displayName         String
   // When the avatar was last replaced — null means there is no picture.
   //
   // Not a URL. The file lives under one key derived from the user id, and the
@@ -30,14 +30,14 @@ model User {
   // rewriting every row to move the files to S3, or keeping the old picture
   // cached in browsers after an upload — the same reason Mattermost stores
   // `last_picture_update` and Rocket.Chat an avatar etag.
-  avatarUpdatedAt   DateTime?
+  avatarUpdatedAt     DateTime?
   /// When the password was last replaced, or null if it never has been.
   ///
   /// Read by `requireAuth` and by the socket handshake on every request: a JWT
   /// issued before this moment is refused. Without it, changing or resetting a
   /// password would leave every session opened beforehand working until the
   /// token expired — which is exactly the case a reset is reached for.
-  passwordChangedAt DateTime?
+  passwordChangedAt   DateTime?
   /// Whether other people may see how far this user has read.
   ///
   /// Symmetric by design: turning it off also hides everyone else's markers from
@@ -45,13 +45,22 @@ model User {
   /// participant row — while this is false, that column stops advancing, so the
   /// marker never leaves the process rather than being filtered out of a response
   /// somebody could still ask for.
-  readReceiptsEnabled Boolean @default(true)
-  createdAt         DateTime  @default(now())
+  readReceiptsEnabled Boolean            @default(true)
+  lastSeenAt          DateTime?
+  presenceVisibility  PresenceVisibility @default(CONTACTS)
+  createdAt           DateTime           @default(now())
 
   participants        ConversationParticipant[]
   messages            Message[]
   passwordResetTokens PasswordResetToken[]
   emailChangeTokens   EmailChangeToken[]
+  hiddenMessages      MessageHiddenFor[]
+}
+
+enum PresenceVisibility {
+  EVERYONE
+  CONTACTS
+  NOBODY
 }
 
 /// A one-time link mailed to an address someone wants to move their account to.
@@ -137,10 +146,10 @@ enum OutboxStatus {
 /// shaped by mail: a recipient, a rendered body, and the fact that sending twice
 /// is worse than sending late.
 model OutboxMessage {
-  id      String       @id @default(cuid())
-  status  OutboxStatus @default(PENDING)
-  to      String
-  subject String
+  id            String       @id @default(cuid())
+  status        OutboxStatus @default(PENDING)
+  to            String
+  subject       String
   /// The rendered message, and **emptied the moment there is nothing left to
   /// send** — on success and on final failure alike.
   ///
@@ -152,10 +161,10 @@ model OutboxMessage {
   /// bounds the worst case, and that the check constraint below makes the
   /// redaction a property of the data rather than a habit of the worker. Same
   /// argument, and the same shape, as `Message.deletedAt`.
-  body    String
+  body          String
   /// How many times delivery has been tried. Attempt zero is a row nobody has
   /// picked up yet, not a row that failed once.
-  attempts      Int      @default(0)
+  attempts      Int          @default(0)
   /// The earliest the worker may try again — now for a new row, then pushed out
   /// by exponential backoff after each failure. Also what makes a claim query
   /// cheap: due rows are an index range rather than a scan.
@@ -172,12 +181,12 @@ model OutboxMessage {
   /// Everything that is *compared* against the database clock is therefore
   /// written by the database. `createdAt` and `sentAt` are only ever read by
   /// people, so they stay ordinary.
-  nextAttemptAt DateTime @default(dbgenerated("CURRENT_TIMESTAMP"))
+  nextAttemptAt DateTime     @default(dbgenerated("CURRENT_TIMESTAMP"))
   /// Why the last attempt failed, kept for the person reading the table at 3am.
   /// Never contains the body, so it is safe to log and to keep after redaction.
   lastError     String?
   sentAt        DateTime?
-  createdAt     DateTime  @default(now())
+  createdAt     DateTime     @default(now())
 
   // The worker's only query: due PENDING rows, oldest first. Ordering the index
   // this way means it serves both the filter and the sort.
@@ -211,9 +220,9 @@ enum ConversationRole {
 }
 
 model ConversationParticipant {
-  id                String           @id @default(cuid())
-  conversationId    String
-  userId            String
+  id                      String           @id @default(cuid())
+  conversationId          String
+  userId                  String
   /// Every group has exactly one OWNER while it has anyone in it: the creator
   /// to begin with, and on their way out the longest-standing member left (see
   /// `removeParticipant`). Meaningless in a direct conversation, where there is
@@ -222,8 +231,8 @@ model ConversationParticipant {
   /// PostgreSQL enforces the cross-row rule Prisma cannot express: the phase 7
   /// migration adds an OWNER-only unique index plus a deferred constraint
   /// trigger, so a non-empty group has exactly one owner at commit time.
-  role              ConversationRole @default(MEMBER)
-  joinedAt          DateTime         @default(now())
+  role                    ConversationRole @default(MEMBER)
+  joinedAt                DateTime         @default(now())
   // Newest message this participant has read. Per-participant, so it belongs
   // here and not on Message: "read" is a fact about a person, and a group of
   // ten has ten different answers for the same message.
@@ -231,7 +240,7 @@ model ConversationParticipant {
   // A plain column rather than a relation with a foreign key: SetNull on delete
   // would silently reset someone's marker to "nothing read" the first time a
   // message is deleted, which reads as a whole conversation going unread.
-  lastReadMessageId String?
+  lastReadMessageId       String?
   /// The same marker, but the half other people are allowed to see.
   ///
   /// Two columns rather than one flag consulted at read time, and the difference
@@ -265,7 +274,7 @@ enum MessageKind {
 }
 
 model Message {
-  id             String      @id @default(cuid())
+  id             String                   @id @default(cuid())
   conversationId String
   /// Who wrote it — null on a SYSTEM message, and null once a USER message
   /// outlives the account that wrote it.
@@ -277,7 +286,7 @@ model Message {
   /// holds the other direction — a SYSTEM message has no author — and `kind` is
   /// what tells the two cases apart, which is what it was declared for.
   authorId       String?
-  kind           MessageKind @default(USER)
+  kind           MessageKind              @default(USER)
   // Empty string for a message that is only an image. Nullable would be more
   // truthful, but every read of this column would then need a null branch to
   // save one for the write — and "no caption" and "empty caption" are the same
@@ -287,7 +296,7 @@ model Message {
   // ("An added Binh"). The names in it are a snapshot of who people were when
   // it happened, deliberately — see ADR 0009.
   content        String
-  createdAt      DateTime    @default(now())
+  createdAt      DateTime                 @default(now())
   /// When the author last replaced `content`, or null if they never have.
   ///
   /// A timestamp rather than a boolean because the UI eventually wants to say
@@ -321,18 +330,43 @@ model Message {
   /// see the column as drift and offer to drop it.
   searchVector   Unsupported("tsvector")?
 
-  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversation Conversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   // SetNull, not Cascade. Cascade would delete every message a departing user
   // ever wrote — gutting other people's conversations, and hard-deleting rows
   // that read markers and paging cursors point at without a foreign key to
   // protect them. See `authorId` above and `deletedAt` below.
-  author       User?        @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  author       User?              @relation(fields: [authorId], references: [id], onDelete: SetNull)
   attachment   Attachment?
-
-  @@index([conversationId, createdAt])
+  edits        MessageEdit[]
+  hiddenFor    MessageHiddenFor[]
   // The GIN index on `searchVector` lives in the phase 12 migration: Prisma
   // cannot express an index method, and an `@@index` here would create a second,
   // useless btree one alongside it.
+
+  @@index([conversationId, createdAt])
+}
+
+model MessageEdit {
+  id        String   @id @default(cuid())
+  messageId String
+  content   String
+  editedAt  DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId, editedAt])
+}
+
+model MessageHiddenFor {
+  messageId String
+  userId    String
+  hiddenAt  DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([messageId, userId])
+  @@index([userId])
 }
 
 /// An image sent with a message.

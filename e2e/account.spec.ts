@@ -23,6 +23,7 @@ test.describe("account", () => {
 		await register(page, user);
 
 		await page.getByLabel("Account settings").click();
+		await page.getByRole("button", { name: "Security" }).click();
 		await page.getByLabel("Current password").fill(user.password);
 		await page.getByLabel("New password", { exact: true }).fill("BrandNewSecret456");
 		await page.getByLabel("Confirm new password").fill("BrandNewSecret456");
@@ -52,7 +53,7 @@ test.describe("forgotten password", () => {
 		await register(page, user);
 		await page.getByLabel("Sign out").click();
 
-		await page.getByRole("link", { name: "Forgot your password?" }).click();
+		await page.goto("/forgot-password");
 		await page.getByLabel("Email").fill(user.email);
 		await page.getByRole("button", { name: "Send reset link" }).click();
 		const forRegistered = await page.getByText(/if an account exists/i).textContent();

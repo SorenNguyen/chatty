@@ -74,6 +74,9 @@ npm run audit:rules     # greps apps/web/src against the conventions — a repor
 npm run format          # rewrites, rather than just reporting
 ```
 
+The server test setup creates its disposable `chatty_test` database automatically on the local
+Postgres instance. A fresh clone therefore needs no database command between `db:up` and `verify`.
+
 End-to-end tests are separate, because they need both servers and a browser:
 
 ```bash
@@ -112,12 +115,17 @@ avatar, see unread badges, read receipts, typing indicators and who is online, m
 invite someone, rename it, remove a member, leave it, with every one of those announced in the chat
 log, hand it to somebody else — edit your own profile, change your password, or reset a forgotten
 one, move the account to a new email address, turn read receipts off, delete the account entirely,
-send an image with or without a caption, rewrite or delete a message you sent, and search every
-conversation you are in for a message you half remember.
+send an image with or without a caption, rewrite or retract a recent message, inspect its edit
+history, remove any message from your own view, and search inside the open conversation for a message
+you half remember. Last-seen timestamps follow the privacy choice in profile settings.
 
 Deleting leaves a marked-out placeholder rather than a hole: the text is emptied and the image and its
 file are removed, but the row stays so that other people's read markers and the paging cursor still
 have something to point at. See [docs/ROADMAP.md](docs/ROADMAP.md) phase 8.
+
+An author may edit or delete for everyone for eight hours after sending. The actions disappear when
+that window closes; deleting only from your own view remains available without a time limit and also
+removes the message from your sidebar preview, search results and unread count.
 
 A group has an owner: the person who created it. Only they can rename it, remove somebody else or
 hand the group on; anyone can invite, and anyone can leave. See
@@ -130,12 +138,12 @@ the paging cursor still point at those rows. Read receipts can be turned off, an
 symmetric — hide yours and you stop seeing everyone else's, with nothing revealed retroactively when
 you turn them back on. See [docs/ROADMAP.md](docs/ROADMAP.md) phase 13.
 
-Verified by 315 server tests (against a real Postgres), 146 web tests, and 14 Playwright specs
+Verified by 336 server tests (against a real Postgres), 146 web tests, and 15 Playwright specs
 driving a real browser against a real server — plus typecheck, lint, the conventions audit, and a
 production image build. CI runs all of it except the browser suite on every push.
 
 **[docs/ROADMAP.md](docs/ROADMAP.md) is the current source of truth for what is done and what is
-next.** Phases 1 to 14 are complete. Phase 7 makes group and password-reset transitions safe under
+next.** Phases 1 to 15 are complete. Phase 7 makes group and password-reset transitions safe under
 concurrent requests: one conversation lock orders membership-sensitive writes, PostgreSQL enforces
 the owner/message invariants, and fault-injection tests prove partial writes do not escape. Phase 8
 adds editing and deleting your own messages, on the same lock, with the deletion kept as a tombstone
@@ -162,8 +170,6 @@ Largest known gaps:
 - **Search does not ignore diacritics.** Finding a message works (phase 12), but `hen gap` does not
   match `hẹn gặp` — closing that needs the `unaccent` extension, which is a dependency not worth
   taking on before the host is chosen. The phase 12 migration spells out the exact change.
-- **No edit history and no time limit on editing** — a message can be rewritten years later and the
-  only trace is the word "edited". Deleting is for everybody, never just for you.
 - **There is no second admin and no demotion** — the role is one seat, so nobody can cover for an
   owner who has gone quiet without them handing it over first — and any member can still invite a
   stranger. See [ADR 0008](docs/adr/0008-group-owner-role.md).

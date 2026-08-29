@@ -42,12 +42,16 @@ export const updateProfileSchema = z
 		displayName: displayNameSchema,
 		handle: handleSchema,
 		readReceiptsEnabled: z.boolean(),
+		presenceVisibility: z.enum(["everyone", "contacts", "nobody"]),
 	})
 	.partial()
 	.refine(
 		(input) =>
-			input.displayName !== undefined || input.handle !== undefined || input.readReceiptsEnabled !== undefined,
-		{ message: "Provide displayName, handle or readReceiptsEnabled" },
+			input.displayName !== undefined ||
+			input.handle !== undefined ||
+			input.readReceiptsEnabled !== undefined ||
+			input.presenceVisibility !== undefined,
+		{ message: "Provide a profile setting to update" },
 	);
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 
