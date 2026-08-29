@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { NotFoundError, ValidationError } from "../src/lib/errors.js";
+import { prisma } from "../src/lib/prisma.js";
 import { userRoom } from "../src/lib/socket-bus.js";
 import { register } from "../src/modules/auth/auth.service.js";
 import { createConversation, listConversationsForUser } from "../src/modules/conversations/conversations.service.js";
@@ -171,5 +172,31 @@ describe("listConversationsForUser", () => {
 		const minhId = await createUser("minh");
 
 		await expect(listConversationsForUser(minhId)).resolves.toEqual([]);
+	});
+
+	it("shows a contact's last seen when their privacy allows contacts", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const lastSeenAt = new Date("2026-08-29T08:00:00.000Z");
+		await prisma.user.update({ where: { id: anId }, data: { lastSeenAt, presenceVisibility: "CONTACTS" } });
+		await createConversation(minhId, { participantIds: [anId] });
+
+		const [conversation] = await listConversationsForUser(minhId);
+		const an = conversation!.participants.find((participant) => participant.id === anId);
+		expect(an!.lastSeenAt).toBe(lastSeenAt.toISOString());
+	});
+
+	it("hides a contact's last seen when they choose nobody", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		await prisma.user.update({
+			where: { id: anId },
+			data: { lastSeenAt: new Date("2026-08-29T08:00:00.000Z"), presenceVisibility: "NOBODY" },
+		});
+		await createConversation(minhId, { participantIds: [anId] });
+
+		const [conversation] = await listConversationsForUser(minhId);
+		const an = conversation!.participants.find((participant) => participant.id === anId);
+		expect(an!.lastSeenAt).toBeNull();
 	});
 });

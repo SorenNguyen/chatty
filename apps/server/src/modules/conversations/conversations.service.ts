@@ -37,6 +37,16 @@ const conversationInclude = {
 	},
 } satisfies Prisma.ConversationInclude;
 
+function conversationIncludeForUser(userId: string) {
+	return {
+		participants: conversationInclude.participants,
+		messages: {
+			...conversationInclude.messages,
+			where: { hiddenFor: { none: { userId } } },
+		},
+	} satisfies Prisma.ConversationInclude;
+}
+
 interface ConversationRow {
 	id: string;
 	isGroup: boolean;
@@ -62,7 +72,7 @@ interface ConversationRow {
  */
 function mapParticipants(rows: ConversationRow["participants"]): ParticipantDTO[] {
 	return rows.map(({ user, lastSharedReadMessageId, role }) => ({
-		...toUserDTO(user),
+		...toUserDTO(user, true),
 		role: role === "OWNER" ? "owner" : "member",
 		lastReadMessageId: lastSharedReadMessageId,
 	}));
@@ -166,8 +176,12 @@ async function countUnreadByConversation(userId: string, conversationIds: string
 			AND m."kind" = 'USER'
 			AND m."authorId" IS DISTINCT FROM ${userId}
 			AND m."deletedAt" IS NULL
+			AND NOT EXISTS (
+				SELECT 1 FROM "MessageHiddenFor" h
+				WHERE h."messageId" = m.id AND h."userId" = ${userId}
+			)
 			AND m."createdAt" >= p."joinedAt"
-			AND (marker.id IS NULL OR m."createdAt" > marker."createdAt")
+			AND (marker.id IS NULL OR (m."createdAt", m.id) > (marker."createdAt", marker.id))
 		GROUP BY m."conversationId"
 	`;
 
@@ -324,7 +338,7 @@ export async function createConversation(
 		if (existingId) {
 			const existing = await prisma.conversation.findUniqueOrThrow({
 				where: { id: existingId },
-				include: conversationInclude,
+				include: conversationIncludeForUser(currentUserId),
 			});
 			// This branch returns a thread that may have years of history, so the
 			// count is looked up rather than assumed to be zero the way it is below.
@@ -370,7 +384,7 @@ export async function listConversationsForUser(userId: string): Promise<Conversa
 	const conversations = await prisma.conversation.findMany({
 		where: { participants: { some: { userId } } },
 		orderBy: { updatedAt: "desc" },
-		include: conversationInclude,
+		include: conversationIncludeForUser(userId),
 	});
 
 	const unreadCounts = await countUnreadByConversation(

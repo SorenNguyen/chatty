@@ -30,10 +30,18 @@ export type EditMessageInput = z.infer<typeof editMessageSchema>;
 
 export type EditMessageContract = AssertAssignable<EditMessageInput, EditMessageRequest>;
 
-export const listMessagesQuerySchema = z.object({
-	// cursor-based pagination: pass the id of the oldest message you already
-	// have to get the next page going further back
-	before: z.string().optional(),
-	limit: z.coerce.number().min(1).max(100).default(50),
-});
+export const listMessagesQuerySchema = z
+	.object({
+		// cursor-based pagination: pass the id of the oldest message you already
+		// have to get the next page going further back
+		before: z.string().optional(),
+		after: z.string().optional(),
+		limit: z.coerce.number().min(1).max(100).default(50),
+	})
+	.refine((query) => !(query.before && query.after), { message: "Use either before or after, not both" });
 export type ListMessagesQuery = z.infer<typeof listMessagesQuerySchema>;
+
+export const messageContextQuerySchema = z.object({
+	limit: z.coerce.number().min(10).max(100).default(50),
+});
+export type MessageContextQuery = z.infer<typeof messageContextQuerySchema>;

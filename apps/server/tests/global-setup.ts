@@ -14,6 +14,34 @@ import { TEST_DATABASE_URL } from "./test-database-url.js";
 const TEST_RUN_LOCK_KEY = 4_070_120_250_811n;
 
 /**
+ * Creates the disposable test database on a fresh local Postgres container.
+ *
+ * Prisma cannot connect far enough to run migrations when the database itself
+ * does not exist, and `docker compose up` intentionally creates only the dev
+ * database. Connecting to Postgres' maintenance database closes that bootstrap
+ * gap without adding a manual step to every contributor's first test run.
+ */
+async function ensureTestDatabase(): Promise<void> {
+	const adminClient = new PrismaClient({
+		datasources: {
+			db: { url: "postgresql://chatty:chatty@localhost:5432/postgres?connection_limit=1" },
+		},
+	});
+
+	try {
+		const existing = await adminClient.$queryRaw<{ exists: boolean }[]>`
+			SELECT EXISTS (SELECT FROM pg_database WHERE datname = 'chatty_test') AS exists
+		`;
+
+		if (!existing[0]?.exists) {
+			await adminClient.$executeRawUnsafe('CREATE DATABASE "chatty_test"');
+		}
+	} finally {
+		await adminClient.$disconnect();
+	}
+}
+
+/**
  * Held for the whole run, and released by the connection dying if nothing else.
  *
  * Its own client with `connection_limit=1`, which is the part that makes this
@@ -53,6 +81,7 @@ function createLockClient(): PrismaClient {
  * never prompts or generates new ones, which is what a non-interactive run needs.
  */
 export default async function globalSetup(): Promise<() => Promise<void>> {
+	await ensureTestDatabase();
 	const lockClient = createLockClient();
 	const [claim] = await lockClient.$queryRaw<{ locked: boolean }[]>`
 		SELECT pg_try_advisory_lock(${TEST_RUN_LOCK_KEY}) AS locked

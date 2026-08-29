@@ -29,7 +29,11 @@ export interface UserDTO {
 	 */
 	avatarUrl: string | null;
 	createdAt: string; // ISO 8601
+	/** Null when privacy rules do not allow the viewer to see it. */
+	lastSeenAt: string | null;
 }
+
+export type PresenceVisibility = "everyone" | "contacts" | "nobody";
 
 /**
  * Your own account. Separate from UserDTO because `email` belongs to you and
@@ -51,6 +55,7 @@ export interface CurrentUserDTO extends UserDTO {
 	 * theirs is the arrangement people are right to call unfair.
 	 */
 	readReceiptsEnabled: boolean;
+	presenceVisibility: PresenceVisibility;
 }
 
 /**
@@ -181,6 +186,13 @@ export interface MessageDTO {
 	attachment: AttachmentDTO | null;
 	createdAt: string;
 	/**
+	 * When author-only edit and “delete for everyone” actions expire.
+	 *
+	 * Null for system messages. Clients use this to hide actions that the server
+	 * would reject, while the server still enforces the deadline independently.
+	 */
+	authorActionExpiresAt: string | null;
+	/**
 	 * When the author last changed the text, or null if they never have.
 	 *
 	 * Present so a reader can tell a message that was rewritten from one that was
@@ -199,6 +211,18 @@ export interface MessageDTO {
 	 * bubble.
 	 */
 	deletedAt: string | null;
+}
+
+export interface MessageContextDTO {
+	messages: MessageDTO[];
+	hasMoreOlder: boolean;
+	hasMoreNewer: boolean;
+}
+
+export interface MessageEditDTO {
+	id: string;
+	content: string;
+	editedAt: string;
 }
 
 /**
@@ -225,6 +249,11 @@ export interface MessageSearchResultDTO {
 		 */
 		participants: UserDTO[];
 	};
+}
+
+export interface MessageSearchPageDTO {
+	results: MessageSearchResultDTO[];
+	hasMore: boolean;
 }
 
 // ---- Auth request/response contracts ----
@@ -276,6 +305,7 @@ export interface UpdateProfileRequest {
 	 * it is a stored preference like the other two, not an action.
 	 */
 	readReceiptsEnabled?: boolean | undefined;
+	presenceVisibility?: PresenceVisibility | undefined;
 }
 
 /**
@@ -434,6 +464,7 @@ export interface TypingEvent {
 export interface PresenceEvent {
 	userId: string;
 	isOnline: boolean;
+	lastSeenAt: string | null;
 }
 
 /**
@@ -485,6 +516,7 @@ export interface ConversationLeftEvent {
 /** Events the server pushes down. The client only listens to these. */
 export interface ServerToClientEvents {
 	"message:new": (message: MessageDTO) => void;
+	"message:hidden": (event: { conversationId: string; messageId: string }) => void;
 	/**
 	 * A message already on screen changed — its author edited it, or deleted it.
 	 *

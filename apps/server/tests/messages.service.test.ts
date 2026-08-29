@@ -3,7 +3,7 @@ import { NotFoundError } from "../src/lib/errors.js";
 import { prisma } from "../src/lib/prisma.js";
 import { register } from "../src/modules/auth/auth.service.js";
 import { createConversation } from "../src/modules/conversations/conversations.service.js";
-import { listMessages, sendMessage } from "../src/modules/messages/messages.service.js";
+import { getMessageContext, listMessages, sendMessage } from "../src/modules/messages/messages.service.js";
 import { installFakeIO, type FakeIO } from "./fake-io.js";
 
 let fakeIO: FakeIO;
@@ -157,5 +157,51 @@ describe("listMessages", () => {
 		await sendMessage(minhId, conversation.id, { content: "private" });
 
 		await expect(listMessages(outsiderId, conversation.id, { limit: 50 })).rejects.toBeInstanceOf(NotFoundError);
+	});
+});
+
+describe("getMessageContext", () => {
+	it("returns the target with messages on both sides in display order", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const conversation = await createConversation(minhId, { participantIds: [anId] });
+		const sent = [];
+		for (const content of ["one", "two", "target", "four", "five"]) {
+			sent.push(await sendMessage(minhId, conversation.id, { content }));
+		}
+
+		const context = await getMessageContext(minhId, conversation.id, sent[2]!.id, { limit: 5 });
+
+		expect(context.messages.map((message) => message.content)).toEqual(["one", "two", "target", "four", "five"]);
+		expect(context.hasMoreOlder).toBe(false);
+		expect(context.hasMoreNewer).toBe(false);
+	});
+
+	it("reports when more history exists outside the context window", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const conversation = await createConversation(minhId, { participantIds: [anId] });
+		const sent = [];
+		for (const content of ["one", "two", "target", "four", "five"]) {
+			sent.push(await sendMessage(minhId, conversation.id, { content }));
+		}
+
+		const context = await getMessageContext(minhId, conversation.id, sent[2]!.id, { limit: 3 });
+
+		expect(context.messages.map((message) => message.content)).toEqual(["two", "target", "four"]);
+		expect(context.hasMoreOlder).toBe(true);
+		expect(context.hasMoreNewer).toBe(true);
+	});
+
+	it("does not reveal a target to somebody outside the conversation", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const outsiderId = await createUser("outsider");
+		const conversation = await createConversation(minhId, { participantIds: [anId] });
+		const target = await sendMessage(minhId, conversation.id, { content: "private target" });
+
+		await expect(getMessageContext(outsiderId, conversation.id, target.id, { limit: 5 })).rejects.toBeInstanceOf(
+			NotFoundError,
+		);
 	});
 });

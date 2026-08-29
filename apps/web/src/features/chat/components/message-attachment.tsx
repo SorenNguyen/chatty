@@ -1,4 +1,7 @@
 import type { AttachmentDTO } from "@chatty/shared-types";
+import { useEffect, useState } from "react";
+import { X } from "lucide-react";
+import { Button } from "@/components/button";
 import { getAttachmentDisplaySize } from "../utils";
 
 interface MessageAttachmentProps {
@@ -20,23 +23,62 @@ interface MessageAttachmentProps {
  */
 export function MessageAttachment({ attachment, caption }: MessageAttachmentProps) {
 	const size = getAttachmentDisplaySize(attachment.width, attachment.height);
+	const [isOpen, setIsOpen] = useState(false);
+
+	useEffect(() => {
+		if (!isOpen) return;
+
+		function closeOnEscape(event: KeyboardEvent) {
+			if (event.key === "Escape") setIsOpen(false);
+		}
+
+		window.addEventListener("keydown", closeOnEscape);
+
+		return () => window.removeEventListener("keydown", closeOnEscape);
+	}, [isOpen]);
 
 	return (
-		<img
-			// Keyed by id nowhere near this — the URL carries a token that is
-			// re-minted per read, so it must never be used as an identity.
-			src={attachment.url}
-			// The caption when there is one, because that is the only description
-			// anyone has written. "Image" alone at least says something is there;
-			// an empty alt would tell a screen reader to skip the message entirely.
-			alt={caption || "Image"}
-			width={size.width}
-			height={size.height}
-			// Conversations load a page of history at once and most of it is off
-			// screen; fetching every picture immediately would spend the whole
-			// connection on images nobody has scrolled to.
-			loading="lazy"
-			className="rounded-xl object-cover"
-		/>
+		<>
+			<Button
+				variant="ghost"
+				onClick={() => setIsOpen(true)}
+				className="block cursor-zoom-in rounded-xl p-0 focus:outline-none focus:ring-2 focus:ring-blue-400"
+			>
+				<img
+					// Keyed by id nowhere near this — the URL carries a token that is
+					// re-minted per read, so it must never be used as an identity.
+					src={attachment.url}
+					alt={caption || "Image"}
+					width={size.width}
+					height={size.height}
+					loading="lazy"
+					className="rounded-xl object-cover"
+				/>
+			</Button>
+
+			{isOpen && (
+				<div
+					role="dialog"
+					aria-modal="true"
+					aria-label="Image preview"
+					onClick={() => setIsOpen(false)}
+					className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 p-6 backdrop-blur-sm"
+				>
+					<img
+						src={attachment.url}
+						alt={caption || "Image"}
+						className="max-h-full max-w-full rounded-xl object-contain shadow-2xl"
+					/>
+					<Button
+						variant="ghost"
+						onClick={() => setIsOpen(false)}
+						aria-label="Close image preview"
+						className="absolute right-5 top-5 size-10 rounded-full bg-white/10 p-0 text-white hover:bg-white/20"
+					>
+						<X className="size-5" />
+					</Button>
+				</div>
+			)}
+		</>
 	);
 }

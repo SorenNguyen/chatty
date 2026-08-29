@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "../src/lib/prisma.js";
 import { removeParticipant } from "../src/modules/conversations/conversations.service.js";
 import { deleteMessage, sendMessage } from "../src/modules/messages/messages.service.js";
+import { searchMessagesQuerySchema } from "../src/modules/search/search.schema.js";
 import { searchMessages } from "../src/modules/search/search.service.js";
 import { installFakeIO } from "./fake-io.js";
 
@@ -40,9 +41,18 @@ async function makeConversation(userIds: string[], name: string | null = null): 
 }
 
 const search = (userId: string, query: string, limit = 20) =>
-	searchMessages(userId, { query, limit }).then((results) => results.map((result) => result.message.content));
+	searchMessages(userId, { query, limit }).then((page) => page.results.map((result) => result.message.content));
 
 describe("searchMessages", () => {
+	it("requires both halves of a pagination cursor", () => {
+		expect(() =>
+			searchMessagesQuerySchema.parse({
+				query: "deployment",
+				before: "2026-08-29T08:00:00.000Z",
+			}),
+		).toThrow("before and beforeId must be provided together");
+	});
+
 	it("finds a message by a word in it", async () => {
 		const minh = await makeUser("minh");
 		const an = await makeUser("an");
@@ -66,6 +76,20 @@ describe("searchMessages", () => {
 		await expect(search(minh, "keys")).resolves.toHaveLength(2);
 	});
 
+	it("can limit a search to the conversation currently open", async () => {
+		const minh = await makeUser("minh");
+		const an = await makeUser("an");
+		const binh = await makeUser("binh");
+		const current = await makeConversation([minh, an]);
+		const another = await makeConversation([minh, binh]);
+		await sendMessage(an, current, { content: "deployment in this chat" });
+		await sendMessage(binh, another, { content: "deployment somewhere else" });
+
+		const page = await searchMessages(minh, { query: "deployment", limit: 20, conversationId: current });
+
+		expect(page.results.map((result) => result.message.content)).toEqual(["deployment in this chat"]);
+	});
+
 	it("says which conversation each result came from", async () => {
 		const minh = await makeUser("minh");
 		const an = await makeUser("an");
@@ -73,7 +97,8 @@ describe("searchMessages", () => {
 		const group = await makeConversation([minh, an, binh], "Standup");
 		await sendMessage(an, group, { content: "deploying now" });
 
-		const [result] = await searchMessages(minh, { query: "deploying", limit: 20 });
+		const { results } = await searchMessages(minh, { query: "deploying", limit: 20 });
+		const [result] = results;
 
 		expect(result!.conversation.name).toBe("Standup");
 		expect(result!.conversation.isGroup).toBe(true);
@@ -226,14 +251,52 @@ describe("searchMessages", () => {
 		await sendMessage(minh, conversation, { content: "deployment three" });
 
 		const firstPage = await searchMessages(minh, { query: "deployment", limit: 2 });
-		expect(firstPage.map((result) => result.message.content)).toEqual(["deployment three", "deployment two"]);
+		expect(firstPage.results.map((result) => result.message.content)).toEqual([
+			"deployment three",
+			"deployment two",
+		]);
+		expect(firstPage.hasMore).toBe(true);
+		const cursor = firstPage.results[firstPage.results.length - 1]!.message;
 
 		const secondPage = await searchMessages(minh, {
 			query: "deployment",
 			limit: 2,
-			before: firstPage[firstPage.length - 1]!.message.createdAt,
+			before: cursor.createdAt,
+			beforeId: cursor.id,
 		});
-		expect(secondPage.map((result) => result.message.content)).toEqual(["deployment one"]);
+		expect(secondPage.results.map((result) => result.message.content)).toEqual(["deployment one"]);
+		expect(secondPage.hasMore).toBe(false);
+	});
+
+	it("does not skip matches that share the cursor timestamp", async () => {
+		const minh = await makeUser("minh");
+		const an = await makeUser("an");
+		const conversation = await makeConversation([minh, an]);
+		const sent = await Promise.all([
+			sendMessage(minh, conversation, { content: "deployment alpha" }),
+			sendMessage(minh, conversation, { content: "deployment beta" }),
+			sendMessage(minh, conversation, { content: "deployment gamma" }),
+		]);
+		const sharedTimestamp = new Date("2026-08-29T08:00:00.000Z");
+		await prisma.message.updateMany({
+			where: { id: { in: sent.map((message) => message.id) } },
+			data: { createdAt: sharedTimestamp },
+		});
+		const expectedIds = sent
+			.map((message) => message.id)
+			.sort()
+			.reverse();
+
+		const firstPage = await searchMessages(minh, { query: "deployment", limit: 2 });
+		const cursor = firstPage.results[firstPage.results.length - 1]!.message;
+		const secondPage = await searchMessages(minh, {
+			query: "deployment",
+			limit: 2,
+			before: cursor.createdAt,
+			beforeId: cursor.id,
+		});
+
+		expect([...firstPage.results, ...secondPage.results].map((result) => result.message.id)).toEqual(expectedIds);
 	});
 
 	it("finds nothing rather than everything when nothing matches", async () => {

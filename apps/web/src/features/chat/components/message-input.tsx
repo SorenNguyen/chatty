@@ -14,6 +14,7 @@ export function MessageInput({ conversationId }: MessageInputProps) {
 	const [attachment, setAttachment] = useState<File | null>(null);
 	const [previewUrl, setPreviewUrl] = useState("");
 	const [isSending, setIsSending] = useState(false);
+	const [uploadProgress, setUploadProgress] = useState(0);
 	const [error, setError] = useState("");
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const { notifyTyping, stopTyping } = useTypingNotifier(conversationId);
@@ -61,9 +62,10 @@ export function MessageInput({ conversationId }: MessageInputProps) {
 		// is in flight makes a slow network look like a second message coming.
 		stopTyping();
 		setIsSending(true);
+		setUploadProgress(0);
 		setError("");
 		try {
-			await api.sendMessage(conversationId, content.trim(), attachment ?? undefined);
+			await api.sendMessage(conversationId, content.trim(), attachment ?? undefined, setUploadProgress);
 			// Deliberately no local append: the server broadcasts this message back
 			// over the socket, and rendering from that one source keeps the sender's
 			// view on the same code path as everyone else's. Appending here too
@@ -82,6 +84,20 @@ export function MessageInput({ conversationId }: MessageInputProps) {
 	return (
 		<form onSubmit={handleSubmit} className="border-t border-slate-200 p-3">
 			{error && <p className="mb-2 text-xs text-red-600">{error}</p>}
+			{isSending && attachment && (
+				<div className="mb-2" role="status" aria-label={`Uploading image ${uploadProgress}%`}>
+					<div className="mb-1 flex justify-between text-xs text-slate-500">
+						<span>Uploading image</span>
+						<span>{uploadProgress}%</span>
+					</div>
+					<div className="h-1.5 overflow-hidden rounded-full bg-slate-200">
+						<div
+							className="h-full rounded-full bg-blue-600 transition-[width]"
+							style={{ width: `${uploadProgress}%` }}
+						/>
+					</div>
+				</div>
+			)}
 
 			{previewUrl && (
 				<div className="relative mb-2 inline-block">

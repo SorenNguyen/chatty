@@ -13,14 +13,22 @@ import { CurrentUserAvatar } from "@/components/current-user-avatar";
 import { useAuth } from "@/hooks/use-auth";
 import {
 	ConversationHeader,
+	ConversationMessageSearch,
 	ConversationList,
 	GroupMembersPanel,
 	MessageInput,
 	MessageList,
-	MessageSearchPanel,
 	NewConversationPanel,
 } from "../components";
-import { useConversationMessages, useMarkRead, usePresence, useSocketEvent, useTypingParticipants } from "../hooks";
+import {
+	useConversationMessages,
+	useMarkRead,
+	usePresence,
+	usePresenceLastSeenSync,
+	useSocketEvent,
+	useTypingParticipants,
+} from "../hooks";
+import type { MessageSearchSession } from "../types/message-search";
 
 export function ChatPage() {
 	const currentUser = useAuth((state) => state.currentUser);
@@ -29,25 +37,34 @@ export function ChatPage() {
 	const [conversations, setConversations] = useState<ConversationDTO[]>([]);
 	const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
 	const [isManagingGroup, setIsManagingGroup] = useState(false);
+	const [requestedMessageId, setRequestedMessageId] = useState<string | null>(null);
+	const [isConversationSearchOpen, setIsConversationSearchOpen] = useState(false);
 
 	const onlineUserIds = usePresence();
+	usePresenceLastSeenSync(setConversations);
 	const typingUserIds = useTypingParticipants(selectedConversationId);
 
 	const refreshConversations = useCallback(async () => {
 		setConversations(await api.listConversations());
 	}, []);
 
-	// Wrapped rather than passed straight down: the hooks below fire this from
-	// socket handlers, where a floating promise is a lint error and an unhandled
-	// rejection is a dropped refresh nobody sees.
 	const handleConversationsChanged = useCallback(() => {
 		void refreshConversations();
 	}, [refreshConversations]);
 
-	const { messages, hasMoreOlder, isLoadingOlder, loadOlder, editMessage, deleteMessage } = useConversationMessages(
-		selectedConversationId,
-		handleConversationsChanged,
-	);
+	const {
+		messages,
+		hasMoreOlder,
+		isLoadingOlder,
+		loadOlder,
+		hasMoreNewer,
+		isLoadingNewer,
+		loadNewer,
+		editMessage,
+		deleteMessage,
+		hideMessage,
+		targetMessageId,
+	} = useConversationMessages(selectedConversationId, handleConversationsChanged, requestedMessageId);
 
 	useEffect(() => {
 		void refreshConversations();
@@ -55,6 +72,7 @@ export function ChatPage() {
 
 	useEffect(() => {
 		setIsManagingGroup(false);
+		setIsConversationSearchOpen(false);
 	}, [selectedConversationId]);
 
 	// Reading is defined by what is on screen, so the marker follows the newest
@@ -143,13 +161,32 @@ export function ChatPage() {
 
 	function handleConversationStarted(conversationId: string) {
 		void refreshConversations();
+		setIsConversationSearchOpen(false);
+		setRequestedMessageId(null);
 		setSelectedConversationId(conversationId);
+	}
+
+	function handleConversationSelected(conversationId: string) {
+		setIsConversationSearchOpen(false);
+		setRequestedMessageId(null);
+		setSelectedConversationId(conversationId);
+	}
+
+	function selectSearchResult(session: MessageSearchSession) {
+		const result = session.results[session.activeIndex];
+		if (!result) return;
+
+		setSelectedConversationId(result.conversation.id);
+		setRequestedMessageId(result.message.id);
+	}
+
+	function closeMessageSearch() {
+		setIsConversationSearchOpen(false);
+		setRequestedMessageId(null);
 	}
 
 	const selectedConversation = conversations.find((conversation) => conversation.id === selectedConversationId);
 
-	// The route only renders this page once a session is restored, so currentUser
-	// is present; the guard keeps TypeScript honest without an assertion.
 	if (!currentUser) return null;
 
 	return (
@@ -176,8 +213,6 @@ export function ChatPage() {
 					</Button>
 				</header>
 
-				<MessageSearchPanel currentUserId={currentUser.id} onSelectResult={setSelectedConversationId} />
-
 				<NewConversationPanel onConversationStarted={handleConversationStarted} />
 
 				<div className="flex-1 overflow-y-auto">
@@ -186,7 +221,7 @@ export function ChatPage() {
 						currentUserId={currentUser.id}
 						selectedConversationId={selectedConversationId}
 						onlineUserIds={onlineUserIds}
-						onSelect={setSelectedConversationId}
+						onSelect={handleConversationSelected}
 					/>
 				</div>
 			</aside>
@@ -201,7 +236,23 @@ export function ChatPage() {
 							typingUserIds={typingUserIds}
 							onToggleGroupMembers={() => setIsManagingGroup((current) => !current)}
 							isManagingGroup={isManagingGroup}
+							onOpenMessageSearch={() => {
+								setIsManagingGroup(false);
+								setRequestedMessageId(null);
+								setIsConversationSearchOpen(true);
+							}}
 						/>
+
+						{isConversationSearchOpen ? (
+							<ConversationMessageSearch
+								conversationId={selectedConversation.id}
+								onSelectResult={selectSearchResult}
+								onClearResult={() => {
+									setRequestedMessageId(null);
+								}}
+								onClose={closeMessageSearch}
+							/>
+						) : null}
 
 						{isManagingGroup && (
 							<GroupMembersPanel
@@ -211,9 +262,6 @@ export function ChatPage() {
 							/>
 						)}
 
-						{/* No overflow here: MessageList owns the scroll container, and a
-						    nested one would break its position anchoring. `min-h-0` lets
-						    this flex child shrink so the inner element can scroll. */}
 						<div className="min-h-0 flex-1">
 							<MessageList
 								messages={messages}
@@ -224,8 +272,14 @@ export function ChatPage() {
 								hasMoreOlder={hasMoreOlder}
 								isLoadingOlder={isLoadingOlder}
 								onLoadOlder={loadOlder}
+								hasMoreNewer={hasMoreNewer}
+								isLoadingNewer={isLoadingNewer}
+								onLoadNewer={loadNewer}
 								onEditMessage={editMessage}
 								onDeleteMessage={deleteMessage}
+								onHideMessage={hideMessage}
+								targetMessageId={targetMessageId}
+								onReturnToLatest={closeMessageSearch}
 							/>
 						</div>
 

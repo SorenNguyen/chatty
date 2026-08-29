@@ -1,13 +1,14 @@
 import { userRoom, type ChattyServer, type ChattySocket } from "../lib/socket-bus.js";
 import { listContactIds } from "../modules/conversations/conversations.service.js";
+import { prisma } from "../lib/prisma.js";
 
 /**
  * Who is online, derived entirely from live connections.
  *
- * Nothing is written down. A presence flag in the database is a lie waiting to
- * happen: the process that would clear it is exactly the one that crashed, and
- * every stale row then shows a user as online forever. Asking the adapter who
- * is connected cannot go stale, because it has no state of its own to forget.
+ * Live presence is never written down. A presence flag in the database is a lie
+ * waiting to happen: the process that would clear it is exactly the one that
+ * crashed. Only the disconnect timestamp is persisted for an approximate
+ * “last seen”; asking the adapter who is online remains the source of truth.
  */
 
 /**
@@ -51,12 +52,18 @@ async function listOnlineUserIds(io: ChattyServer): Promise<Set<string>> {
  * connected client — so a user with no conversations would announce themselves
  * to the entire app.
  */
-function emitPresence(io: ChattyServer, rooms: string[], userId: string, isOnline: boolean): void {
+function emitPresence(
+	io: ChattyServer,
+	rooms: string[],
+	userId: string,
+	isOnline: boolean,
+	lastSeenAt: string | null,
+): void {
 	if (rooms.length === 0) return;
 
 	// One call with every room, so someone who shares three conversations with
 	// this user is still told once — Socket.io deduplicates across the set.
-	io.to(rooms).emit("presence:update", { userId, isOnline });
+	io.to(rooms).emit("presence:update", { userId, isOnline, lastSeenAt });
 }
 
 /**
@@ -74,7 +81,7 @@ export async function announceConnected(io: ChattyServer, socket: ChattySocket):
 	const connections = await countConnections(io, userId);
 
 	if (connections === 1) {
-		emitPresence(io, conversationRoomsOf(socket), userId, true);
+		emitPresence(io, conversationRoomsOf(socket), userId, true, null);
 	}
 
 	// Sent to every connection, not just the first: a second tab needs the
@@ -107,5 +114,13 @@ export async function announceDisconnected(io: ChattyServer, userId: string, roo
 	// Another tab or device is still open — the person has not gone anywhere.
 	if (connections > 0) return;
 
-	emitPresence(io, rooms, userId, false);
+	const lastSeenAt = new Date();
+	const user = await prisma.user.findUnique({
+		where: { id: userId },
+		select: { presenceVisibility: true },
+	});
+	if (!user) return;
+	await prisma.user.updateMany({ where: { id: userId }, data: { lastSeenAt } });
+
+	emitPresence(io, rooms, userId, false, user.presenceVisibility === "NOBODY" ? null : lastSeenAt.toISOString());
 }

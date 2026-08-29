@@ -604,9 +604,10 @@ after it, so a delete racing a kick has one honest order. One socket event, `mes
 the whole message for both cases: the DTO's own `editedAt` / `deletedAt` say which happened, so a client
 replaces by id with nothing to branch on. Deleting twice is idempotent and broadcasts once.
 
-Not built, and left off deliberately: no edit history, no time limit on editing, and no "delete for me".
-The last one is a different feature — it needs per-participant visibility, which is a second axis on
-every message query.
+This phase originally left out edit history, a time limit, and "delete for me". Phase 15 closes all
+three: edit and delete-for-everyone share an eight-hour author window, history is append-only, and
+per-participant visibility is applied consistently to message pages, search, sidebar previews and
+unread counts.
 
 ## Phase 9 — Mail that survives a crash — `done`
 
@@ -1020,6 +1021,37 @@ operation that is already idempotent.
 One thing this does **not** cover: avatar files. The same sweep is the right home for them and the
 loop is now here, but it was left out rather than added quietly — see Known gaps.
 
+## Phase 15 — contributor setup and focused settings — `done`
+
+This phase starts with the path every contributor takes before it changes product behaviour. The
+seed, test database and line endings must work on a fresh Windows or Unix clone; otherwise a green
+change depends on undocumented local state. It then replaces the long account page with focused
+settings categories inside a viewport-sized application shell.
+
+| # | Item | Status |
+| --- | --- | --- |
+| 49 | Seed a group with an explicit owner | Done |
+| 50 | Create `chatty_test` automatically on the first server test run | Done |
+| 51 | Pin repository text files to LF across platforms | Done |
+| 52 | Keep desktop Settings within the viewport and show one category at a time | Done |
+| 53 | Add attachment lightbox and upload progress | Done |
+| 54 | Sweep orphaned avatar files | Done |
+| 55 | Search inside a conversation and jump to the exact message | Done |
+| 56 | Add an edit window, edit history and per-user message deletion | Done |
+| 57 | Add privacy-aware last-seen presence | Done |
+| 58 | Move routing to a non-vulnerable supported release | Done |
+
+The desktop shell owns the viewport. Conversation lists, message history and a settings category may
+scroll independently when their content genuinely does not fit; the document itself should not grow
+a second scrollbar. Small screens remain content-first and may scroll rather than clipping controls.
+
+Message actions follow the interaction shared by Telegram, Zalo and Messenger rather than occupying
+permanent space beside every bubble: a single overflow button appears on hover or keyboard focus and
+opens a compact menu. Edit and delete-for-everyone disappear at the exact eight-hour server deadline;
+delete-for-me remains available, including on a tombstone. Search is scoped to the open conversation,
+uses a stable `(createdAt, id)` cursor, and returns an explicit `hasMore` rather than making the client
+guess from page length.
+
 ## Known gaps not on the roadmap yet
 
 - **Handle placement.** Asking for a handle during registration is friction. Alternatives discussed:
@@ -1045,23 +1077,9 @@ loop is now here, but it was left out rather than added quietly — see Known ga
   anywhere for up to an hour, and someone removed from a group can still fetch an image whose token
   they were handed a minute earlier. Inherent to signed URLs rather than an oversight — see
   [ADR 0007](adr/0007-signed-attachment-urls.md) — and the TTL is the whole mitigation.
-- **Avatar files are still not swept.** Attachment files are, as of phase 14, and the sweep in
-  `lib/orphaned-uploads.ts` is the right home for avatars too — the loop already exists. It was left
-  out rather than added quietly, because the question it has to ask is a different one: an avatar
-  file is orphaned when `User.avatarUpdatedAt` is null or the user is gone, not when a row with a
-  matching id is missing. Phase 13 added a path that produces them (a failed unlink after an account
-  is deleted is logged, not retried), so this is a real if slow-growing gap.
 - **Search keeps diacritics.** `hen gap` does not find `hẹn gặp`. The fix is the `unaccent`
   extension plus an IMMUTABLE wrapper, written out in full in the phase 12 migration — deliberately
   not taken on, because it is a host-level dependency and the host is not chosen.
-- **Search jumps to a conversation, not to the message.** Scrolling to a hit a thousand messages
-  back means paging until it is loaded, which is its own feature rather than a detail of this one.
-- **No edit history and no time limit on editing.** A message can be rewritten years later and the
-  only trace is the word "edited" — a reader cannot see what it used to say, and nothing stops someone
-  rewriting their half of an old argument. Every real messenger draws a line somewhere; this one has
-  not decided where, and adding the limit later invalidates nothing already stored.
-- **"Delete for me" does not exist** — deleting removes a message for everybody. The other kind needs
-  per-participant visibility, which is a second axis on every message query rather than a flag.
 - **A deleted account's name is gone from its messages, and cannot be brought back.** The messages
   survive with `author` null and render as "Deleted account" (phase 13). Anyone who wants the history
   to keep reading as a conversation between named people would need a display-name snapshot on every
@@ -1069,8 +1087,6 @@ loop is now here, but it was left out rather than added quietly — see Known ga
   answer to what deletion means.
 - **A read marker pointing outside the loaded page shows no "Seen".** Correct rather than wrong (the
   alternative is guessing), but it means a receipt can disappear when you scroll far enough back.
-- **Presence is binary.** No "last seen at", which would need a column and a decision about who is
-  allowed to see it.
 - **Typing is only shown for the conversation you have open.** The event arrives for every
   conversation you are in — `use-typing-participants` drops the rest on purpose, because a sidebar
   badge for something that expires in seconds is mostly flicker. Real messengers do show it there,

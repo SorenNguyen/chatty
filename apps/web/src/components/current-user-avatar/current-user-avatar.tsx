@@ -5,9 +5,11 @@ import { api } from "@/api/client";
 import { Avatar } from "@/components/avatar";
 import { Button } from "@/components/button";
 import { useAuth } from "@/hooks/use-auth";
+import type { AvatarSize } from "@/types/avatar";
 
 interface CurrentUserAvatarProps {
 	user: CurrentUserDTO;
+	size?: AvatarSize;
 }
 
 /**
@@ -17,7 +19,7 @@ interface CurrentUserAvatarProps {
  * rather than owned by `features/chat` because the profile screen shows the
  * same control, and features must not import from each other.
  */
-export function CurrentUserAvatar({ user }: CurrentUserAvatarProps) {
+export function CurrentUserAvatar({ user, size = "md" }: CurrentUserAvatarProps) {
 	const setCurrentUser = useAuth((state) => state.setCurrentUser);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const [isSaving, setIsSaving] = useState(false);
@@ -71,7 +73,7 @@ export function CurrentUserAvatar({ user }: CurrentUserAvatarProps) {
 				aria-label="Change your profile picture"
 				className="rounded-full p-0 hover:opacity-80"
 			>
-				<Avatar user={user} size="md" />
+				<Avatar user={user} size={size} />
 			</Button>
 
 			{isSaving && (

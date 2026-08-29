@@ -11,6 +11,18 @@ import { E2E_DATABASE_URL } from "./database.js";
  * disconnect the sockets a test is in the middle of asserting on.
  */
 export default async function globalSetup(): Promise<void> {
+	const admin = new PrismaClient({
+		datasources: { db: { url: "postgresql://chatty:chatty@localhost:5432/postgres?connection_limit=1" } },
+	});
+	try {
+		const existing = await admin.$queryRaw<{ exists: boolean }[]>`
+			SELECT EXISTS (SELECT FROM pg_database WHERE datname = 'chatty_e2e') AS exists
+		`;
+		if (!existing[0]?.exists) await admin.$executeRawUnsafe('CREATE DATABASE "chatty_e2e"');
+	} finally {
+		await admin.$disconnect();
+	}
+
 	execSync("npx prisma migrate deploy --schema apps/server/prisma/schema.prisma", {
 		stdio: "inherit",
 		env: { ...process.env, DATABASE_URL: E2E_DATABASE_URL },

@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import { io as connect, type Socket } from "socket.io-client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
+import { prisma } from "../src/lib/prisma.js";
 import { register } from "../src/modules/auth/auth.service.js";
 import { createConversation } from "../src/modules/conversations/conversations.service.js";
 import { initSockets } from "../src/sockets/index.js";
@@ -174,5 +175,41 @@ describe("typing over the socket", () => {
 		// safeParse rather than parse: a throw here would drop the connection over
 		// one bad keystroke event.
 		expect(minhSocket.connected).toBe(true);
+	});
+});
+
+describe("presence over the socket", () => {
+	it("stores and announces last seen when the last connection closes", async () => {
+		const minh = await createUser("minh");
+		const an = await createUser("an");
+		await createConversation(minh.id, { participantIds: [an.id] });
+		const minhSocket = await connectAs(minh.token);
+		const anSocket = await connectAs(an.token);
+
+		const heard = nextEvent(anSocket, "presence:update", 1_500);
+		minhSocket.disconnect();
+		const event = (await heard) as { userId: string; isOnline: boolean; lastSeenAt: string | null };
+
+		expect(event).toMatchObject({ userId: minh.id, isOnline: false });
+		expect(event.lastSeenAt).not.toBeNull();
+		const stored = await prisma.user.findUniqueOrThrow({ where: { id: minh.id }, select: { lastSeenAt: true } });
+		expect(stored.lastSeenAt?.toISOString()).toBe(event.lastSeenAt);
+	});
+
+	it("stores last seen but withholds its timestamp when privacy is nobody", async () => {
+		const minh = await createUser("minh");
+		const an = await createUser("an");
+		await prisma.user.update({ where: { id: minh.id }, data: { presenceVisibility: "NOBODY" } });
+		await createConversation(minh.id, { participantIds: [an.id] });
+		const minhSocket = await connectAs(minh.token);
+		const anSocket = await connectAs(an.token);
+
+		const heard = nextEvent(anSocket, "presence:update", 1_500);
+		minhSocket.disconnect();
+		const event = await heard;
+
+		expect(event).toEqual({ userId: minh.id, isOnline: false, lastSeenAt: null });
+		const stored = await prisma.user.findUniqueOrThrow({ where: { id: minh.id }, select: { lastSeenAt: true } });
+		expect(stored.lastSeenAt).not.toBeNull();
 	});
 });

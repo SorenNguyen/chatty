@@ -39,7 +39,7 @@ export function MessageEditor({ initialContent, hasAttachment, onSave, onCancel 
 	}
 
 	return (
-		<div className="flex flex-col gap-1.5">
+		<div className="flex min-w-64 max-w-[70vw] flex-col gap-2">
 			<textarea
 				value={draft}
 				onChange={(event) => setDraft(event.target.value)}
@@ -47,16 +47,19 @@ export function MessageEditor({ initialContent, hasAttachment, onSave, onCancel 
 				aria-label="Edit message"
 				autoFocus
 				rows={2}
-				className="w-64 resize-none rounded-lg border border-slate-300 px-2 py-1 text-sm text-slate-900 outline-none focus:border-blue-500"
+				className="w-full resize-none rounded-xl border border-blue-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-inner outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
 			/>
 
-			<div className="flex items-center gap-1">
-				<Button onClick={() => onSave(trimmed)} disabled={!canSave} className="px-2 py-1 text-xs">
-					Save
-				</Button>
-				<Button variant="ghost" onClick={onCancel} className="px-2 py-1 text-xs">
-					Cancel
-				</Button>
+			<div className="flex items-center justify-between gap-3">
+				<span className="text-[10px] text-slate-500">Enter to save · Esc to cancel</span>
+				<div className="flex items-center gap-1">
+					<Button variant="ghost" onClick={onCancel} className="px-2.5 py-1 text-xs text-slate-600">
+						Cancel
+					</Button>
+					<Button onClick={() => onSave(trimmed)} disabled={!canSave} className="px-2.5 py-1 text-xs">
+						Save
+					</Button>
+				</div>
 			</div>
 		</div>
 	);

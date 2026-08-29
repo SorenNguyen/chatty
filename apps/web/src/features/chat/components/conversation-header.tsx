@@ -1,7 +1,7 @@
 import type { ConversationDTO } from "@chatty/shared-types";
-import { UserCog } from "lucide-react";
+import { Search, UserCog } from "lucide-react";
 import { Button } from "@/components/button";
-import { getConversationTitle, getDirectPeer, getTypingMessage } from "../utils";
+import { formatLastSeen, getConversationTitle, getDirectPeer, getTypingMessage } from "../utils";
 import { ConversationAvatar } from "./conversation-avatar";
 
 interface ConversationHeaderProps {
@@ -12,6 +12,7 @@ interface ConversationHeaderProps {
 	/** Toggles the group members panel. Omitted for a direct conversation, which has no group settings to show. */
 	onToggleGroupMembers?: () => void;
 	isManagingGroup?: boolean;
+	onOpenMessageSearch?: () => void;
 }
 
 export function ConversationHeader({
@@ -21,12 +22,14 @@ export function ConversationHeader({
 	typingUserIds,
 	onToggleGroupMembers,
 	isManagingGroup,
+	onOpenMessageSearch,
 }: ConversationHeaderProps) {
 	const peer = getDirectPeer(conversation, currentUserId);
 	const typingMessage = getTypingMessage(typingUserIds, conversation.participants);
 	// Typing wins over presence: someone typing is obviously online, and showing
 	// both would flicker the line between two facts that say the same thing.
-	const statusLine = typingMessage ?? (peer && onlineUserIds.has(peer.id) ? "Online" : null);
+	const statusLine =
+		typingMessage ?? (peer && onlineUserIds.has(peer.id) ? "Online" : formatLastSeen(peer?.lastSeenAt ?? null));
 
 	return (
 		<header className="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
@@ -43,6 +46,17 @@ export function ConversationHeader({
 				</h1>
 				{statusLine && <p className="truncate text-xs text-slate-500">{statusLine}</p>}
 			</div>
+
+			{onOpenMessageSearch && (
+				<Button
+					variant="ghost"
+					onClick={onOpenMessageSearch}
+					aria-label="Search in conversation"
+					className="px-2"
+				>
+					<Search className="size-4" />
+				</Button>
+			)}
 
 			{conversation.isGroup && onToggleGroupMembers && (
 				<Button

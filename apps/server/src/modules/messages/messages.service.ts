@@ -1,14 +1,15 @@
 import { randomUUID } from "node:crypto";
-import type { MessageDTO } from "@chatty/shared-types";
+import type { MessageContextDTO, MessageDTO, MessageEditDTO } from "@chatty/shared-types";
 import type { Prisma } from "@prisma/client";
 import { deleteAttachment, saveAttachment } from "../../lib/attachment-storage.js";
 import { ForbiddenError, NotFoundError, ValidationError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
 import { prisma } from "../../lib/prisma.js";
-import { getIO } from "../../lib/socket-bus.js";
+import { getIO, userRoom } from "../../lib/socket-bus.js";
 import { assertParticipant } from "../conversations/conversations.service.js";
 import { messageSelect, toMessageDTO } from "./messages.mapper.js";
-import type { EditMessageInput, ListMessagesQuery } from "./messages.schema.js";
+import { MESSAGE_AUTHOR_ACTION_WINDOW_MS } from "./messages.constants.js";
+import type { EditMessageInput, ListMessagesQuery, MessageContextQuery } from "./messages.schema.js";
 
 /**
  * What `sendMessage` takes. Not the Zod type: the image arrives as `req.file`
@@ -87,9 +88,21 @@ export async function listMessages(
 	query: ListMessagesQuery,
 ): Promise<MessageDTO[]> {
 	await assertParticipant(currentUserId, conversationId);
+	if (query.after) {
+		const newer = await prisma.message.findMany({
+			where: { conversationId, hiddenFor: { none: { userId: currentUserId } } },
+			orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+			take: query.limit,
+			cursor: { id: query.after },
+			skip: 1,
+			select: messageSelect,
+		});
+
+		return newer.map(toMessageDTO);
+	}
 
 	const messages = await prisma.message.findMany({
-		where: { conversationId },
+		where: { conversationId, hiddenFor: { none: { userId: currentUserId } } },
 		// Newest first so `take` returns the most recent page; the client reverses
 		// for display. Backed by @@index([conversationId, createdAt]).
 		orderBy: [{ createdAt: "desc" }, { id: "desc" }],
@@ -103,6 +116,48 @@ export async function listMessages(
 	return messages.map(toMessageDTO);
 }
 
+export async function getMessageContext(
+	currentUserId: string,
+	conversationId: string,
+	messageId: string,
+	query: MessageContextQuery,
+): Promise<MessageContextDTO> {
+	await assertParticipant(currentUserId, conversationId);
+	const target = await prisma.message.findFirst({
+		where: { id: messageId, conversationId, hiddenFor: { none: { userId: currentUserId } } },
+		select: { id: true },
+	});
+	if (!target) throw new NotFoundError("Message not found");
+
+	const olderLimit = Math.floor(query.limit / 2);
+	const newerLimit = query.limit - olderLimit - 1;
+	const [older, current, newer] = await Promise.all([
+		prisma.message.findMany({
+			where: { conversationId, hiddenFor: { none: { userId: currentUserId } } },
+			orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+			cursor: { id: messageId },
+			skip: 1,
+			take: olderLimit + 1,
+			select: messageSelect,
+		}),
+		prisma.message.findUniqueOrThrow({ where: { id: messageId }, select: messageSelect }),
+		prisma.message.findMany({
+			where: { conversationId, hiddenFor: { none: { userId: currentUserId } } },
+			orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+			cursor: { id: messageId },
+			skip: 1,
+			take: newerLimit + 1,
+			select: messageSelect,
+		}),
+	]);
+
+	return {
+		messages: [...older.slice(0, olderLimit).reverse(), current, ...newer.slice(0, newerLimit)].map(toMessageDTO),
+		hasMoreOlder: older.length > olderLimit,
+		hasMoreNewer: newer.length > newerLimit,
+	};
+}
+
 /**
  * What survives the authorization check: the two facts either operation still
  * has to branch on. Everything else the check consumed — kind, author — has
@@ -111,6 +166,8 @@ export async function listMessages(
 interface EditableMessage {
 	deletedAt: Date | null;
 	attachmentId: string | null;
+	content: string;
+	createdAt: Date;
 }
 
 /**
@@ -147,6 +204,8 @@ async function loadEditableMessage(
 			kind: true,
 			authorId: true,
 			deletedAt: true,
+			content: true,
+			createdAt: true,
 			attachment: { select: { id: true } },
 		},
 	});
@@ -166,7 +225,12 @@ async function loadEditableMessage(
 	// would only leave the UI unable to say why nothing happened.
 	if (message.authorId !== currentUserId) throw new ForbiddenError("Only the author can change a message");
 
-	return { deletedAt: message.deletedAt, attachmentId: message.attachment?.id ?? null };
+	return {
+		deletedAt: message.deletedAt,
+		attachmentId: message.attachment?.id ?? null,
+		content: message.content,
+		createdAt: message.createdAt,
+	};
 }
 
 /**
@@ -194,6 +258,9 @@ export async function editMessage(
 		// Editing a tombstone would have to un-delete it, and "deleted" is the one
 		// state everyone else has already been told about.
 		if (message.deletedAt) throw new ValidationError("This message was deleted");
+		if (Date.now() - message.createdAt.getTime() >= MESSAGE_AUTHOR_ACTION_WINDOW_MS) {
+			throw new ValidationError("Messages can only be edited for 8 hours");
+		}
 
 		// The send rule, restated where it still applies: a message has to be
 		// something. Clearing the caption of a picture is fine; clearing the whole
@@ -201,6 +268,11 @@ export async function editMessage(
 		if (!content && !message.attachmentId) {
 			throw new ValidationError("A message needs text, an image, or both");
 		}
+
+		await transaction.messageEdit.create({
+			data: { messageId, content: message.content },
+			select: { id: true },
+		});
 
 		return transaction.message.update({
 			where: { id: messageId },
@@ -214,6 +286,38 @@ export async function editMessage(
 	getIO().to(conversationId).emit("message:updated", messageDTO);
 
 	return messageDTO;
+}
+
+export async function listMessageEdits(
+	currentUserId: string,
+	conversationId: string,
+	messageId: string,
+): Promise<MessageEditDTO[]> {
+	await assertParticipant(currentUserId, conversationId);
+	const message = await prisma.message.findFirst({
+		where: { id: messageId, conversationId, hiddenFor: { none: { userId: currentUserId } } },
+		select: { edits: { orderBy: { editedAt: "desc" }, select: { id: true, content: true, editedAt: true } } },
+	});
+	if (!message) throw new NotFoundError("Message not found");
+
+	return message.edits.map((edit) => ({ ...edit, editedAt: edit.editedAt.toISOString() }));
+}
+
+export async function hideMessageForUser(
+	currentUserId: string,
+	conversationId: string,
+	messageId: string,
+): Promise<void> {
+	await assertParticipant(currentUserId, conversationId);
+	const message = await prisma.message.findFirst({ where: { id: messageId, conversationId }, select: { id: true } });
+	if (!message) throw new NotFoundError("Message not found");
+
+	await prisma.messageHiddenFor.upsert({
+		where: { messageId_userId: { messageId, userId: currentUserId } },
+		create: { messageId, userId: currentUserId },
+		update: {},
+	});
+	getIO().to(userRoom(currentUserId)).emit("message:hidden", { conversationId, messageId });
 }
 
 /**
@@ -238,6 +342,9 @@ export async function deleteMessage(
 			});
 
 			return { deleted: unchanged, removedAttachmentId: null, wasAlreadyDeleted: true };
+		}
+		if (Date.now() - message.createdAt.getTime() >= MESSAGE_AUTHOR_ACTION_WINDOW_MS) {
+			throw new ValidationError("Messages can only be deleted for everyone for 8 hours");
 		}
 
 		// The attachment row goes with the text. Leaving it would keep serving the

@@ -29,14 +29,19 @@ export async function getUserById(userId: string): Promise<CurrentUserDTO> {
 		// projection rather than being part of it: this is the one response allowed
 		// to carry them, and keeping them out of `userSelect` is what stops them
 		// riding along on somebody else's profile.
-		select: { ...userSelect, email: true, readReceiptsEnabled: true },
+		select: { ...userSelect, email: true, readReceiptsEnabled: true, presenceVisibility: true },
 	});
 
 	// findUnique + explicit throw, not findUniqueOrThrow: the latter raises a
 	// Prisma error the error middleware would turn into a 500, not a 404.
 	if (!user) throw new NotFoundError("User not found");
 
-	return { ...toUserDTO(user), email: user.email, readReceiptsEnabled: user.readReceiptsEnabled };
+	return {
+		...toUserDTO(user, true),
+		email: user.email,
+		readReceiptsEnabled: user.readReceiptsEnabled,
+		presenceVisibility: user.presenceVisibility.toLowerCase() as CurrentUserDTO["presenceVisibility"],
+	};
 }
 
 /**
@@ -70,6 +75,9 @@ export async function updateProfile(userId: string, input: UpdateProfileInput): 
 			...(input.displayName !== undefined && { displayName: input.displayName }),
 			...(input.handle !== undefined && { handle: input.handle }),
 			...(input.readReceiptsEnabled !== undefined && { readReceiptsEnabled: input.readReceiptsEnabled }),
+			...(input.presenceVisibility !== undefined && {
+				presenceVisibility: input.presenceVisibility.toUpperCase() as "EVERYONE" | "CONTACTS" | "NOBODY",
+			}),
 		},
 		select: { id: true },
 	});
@@ -113,7 +121,7 @@ export async function searchUsers(currentUserId: string, query: SearchUsersQuery
 		select: userSelect,
 	});
 
-	return users.map(toUserDTO);
+	return users.map((user) => toUserDTO(user));
 }
 
 /**

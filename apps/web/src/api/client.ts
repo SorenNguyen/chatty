@@ -12,7 +12,9 @@ import type {
 	LoginRequest,
 	MarkReadRequest,
 	MessageDTO,
-	MessageSearchResultDTO,
+	MessageContextDTO,
+	MessageEditDTO,
+	MessageSearchPageDTO,
 	RegisterRequest,
 	RenameConversationRequest,
 	RequestEmailChangeRequest,
@@ -180,11 +182,29 @@ export const api = {
 	 * Pass `before` — the id of the oldest message already held — to walk further
 	 * back. The cursor message itself is excluded.
 	 */
-	listMessages(conversationId: string, options: { limit: number; before?: string }): Promise<MessageDTO[]> {
+	listMessages(
+		conversationId: string,
+		options: { limit: number; before?: string; after?: string },
+	): Promise<MessageDTO[]> {
 		const params = new URLSearchParams({ limit: String(options.limit) });
 		if (options.before) params.set("before", options.before);
+		if (options.after) params.set("after", options.after);
 
 		return get<MessageDTO[]>(`/conversations/${conversationId}/messages?${params.toString()}`);
+	},
+
+	getMessageContext(conversationId: string, messageId: string, limit = 50): Promise<MessageContextDTO> {
+		return get<MessageContextDTO>(
+			`/conversations/${conversationId}/messages/${messageId}/context?limit=${String(limit)}`,
+		);
+	},
+
+	listMessageEdits(conversationId: string, messageId: string): Promise<MessageEditDTO[]> {
+		return get<MessageEditDTO[]>(`/conversations/${conversationId}/messages/${messageId}/edits`);
+	},
+
+	hideMessage(conversationId: string, messageId: string): Promise<void> {
+		return request<void>(`/conversations/${conversationId}/messages/${messageId}/me`, { method: "DELETE" });
 	},
 
 	/**
@@ -194,7 +214,12 @@ export const api = {
 	 * is a file. One write path rather than two, so there is one place where
 	 * membership is checked and one broadcast everyone renders from.
 	 */
-	sendMessage(conversationId: string, content: string, attachment?: File): Promise<MessageDTO> {
+	sendMessage(
+		conversationId: string,
+		content: string,
+		attachment?: File,
+		onProgress?: (percent: number) => void,
+	): Promise<MessageDTO> {
 		const path = `/conversations/${conversationId}/messages`;
 		if (!attachment) return post<MessageDTO>(path, { content });
 
@@ -204,7 +229,28 @@ export const api = {
 		// with no text, and the server trims what it gets either way.
 		if (content) body.append("content", content);
 
-		return request<MessageDTO>(path, { method: "POST", body });
+		return new Promise<MessageDTO>((resolve, reject) => {
+			const upload = new XMLHttpRequest();
+			upload.open("POST", `${API_URL}${path}`);
+			const token = getStoredToken();
+
+			if (token) upload.setRequestHeader("Authorization", `Bearer ${token}`);
+			upload.upload.addEventListener("progress", (event) => {
+				if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100));
+			});
+			upload.addEventListener("load", () => {
+				if (upload.status >= 200 && upload.status < 300) {
+					resolve(JSON.parse(upload.responseText) as MessageDTO);
+
+					return;
+				}
+
+				const errorBody = JSON.parse(upload.responseText || "{}") as { message?: string };
+				reject(new Error(errorBody.message ?? `Request to ${path} failed with ${upload.status}`));
+			});
+			upload.addEventListener("error", () => reject(new Error("The image upload was interrupted")));
+			upload.send(body);
+		});
 	},
 
 	/**
@@ -217,10 +263,19 @@ export const api = {
 	 * Two characters minimum, enforced by the server: a one-character search
 	 * matches most of the table and is never what anyone meant.
 	 */
-	searchMessages(query: string, limit = 20): Promise<MessageSearchResultDTO[]> {
+	searchMessages(
+		query: string,
+		limit = 20,
+		conversationId?: string,
+		before?: string,
+		beforeId?: string,
+	): Promise<MessageSearchPageDTO> {
 		const params = new URLSearchParams({ query, limit: String(limit) });
+		if (conversationId) params.set("conversationId", conversationId);
+		if (before) params.set("before", before);
+		if (beforeId) params.set("beforeId", beforeId);
 
-		return get<MessageSearchResultDTO[]>(`/search/messages?${params.toString()}`);
+		return get<MessageSearchPageDTO>(`/search/messages?${params.toString()}`);
 	},
 
 	/**

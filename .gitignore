@@ -14,3 +14,5 @@ coverage/
 test-results/
 playwright-report/
 .turbo/
+# Local CodeGraph index; contributors can regenerate it from the working tree.
+.codegraph/

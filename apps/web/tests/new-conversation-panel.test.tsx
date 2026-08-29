@@ -15,7 +15,14 @@ vi.mock("@/api/client", () => ({
 }));
 
 function makeUser(id: string, displayName: string): UserDTO {
-	return { id, handle: id, displayName, avatarUrl: null, createdAt: "2026-01-01T00:00:00.000Z" };
+	return {
+		id,
+		handle: id,
+		displayName,
+		avatarUrl: null,
+		createdAt: "2026-01-01T00:00:00.000Z",
+		lastSeenAt: null,
+	};
 }
 
 const foundUsers = [makeUser("an", "An"), makeUser("binh", "Binh"), makeUser("chi", "Chi")];

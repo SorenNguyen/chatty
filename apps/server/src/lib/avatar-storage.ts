@@ -1,4 +1,4 @@
-import { access, mkdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import { env } from "../config/env.js";
@@ -29,6 +29,7 @@ const AVATAR_SIZE = 256;
 const MAX_INPUT_PIXELS = 50_000_000;
 
 const avatarsDirectory = path.resolve(env.UPLOAD_DIR, "avatars");
+const AVATAR_FILE_EXTENSION = ".webp";
 
 /**
  * Ids reaching this module come from route params, and a path is built from
@@ -45,7 +46,7 @@ function assertSafeKey(userId: string): void {
 function avatarPathFor(userId: string): string {
 	assertSafeKey(userId);
 
-	return path.join(avatarsDirectory, `${userId}.webp`);
+	return path.join(avatarsDirectory, `${userId}${AVATAR_FILE_EXTENSION}`);
 }
 
 /**
@@ -103,6 +104,37 @@ export async function findAvatarPath(userId: string): Promise<string | null> {
 /** Removes a user's avatar. Succeeds when there was nothing to remove. */
 export async function deleteAvatar(userId: string): Promise<void> {
 	await rm(avatarPathFor(userId), { force: true });
+}
+
+export interface StoredAvatarFile {
+	userId: string;
+	modifiedAt: Date;
+}
+
+/** Lists avatar files without assuming every file still has a user row. */
+export async function listStoredAvatars(): Promise<StoredAvatarFile[]> {
+	let entries: string[];
+	try {
+		entries = await readdir(avatarsDirectory);
+	} catch {
+		return [];
+	}
+
+	const files = await Promise.all(
+		entries
+			.filter((entry) => entry.endsWith(AVATAR_FILE_EXTENSION))
+			.map(async (entry) => {
+				try {
+					const stats = await stat(path.join(avatarsDirectory, entry));
+
+					return { userId: entry.slice(0, -AVATAR_FILE_EXTENSION.length), modifiedAt: stats.mtime };
+				} catch {
+					return null;
+				}
+			}),
+	);
+
+	return files.filter((file): file is StoredAvatarFile => file !== null);
 }
 
 /**

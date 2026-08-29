@@ -10,7 +10,7 @@
 		"node": ">=22.22.2"
 	},
 	"scripts": {
-		"audit:rules": "bash scripts/audit-rules.sh apps/web/src",
+		"audit:rules": "node scripts/run-audit.mjs",
 		"build": "npm run build --workspaces --if-present",
 		"db:down": "docker compose down",
 		"db:up": "docker compose up -d postgres",
@@ -18,14 +18,14 @@
 		"dev:web": "npm run dev --workspace apps/web",
 		"e2e:install": "playwright install chromium",
 		"format": "prettier --write .",
-		"format:check": "prettier --check .",
+		"format:check": "prettier --check . --end-of-line auto",
 		"lint": "eslint .",
 		"test": "npm run test --workspaces --if-present",
 		"test:e2e": "playwright test",
 		"typecheck": "npm run typecheck --workspaces --if-present && npm run typecheck:e2e",
 		"typecheck:e2e": "tsc -p tsconfig.e2e.json",
 		"verify": "npm run typecheck && npm run lint && npm run format:check && npm run test && npm run verify:audit",
-		"verify:audit": "bash scripts/audit-rules.sh apps/web/src --gate"
+		"verify:audit": "node scripts/run-audit.mjs --gate"
 	},
 	"devDependencies": {
 		"@eslint/js": "^9.15.0",

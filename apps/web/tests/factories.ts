@@ -23,7 +23,7 @@ import type {
 const FIXED_DATE = "2026-01-01T00:00:00.000Z";
 
 export function makeUser(id: string, displayName: string): UserDTO {
-	return { id, handle: id, displayName, avatarUrl: null, createdAt: FIXED_DATE };
+	return { id, handle: id, displayName, avatarUrl: null, createdAt: FIXED_DATE, lastSeenAt: null };
 }
 
 /**
@@ -32,7 +32,13 @@ export function makeUser(id: string, displayName: string): UserDTO {
  * builder that adds it to everyone makes leaking it into a `UserDTO` easy.
  */
 export function makeCurrentUser(overrides: Partial<CurrentUserDTO> = {}): CurrentUserDTO {
-	return { ...makeUser("minh", "Minh"), email: "minh@chatty.test", readReceiptsEnabled: true, ...overrides };
+	return {
+		...makeUser("minh", "Minh"),
+		email: "minh@chatty.test",
+		readReceiptsEnabled: true,
+		presenceVisibility: "contacts",
+		...overrides,
+	};
 }
 
 export function makeParticipant(
@@ -57,7 +63,7 @@ export function makeMessage(
 	// Last, and both defaulting to "never": a message that was neither edited nor
 	// deleted is what every existing test means by one, and adding these ahead of
 	// `attachment` would have rewritten every call site to say so.
-	overrides: Pick<Partial<MessageDTO>, "editedAt" | "deletedAt"> = {},
+	overrides: Pick<Partial<MessageDTO>, "authorActionExpiresAt" | "editedAt" | "deletedAt"> = {},
 ): MessageDTO {
 	return {
 		id,
@@ -67,6 +73,7 @@ export function makeMessage(
 		content,
 		attachment,
 		createdAt: "2026-08-23T10:00:00.000Z",
+		authorActionExpiresAt: "2099-08-23T18:00:00.000Z",
 		editedAt: null,
 		deletedAt: null,
 		...overrides,
@@ -88,6 +95,7 @@ export function makeSystemMessage(id: string, content: string): MessageDTO {
 		content,
 		attachment: null,
 		createdAt: "2026-08-23T10:00:00.000Z",
+		authorActionExpiresAt: null,
 		// Not overridable, unlike `makeMessage`: nobody wrote a system line, so
 		// there is nobody who may change it — the database refuses both.
 		editedAt: null,

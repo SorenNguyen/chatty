@@ -1,4 +1,5 @@
 import { deleteAttachment, listStoredAttachments } from "./attachment-storage.js";
+import { deleteAvatar, listStoredAvatars } from "./avatar-storage.js";
 import { logger } from "./logger.js";
 import { prisma } from "./prisma.js";
 
@@ -85,6 +86,34 @@ export async function sweepOrphanedAttachments(): Promise<number> {
 	return deletedCount;
 }
 
+/** Deletes old avatar files whose user is gone or no longer advertises an avatar. */
+export async function sweepOrphanedAvatars(): Promise<number> {
+	const cutoff = new Date(Date.now() - ORPHAN_GRACE_MS);
+	const candidates = (await listStoredAvatars()).filter((file) => file.modifiedAt < cutoff);
+	if (candidates.length === 0) return 0;
+
+	const referenced = await prisma.user.findMany({
+		where: {
+			id: { in: candidates.map((candidate) => candidate.userId) },
+			avatarUpdatedAt: { not: null },
+		},
+		select: { id: true },
+	});
+	const referencedIds = new Set(referenced.map((user) => user.id));
+	let deletedCount = 0;
+
+	for (const orphan of candidates.filter((candidate) => !referencedIds.has(candidate.userId))) {
+		try {
+			await deleteAvatar(orphan.userId);
+			deletedCount += 1;
+		} catch (error) {
+			logger.error({ err: error, userId: orphan.userId }, "failed to remove an orphaned avatar file");
+		}
+	}
+
+	return deletedCount;
+}
+
 let sweepTimer: NodeJS.Timeout | null = null;
 
 /**
@@ -98,9 +127,11 @@ export function startOrphanedUploadSweeper(): void {
 	if (sweepTimer) return;
 
 	sweepTimer = setInterval(() => {
-		void sweepOrphanedAttachments()
-			.then((deletedCount) => {
-				if (deletedCount > 0) logger.info({ deletedCount }, "removed orphaned attachment files");
+		void Promise.all([sweepOrphanedAttachments(), sweepOrphanedAvatars()])
+			.then(([attachmentCount, avatarCount]) => {
+				if (attachmentCount + avatarCount > 0) {
+					logger.info({ attachmentCount, avatarCount }, "removed orphaned upload files");
+				}
 			})
 			.catch((error: unknown) => logger.error({ err: error }, "orphaned upload sweep failed"));
 	}, ORPHAN_SWEEP_MS);

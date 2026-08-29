@@ -2,6 +2,7 @@ import type { MessageDTO } from "@chatty/shared-types";
 import type { MessageKind } from "@prisma/client";
 import { buildAttachmentUrl } from "../../lib/attachment-storage.js";
 import { toUserDTO, userSelect, type UserRow } from "../users/users.mapper.js";
+import { MESSAGE_AUTHOR_ACTION_WINDOW_MS } from "./messages.constants.js";
 
 /**
  * How a message row becomes a `MessageDTO`, and which columns that needs.
@@ -78,6 +79,10 @@ export function toMessageDTO(row: MessageRow): MessageDTO {
 				}
 			: null,
 		createdAt: row.createdAt.toISOString(),
+		authorActionExpiresAt:
+			row.kind === "USER"
+				? new Date(row.createdAt.getTime() + MESSAGE_AUTHOR_ACTION_WINDOW_MS).toISOString()
+				: null,
 		editedAt: row.editedAt?.toISOString() ?? null,
 		deletedAt: row.deletedAt?.toISOString() ?? null,
 	};
