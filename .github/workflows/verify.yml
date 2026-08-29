@@ -39,9 +39,9 @@ jobs:
           --health-retries 10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           # Not "22" alone: package.json's engines field requires >=22.22.2,
           # because jsdom 30 does — and on an older 22 the web suite does not
@@ -69,7 +69,7 @@ jobs:
   images:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build the server image
         run: docker build -f apps/server/Dockerfile -t chatty-server:ci .
