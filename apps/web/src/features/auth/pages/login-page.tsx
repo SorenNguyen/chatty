@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { MessageCircle } from "lucide-react";
 import { Button } from "@/components/button";
 import { LoginForm, RegisterForm } from "../components";
 
@@ -8,12 +7,14 @@ export function LoginPage() {
 	const isLogin = mode === "login";
 
 	return (
-		<main className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
-			<div className="w-full max-w-sm rounded-2xl bg-white p-8 shadow-sm">
+		<main className="flex min-h-screen items-center justify-center bg-paper p-4">
+			<div className="w-full max-w-sm rounded-xl border border-rule bg-paper-raised p-8">
 				<div className="mb-6 flex flex-col items-center gap-2">
-					<MessageCircle className="size-8 text-blue-600" />
-					<h1 className="text-xl font-semibold text-slate-900">Chatty</h1>
-					<p className="text-sm text-slate-500">
+					<span className="flex items-baseline gap-1.5">
+						<span className="font-display text-3xl leading-none tracking-tight">Chatty</span>
+						<span aria-hidden="true" className="size-1.5 bg-signal" />
+					</span>
+					<p className="eyebrow text-center text-ink-faint">
 						{isLogin ? "Sign in to continue" : "Create an account to start chatting"}
 					</p>
 				</div>

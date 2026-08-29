@@ -5,7 +5,7 @@ import { ForgotPasswordPage } from "@/features/auth/pages/forgot-password-page";
 import { LoginPage } from "@/features/auth/pages/login-page";
 import { ResetPasswordPage } from "@/features/auth/pages/reset-password-page";
 import { ChatPage } from "@/features/chat/pages/chat-page";
-import { ProfilePage } from "@/features/profile/pages/profile-page";
+import { SettingsPage } from "@/features/profile/pages/settings-page";
 import { useAuth } from "@/hooks/use-auth";
 
 export function App() {
@@ -21,8 +21,8 @@ export function App() {
 	// the moment before the stored token has been checked.
 	if (isRestoring) {
 		return (
-			<div className="flex min-h-screen items-center justify-center bg-slate-50">
-				<p className="text-sm text-slate-500">Loading…</p>
+			<div className="flex min-h-screen items-center justify-center bg-paper">
+				<p className="text-sm text-ink-faint">Loading…</p>
 			</div>
 		);
 	}
@@ -40,7 +40,23 @@ export function App() {
 				    mailbox, which is regularly a phone that has never signed in. */}
 				<Route path="/confirm-email" element={<ConfirmEmailPage />} />
 				<Route path="/chat" element={currentUser ? <ChatPage /> : <Navigate to="/login" replace />} />
-				<Route path="/profile" element={currentUser ? <ProfilePage /> : <Navigate to="/login" replace />} />
+				{/* Settings is a modal over the conversation, so /profile mounts the
+				    chat *and* the overlay as siblings rather than replacing the one
+				    with the other. Keeping it a real route is what preserves the
+				    bookmark and makes the back button close the dialog. */}
+				<Route
+					path="/profile"
+					element={
+						currentUser ? (
+							<>
+								<ChatPage />
+								<SettingsPage />
+							</>
+						) : (
+							<Navigate to="/login" replace />
+						)
+					}
+				/>
 				<Route path="*" element={<Navigate to={currentUser ? "/chat" : "/login"} replace />} />
 			</Routes>
 		</BrowserRouter>

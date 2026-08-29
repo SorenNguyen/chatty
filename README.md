@@ -143,7 +143,7 @@ driving a real browser against a real server — plus typecheck, lint, the conve
 production image build. CI runs all of it except the browser suite on every push.
 
 **[docs/ROADMAP.md](docs/ROADMAP.md) is the current source of truth for what is done and what is
-next.** Phases 1 to 15 are complete. Phase 7 makes group and password-reset transitions safe under
+next.** Phases 1 to 16 are complete. Phase 7 makes group and password-reset transitions safe under
 concurrent requests: one conversation lock orders membership-sensitive writes, PostgreSQL enforces
 the owner/message invariants, and fault-injection tests prove partial writes do not escape. Phase 8
 adds editing and deleting your own messages, on the same lock, with the deletion kept as a tombstone
@@ -160,7 +160,10 @@ deleting the account — and it is where `Message.authorId` stopped cascading, s
 without taking half of everyone else's conversations with them. Phase 14 closed the four Known gaps
 that were defects rather than missing features: unread now starts when you joined a group, a second
 test run refuses rather than corrupting the first, the web app has a Content-Security-Policy, and
-attachment files left by a failed upload are swept.
+attachment files left by a failed upload are swept. Phase 16 gives the app a visual language instead
+of framework defaults: ink on warm paper with one scarce signal colour, 1px rules where shadows used
+to be, self-hosted type that the strict CSP allows, everything a machine produced set in mono, and
+account settings moved into a dialog over the conversation rather than a screen that replaces it.
 
 Largest known gaps:
 
@@ -193,6 +196,12 @@ Largest known gaps:
 - **The CSP is not verified against a live API.** The web app has one as of phase 14, checked in a
   real browser against the built image — but with no API behind it, so `img-src` and `connect-src`
   are argued from the header's contents rather than demonstrated end to end.
+- **The upload progress bar does not move in production.** Its width is an inline `style`, which is
+  what `style-src 'self'` blocks — the CSP added in phase 14 governs inline style attributes, not
+  just `<style>` elements. Pre-existing rather than new, found while reworking the composer in phase
+  16, and left as a decision rather than patched: the fix is either `style-src-attr 'unsafe-inline'`
+  (a real, if narrow, relaxation) or rendering the bar in fixed steps, and neither is obviously
+  right. The upload itself works; only the bar is frozen.
 - Playwright covers one browser, and `test:e2e` is not part of `verify` — it needs two servers and a
   browser download.
 

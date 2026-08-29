@@ -11,7 +11,7 @@ export function SelectedParticipants({ participants, onRemove }: SelectedPartici
 	if (participants.length === 0) return null;
 
 	return (
-		<ul className="mt-2 flex flex-wrap gap-1.5">
+		<ul className="mt-3 flex flex-wrap gap-1.5">
 			{participants.map((participant) => (
 				<li key={participant.id}>
 					<Button
@@ -19,10 +19,10 @@ export function SelectedParticipants({ participants, onRemove }: SelectedPartici
 						onClick={() => onRemove(participant.id)}
 						aria-label={`Remove ${participant.displayName}`}
 						// A chip, not a centred action button.
-						className="gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-xs text-blue-700 hover:bg-blue-100"
+						className="gap-1.5 rounded-md border border-rule bg-paper px-2.5 py-1 text-xs font-medium text-ink hover:bg-ink/5"
 					>
 						{participant.displayName}
-						<X className="size-3" />
+						<X className="size-3 text-ink-faint" strokeWidth={2} />
 					</Button>
 				</li>
 			))}

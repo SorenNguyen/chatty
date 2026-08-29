@@ -1,3 +1,4 @@
+export { useConversationListEvents } from "./use-conversation-list-events";
 export { useConversationMessages } from "./use-conversation-messages";
 export { useMarkRead } from "./use-mark-read";
 export { useMessageActions } from "./use-message-actions";

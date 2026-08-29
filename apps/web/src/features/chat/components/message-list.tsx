@@ -1,15 +1,18 @@
 import type { MessageDTO, ParticipantDTO } from "@chatty/shared-types";
 import { useEffect, useState } from "react";
+import { Ban } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { Button } from "@/components/button";
 import { MessageActions } from "./message-actions";
 import { MessageAttachment } from "./message-attachment";
 import { MessageEditor } from "./message-editor";
 import { MessageEditHistory } from "./message-edit-history";
+import { MessageMeta } from "./message-meta";
+import { SystemMessageLine } from "./system-message-line";
 import { cn } from "@/utils/cn";
-import { DELETED_AUTHOR_NAME, DELETED_MESSAGE_TEXT, EDITED_MESSAGE_LABEL } from "../constants/message";
+import { DELETED_AUTHOR_NAME, DELETED_MESSAGE_TEXT } from "../constants/message";
 import { useMessageScroll } from "../hooks";
-import { formatMessageTime, getReadReceipt } from "../utils";
+import { getReadReceipt } from "../utils";
 
 interface MessageListProps {
 	messages: MessageDTO[];
@@ -89,36 +92,29 @@ export function MessageList({
 	return (
 		<div ref={containerRef} onScroll={handleScroll} className="h-full overflow-y-auto">
 			{targetMessageId && onReturnToLatest && (
-				<div className="sticky top-2 z-10 flex justify-center">
+				<div className="sticky top-3 z-10 flex justify-center">
 					<Button
-						variant="ghost"
+						variant="outline"
 						onClick={onReturnToLatest}
-						className="border border-slate-200 bg-white px-3 py-1.5 text-xs shadow-sm"
+						className="eyebrow border-rule bg-paper-raised px-3 py-2 text-ink-soft shadow-sm"
 					>
 						Return to latest messages
 					</Button>
 				</div>
 			)}
-			{isLoadingOlder && <p className="py-3 text-center text-xs text-slate-500">Loading earlier messages…</p>}
+			{isLoadingOlder && <p className="eyebrow py-4 text-center text-ink-faint">Loading earlier messages…</p>}
 
 			{!hasMoreOlder && messages.length > 0 && (
-				<p className="py-3 text-center text-xs text-slate-400">This is the beginning of the conversation.</p>
+				<p className="eyebrow py-4 text-center text-ink-faint">This is the beginning of the conversation.</p>
 			)}
 
 			{messages.length === 0 ? (
-				<p className="p-6 text-center text-sm text-slate-500">No messages yet. Say hello.</p>
+				<p className="p-8 text-center text-sm text-ink-faint">No messages yet. Say hello.</p>
 			) : (
-				<div className="flex flex-col gap-2 p-4">
+				<div className="flex flex-col gap-4 px-6 py-5">
 					{messages.map((message, index) => {
-						// "An added Binh", "Chi left the group". No author, no bubble, no
-						// side — it is about the conversation rather than from anyone in
-						// it, so it reads centred and out of the two columns.
 						if (message.kind === "system") {
-							return (
-								<p key={message.id} className="py-1 text-center text-xs text-slate-500">
-									{message.content}
-								</p>
-							);
+							return <SystemMessageLine key={message.id} content={message.content} />;
 						}
 
 						const author = message.author;
@@ -145,8 +141,11 @@ export function MessageList({
 								id={`message-${message.id}`}
 								key={message.id}
 								className={cn(
-									"flex flex-col rounded-lg transition",
-									message.id === targetMessageId && "bg-blue-100/70 ring-4 ring-blue-100",
+									"flex flex-col rounded-md transition",
+									// The one place signal-soft fills a surface: a searched-for
+									// message is the thing you asked to be shown, so it earns
+									// the same colour the unread badge uses.
+									message.id === targetMessageId && "bg-signal-soft ring-4 ring-signal-soft",
 									isMine ? "items-end" : "items-start",
 								)}
 							>
@@ -155,7 +154,7 @@ export function MessageList({
 								    until it happens and so cannot be hovered first. */}
 								<div
 									className={cn(
-										"group flex max-w-[70%] items-end gap-2",
+										"group flex max-w-[70%] items-end gap-3",
 										isMine && "flex-row-reverse",
 									)}
 								>
@@ -168,77 +167,69 @@ export function MessageList({
 											<span className="size-8 shrink-0" />
 										))}
 
-									<div
-										className={cn(
-											"rounded-2xl px-3 py-2",
-											isDeleted
-												? "border border-dashed border-slate-300 bg-transparent text-slate-500"
-												: isMine
-													? "bg-blue-600 text-white"
-													: "bg-slate-100 text-slate-900",
-										)}
-									>
+									<div className="flex min-w-0 flex-col gap-1.5">
 										{/* Only in groups: in a 1-1 the header already names the one
 										    person it could possibly be. A USER message with no
 										    author is one whose writer deleted their account —
 										    still theirs to have said, no longer theirs to be
 										    named for. */}
 										{!isMine && isGroup && isFirstOfRun && (
-											<p className="mb-0.5 text-xs font-semibold text-slate-700">
+											<p className="eyebrow text-ink-soft">
 												{author ? author.displayName : DELETED_AUTHOR_NAME}
 											</p>
 										)}
 
-										{isDeleted ? (
-											<p className="text-sm italic">{DELETED_MESSAGE_TEXT}</p>
-										) : isEditing ? (
-											<MessageEditor
-												initialContent={message.content}
-												hasAttachment={Boolean(message.attachment)}
-												onSave={(content) => handleSaveEdit(message.id, content)}
-												onCancel={() => setEditingMessageId(null)}
-											/>
-										) : (
-											<>
-												{message.attachment && (
-													<div className={cn(message.content && "mb-1.5")}>
-														<MessageAttachment
-															attachment={message.attachment}
-															caption={message.content}
-														/>
-													</div>
-												)}
-												{/* Skipped entirely for an image with no caption, so
-												    the bubble does not carry an empty line under
-												    the picture. */}
-												{message.content && (
-													<p className="whitespace-pre-wrap wrap-break-word text-sm">
-														{message.content}
-													</p>
-												)}
-											</>
-										)}
-
-										<p
+										<div
 											className={cn(
-												"mt-1 text-[10px]",
-												isDeleted || !isMine ? "text-slate-500" : "text-blue-100",
+												"px-4 py-2.5",
+												isDeleted
+													? "notch-theirs border border-dashed border-rule text-ink-faint"
+													: isMine
+														? "notch-mine bg-ink text-paper"
+														: "notch-theirs border border-rule bg-paper-raised text-ink",
 											)}
 										>
-											{formatMessageTime(message.createdAt)}
-											{/* Not "edited at 14:12": the useful fact is that what
-											    you are reading is not what was sent, and a second
-											    timestamp beside the first mostly asks which is which. */}
-											{message.editedAt && !isDeleted && (
-												<Button
-													variant="ghost"
-													onClick={() => setHistoryMessageId(message.id)}
-													className="ml-1 p-0 text-[10px] text-inherit underline-offset-2 hover:bg-transparent hover:underline"
-												>
-													· {EDITED_MESSAGE_LABEL}
-												</Button>
+											{isDeleted ? (
+												<p className="flex items-center gap-2 text-[0.8125rem]">
+													<Ban className="size-3.5 shrink-0" strokeWidth={1.75} />
+													{DELETED_MESSAGE_TEXT}
+												</p>
+											) : isEditing ? (
+												<MessageEditor
+													initialContent={message.content}
+													hasAttachment={Boolean(message.attachment)}
+													onSave={(content) => handleSaveEdit(message.id, content)}
+													onCancel={() => setEditingMessageId(null)}
+												/>
+											) : (
+												<>
+													{message.attachment && (
+														<div className={cn(message.content && "mb-2")}>
+															<MessageAttachment
+																attachment={message.attachment}
+																caption={message.content}
+															/>
+														</div>
+													)}
+													{/* Skipped entirely for an image with no caption, so
+													    the bubble does not carry an empty line under
+													    the picture. */}
+													{message.content && (
+														<p className="whitespace-pre-wrap wrap-break-word text-sm leading-relaxed">
+															{message.content}
+														</p>
+													)}
+												</>
 											)}
-										</p>
+										</div>
+
+										<MessageMeta
+											createdAt={message.createdAt}
+											editedAt={message.editedAt}
+											isDeleted={isDeleted}
+											isMine={isMine}
+											onOpenHistory={() => setHistoryMessageId(message.id)}
+										/>
 									</div>
 
 									{!isEditing && (
@@ -255,7 +246,7 @@ export function MessageList({
 								</div>
 
 								{readReceipt?.messageId === message.id && (
-									<p className="mt-0.5 pr-1 text-[10px] text-slate-400">
+									<p className="eyebrow mt-1 pr-1 text-signal">
 										{isGroup ? `Seen by ${readReceipt.readerCount}` : "Seen"}
 									</p>
 								)}
@@ -265,10 +256,10 @@ export function MessageList({
 					{hasMoreNewer && (
 						<div className="pb-2 pt-1 text-center">
 							<Button
-								variant="ghost"
+								variant="outline"
 								onClick={onLoadNewer}
 								disabled={isLoadingNewer}
-								className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs shadow-sm"
+								className="eyebrow border-rule bg-paper-raised px-3 py-2 text-ink-soft"
 							>
 								{isLoadingNewer ? "Loading newer messages…" : "Load newer messages"}
 							</Button>

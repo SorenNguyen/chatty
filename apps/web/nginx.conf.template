@@ -24,10 +24,18 @@ server {
 	# - `script-src 'self'` with no `'unsafe-inline'`. Vite's production build is
 	#   fingerprinted module files and nothing inline, so this costs nothing here —
 	#   and `'unsafe-inline'` would make the rest of the policy decorative.
-	# - `style-src 'self'`. Tailwind compiles to one static stylesheet, and a grep
-	#   of apps/web/src finds no `style={{ }}` anywhere. Adding a first one will
-	#   break under this policy, which is the correct outcome rather than a reason
-	#   to relax it: `cn()` and a class are how this codebase styles things.
+	# - `style-src 'self'`. Tailwind compiles to one static stylesheet, and `cn()`
+	#   plus a class is how this codebase styles things. Note that this governs
+	#   inline `style` ATTRIBUTES too, not just `<style>` elements — and there is
+	#   exactly one in the app: the upload progress bar's width, which is a live
+	#   number with no class to express it. So that bar is frozen in a deployed
+	#   build. Recorded rather than fixed, because both fixes are a judgement call
+	#   (`style-src-attr 'unsafe-inline'`, or stepped classes); see README's Known
+	#   gaps. Anything else reaching for an inline style should break here, which
+	#   is the correct outcome rather than a reason to relax the policy.
+	# - `font-src 'self'` is why the three webfonts are `@fontsource` packages
+	#   bundled into /assets/ rather than a fonts.googleapis.com <link>, which
+	#   this policy would block outright.
 	# - `img-src` includes the API origin because avatars and attachments are
 	#   served from it into an `<img>` on this origin — the same cross-origin fact
 	#   that made phase 11 set `Cross-Origin-Resource-Policy: cross-origin` there.

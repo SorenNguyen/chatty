@@ -47,16 +47,16 @@ export function MessageEditor({ initialContent, hasAttachment, onSave, onCancel 
 				aria-label="Edit message"
 				autoFocus
 				rows={2}
-				className="w-full resize-none rounded-xl border border-blue-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-inner outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+				className="w-full resize-none rounded-md border border-ink bg-paper-raised px-3 py-2 text-sm text-ink outline-none focus:ring-[3px] focus:ring-ink/8"
 			/>
 
 			<div className="flex items-center justify-between gap-3">
-				<span className="text-[10px] text-slate-500">Enter to save · Esc to cancel</span>
+				<span className="eyebrow text-ink-faint">Enter to save · Esc to cancel</span>
 				<div className="flex items-center gap-1">
-					<Button variant="ghost" onClick={onCancel} className="px-2.5 py-1 text-xs text-slate-600">
+					<Button variant="ghost" onClick={onCancel} className="px-2.5 py-1.5 text-xs">
 						Cancel
 					</Button>
-					<Button onClick={() => onSave(trimmed)} disabled={!canSave} className="px-2.5 py-1 text-xs">
+					<Button onClick={() => onSave(trimmed)} disabled={!canSave} className="px-3 py-1.5 text-xs">
 						Save
 					</Button>
 				</div>

@@ -110,12 +110,12 @@ export function MessageActions({
 				aria-haspopup="menu"
 				aria-expanded={isOpen}
 				className={cn(
-					"size-8 rounded-full border border-slate-200 bg-white p-0 text-slate-500 shadow-sm",
-					"opacity-70 hover:bg-slate-50 hover:text-slate-800 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100",
+					"size-8 rounded-md border border-rule bg-paper-raised p-0 text-ink-soft",
+					"opacity-70 hover:bg-paper hover:text-ink sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100",
 					isOpen && "opacity-100",
 				)}
 			>
-				<MoreHorizontal className="size-4" />
+				<MoreHorizontal className="size-4" strokeWidth={1.75} />
 			</Button>
 
 			{isOpen && (
@@ -123,19 +123,19 @@ export function MessageActions({
 					role="menu"
 					aria-label="Message actions"
 					className={cn(
-						"absolute bottom-full z-30 mb-1.5 w-52 overflow-hidden rounded-xl border border-slate-200",
-						"bg-white p-1.5 text-sm shadow-xl shadow-slate-900/10",
+						"absolute bottom-full z-30 mb-1.5 w-52 overflow-hidden rounded-lg border border-rule",
+						"bg-paper-raised p-1.5 text-sm shadow-[0_16px_32px_-12px_rgba(40,30,20,0.28)]",
 						align === "end" ? "right-0" : "left-0",
 					)}
 				>
 					{isChoosingDeleteScope ? (
 						<>
-							<p className="px-2.5 py-2 text-xs font-medium text-slate-500">Delete this message</p>
+							<p className="eyebrow px-2.5 py-2 text-ink-faint">Delete this message</p>
 							<Button
 								variant="ghost"
 								role="menuitem"
 								onClick={onDeleteForMe}
-								className="w-full justify-start px-2.5 py-2 text-slate-700"
+								className="w-full justify-start rounded-md px-2.5 py-2 font-medium text-ink"
 							>
 								<UserRoundX className="size-4" />
 								Delete for me
@@ -145,9 +145,9 @@ export function MessageActions({
 									variant="ghost"
 									role="menuitem"
 									onClick={onDeleteForEveryone}
-									className="w-full justify-start px-2.5 py-2 text-red-600 hover:bg-red-50"
+									className="w-full justify-start rounded-md px-2.5 py-2 font-medium text-signal hover:bg-signal-soft hover:text-signal"
 								>
-									<Trash2 className="size-4" />
+									<Trash2 className="size-4" strokeWidth={1.75} />
 									Delete for everyone
 								</Button>
 							)}
@@ -155,7 +155,7 @@ export function MessageActions({
 								variant="ghost"
 								role="menuitem"
 								onClick={() => setIsChoosingDeleteScope(false)}
-								className="w-full justify-start px-2.5 py-2 text-slate-500"
+								className="w-full justify-start rounded-md px-2.5 py-2 font-medium text-ink-faint"
 							>
 								<X className="size-4" />
 								Cancel
@@ -171,7 +171,7 @@ export function MessageActions({
 										setIsOpen(false);
 										onEdit();
 									}}
-									className="w-full justify-start px-2.5 py-2 text-slate-700"
+									className="w-full justify-start rounded-md px-2.5 py-2 font-medium text-ink"
 								>
 									<Pencil className="size-4" />
 									Edit message
@@ -181,9 +181,9 @@ export function MessageActions({
 								variant="ghost"
 								role="menuitem"
 								onClick={() => setIsChoosingDeleteScope(true)}
-								className="w-full justify-start px-2.5 py-2 text-red-600 hover:bg-red-50"
+								className="w-full justify-start rounded-md px-2.5 py-2 font-medium text-signal hover:bg-signal-soft hover:text-signal"
 							>
-								<Trash2 className="size-4" />
+								<Trash2 className="size-4" strokeWidth={1.75} />
 								Delete message
 							</Button>
 						</>

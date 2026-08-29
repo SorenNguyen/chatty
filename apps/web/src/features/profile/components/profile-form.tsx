@@ -89,7 +89,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
 	}
 
 	return (
-		<form onSubmit={handleSubmit} className="flex flex-col gap-4">
+		<form onSubmit={handleSubmit} className="flex flex-col gap-6">
 			<TextField
 				label="Display name"
 				autoComplete="name"
@@ -113,7 +113,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
 			{/* A raw checkbox: the app declares a Button and a TextField and nothing
 			    else, and inventing a toggle primitive for its only use would be a
 			    component to maintain rather than a decision made. */}
-			<label className="flex items-start gap-3 text-sm text-slate-900">
+			<label className="flex items-start gap-3 border-t border-rule-soft pt-6 text-sm text-ink">
 				<input
 					type="checkbox"
 					checked={fields.readReceiptsEnabled}
@@ -121,21 +121,21 @@ export function ProfileForm({ user }: ProfileFormProps) {
 						setIsSaved(false);
 						setFields((current) => ({ ...current, readReceiptsEnabled: event.target.checked }));
 					}}
-					className="mt-0.5 size-4"
+					className="mt-0.5 size-4 accent-[oklch(0.205_0.012_60)]"
 				/>
 				<span className="flex flex-col gap-0.5">
-					<span className="font-medium">Send read receipts</span>
+					<span className="font-semibold">Send read receipts</span>
 					{/* The symmetry is said out loud, because it is the part people are
 					    surprised by — and being surprised by it after the fact is what
 					    makes a setting feel like a trick. */}
-					<span className="text-xs text-slate-500">
+					<span className="eyebrow text-ink-faint">
 						Turning this off hides your “Seen” from everyone, and hides theirs from you.
 					</span>
 				</span>
 			</label>
 
-			<label className="flex flex-col gap-1.5 text-sm text-slate-900">
-				<span className="font-medium">Who can see your last seen</span>
+			<label className="flex flex-col gap-2 text-sm text-ink">
+				<span className="eyebrow text-ink-soft">Who can see your last seen</span>
 				<select
 					aria-label="Who can see your last seen"
 					value={fields.presenceVisibility}
@@ -146,17 +146,17 @@ export function ProfileForm({ user }: ProfileFormProps) {
 							presenceVisibility: event.target.value as CurrentUserDTO["presenceVisibility"],
 						}));
 					}}
-					className="rounded-lg border border-slate-300 bg-white px-3 py-2 outline-none focus:border-blue-500"
+					className="rounded-md border border-rule bg-paper-raised px-3 py-2.5 text-sm outline-none focus:border-ink focus:ring-[3px] focus:ring-ink/8"
 				>
 					<option value="everyone">Everyone</option>
 					<option value="contacts">People you chat with</option>
 					<option value="nobody">Nobody</option>
 				</select>
-				<span className="text-xs text-slate-500">Online status is still shown while you are connected.</span>
+				<span className="eyebrow text-ink-faint">Online status is still shown while you are connected</span>
 			</label>
 
 			{errors.form && (
-				<p role="alert" className="text-sm text-red-600">
+				<p role="alert" className="eyebrow text-signal">
 					{errors.form}
 				</p>
 			)}
@@ -164,7 +164,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
 			    Guarding this on `hasChanges` as well would tie the message to the
 			    parent passing a refreshed `user` back down — true in the app, and
 			    an invisible dependency for anything else that renders this. */}
-			{isSaved && <p className="text-sm text-green-700">Profile saved</p>}
+			{isSaved && <p className="eyebrow text-live">Profile saved</p>}
 
 			<Button type="submit" disabled={isSaving || !hasChanges}>
 				{isSaving ? "Saving…" : "Save changes"}

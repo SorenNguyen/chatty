@@ -63,27 +63,30 @@ export function NewConversationPanel({ onConversationStarted }: NewConversationP
 	}
 
 	return (
-		<div className="border-b border-slate-200 p-3">
+		<div className="px-5 pb-4">
 			<form onSubmit={search}>
-				<div className="relative">
-					<Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+				{/* A ruled line rather than a boxed field. Search is not something you
+				    fill in and submit here — it filters as you go — so it reads as a
+				    place to type rather than as one more control in a stack of them. */}
+				<div className="flex items-center gap-2.5 border-b border-rule pb-2.5 focus-within:border-ink">
+					<Search className="size-4 shrink-0 text-ink-faint" strokeWidth={1.75} />
 					<input
 						value={query}
 						onChange={(event) => setQuery(event.target.value)}
 						placeholder="Find someone by name or email"
 						aria-label="Find someone"
-						className="w-full rounded-lg border border-slate-300 py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+						className="w-full bg-transparent text-[0.8125rem] text-ink outline-none placeholder:text-ink-faint"
 					/>
 				</div>
 			</form>
 
 			<SelectedParticipants participants={selectedUsers} onRemove={handleRemoveUser} />
 
-			{isSearching && <p className="mt-2 text-xs text-slate-500">Searching…</p>}
-			{(searchError || createError) && <p className="mt-2 text-xs text-red-600">{searchError || createError}</p>}
+			{isSearching && <p className="eyebrow mt-3 text-ink-faint">Searching…</p>}
+			{(searchError || createError) && <p className="eyebrow mt-3 text-signal">{searchError || createError}</p>}
 
 			{results.length > 0 && (
-				<ul className="mt-2 flex max-h-48 flex-col gap-1 overflow-y-auto">
+				<ul className="mt-3 flex max-h-48 flex-col gap-0.5 overflow-y-auto">
 					{results.map((user) => {
 						const isSelected = selectedUsers.some((selected) => selected.id === user.id);
 
@@ -98,14 +101,16 @@ export function NewConversationPanel({ onConversationStarted }: NewConversationP
 									// accessible name, not decoration.
 									aria-label={`${user.displayName} @${user.handle}`}
 									className={cn(
-										"w-full items-center justify-start gap-2 px-3 py-2 font-normal",
-										isSelected && "bg-blue-50 text-blue-700 hover:bg-blue-100",
+										"w-full items-center justify-start gap-2.5 rounded-md px-2.5 py-2 font-normal",
+										isSelected && "bg-ink/8 text-ink hover:bg-ink/12",
 									)}
 								>
 									<Avatar user={user} size="sm" />
 									<span className="flex min-w-0 flex-1 flex-col">
-										<span className="w-full truncate text-left">{user.displayName}</span>
-										<span className="w-full truncate text-left text-xs text-slate-500">
+										<span className="w-full truncate text-left text-[0.8125rem] font-medium">
+											{user.displayName}
+										</span>
+										<span className="meta w-full truncate text-left text-ink-faint">
 											@{user.handle}
 										</span>
 									</span>

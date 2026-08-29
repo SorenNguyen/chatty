@@ -125,11 +125,16 @@ export function GroupMembersPanel({ conversation, currentUserId, onClose }: Grou
 	}
 
 	return (
-		<div className="border-b border-slate-200 p-3">
+		<div className="border-b border-rule bg-paper-raised px-6 py-5">
 			<div className="flex items-center justify-between">
-				<h2 className="text-sm font-semibold text-slate-900">Group members</h2>
-				<Button variant="ghost" onClick={onClose} aria-label="Close group settings" className="px-2">
-					<X className="size-4" />
+				<h2 className="eyebrow text-ink-soft">Group members</h2>
+				<Button
+					variant="ghost"
+					onClick={onClose}
+					aria-label="Close group settings"
+					className="size-8 rounded-md p-0"
+				>
+					<X className="size-4" strokeWidth={1.75} />
 				</Button>
 			</div>
 
@@ -156,30 +161,30 @@ export function GroupMembersPanel({ conversation, currentUserId, onClose }: Grou
 
 			{/* Said out loud rather than left as a field that silently does
 			    nothing: a disabled control with no explanation reads as a bug. */}
-			{!isOwner && <p className="mt-1 text-xs text-slate-500">Only the group owner can rename this group.</p>}
+			{!isOwner && <p className="eyebrow mt-2 text-ink-faint">Only the group owner can rename this group.</p>}
 
-			{actionError && <p className="mt-2 text-xs text-red-600">{actionError}</p>}
+			{actionError && <p className="eyebrow mt-3 text-signal">{actionError}</p>}
 
-			<ul className="mt-3 flex max-h-48 flex-col gap-1 overflow-y-auto">
+			<ul className="mt-4 flex max-h-48 flex-col overflow-y-auto">
 				{conversation.participants.map((participant) => {
 					const isSelf = participant.id === currentUserId;
 
 					return (
-						<li key={participant.id} className="flex items-center gap-2 px-1 py-1">
+						<li key={participant.id} className="flex items-center gap-2.5 py-1.5">
 							<Avatar user={participant} size="sm" />
 							<span className="flex min-w-0 flex-1 flex-col">
-								<span className="w-full truncate text-sm text-slate-900">
+								<span className="w-full truncate text-[0.8125rem] font-medium text-ink">
 									{participant.displayName}
-									{isSelf && <span className="text-slate-500"> (you)</span>}
+									{isSelf && <span className="text-ink-faint"> (you)</span>}
 									{/* Who to ask, when the rename field is greyed out and
 									    the remove buttons are not there. */}
 									{participant.role === "owner" && (
-										<span className="ml-1.5 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">
+										<span className="eyebrow ml-2 rounded-[3px] border border-rule px-1.5 py-0.5 text-ink-soft">
 											Owner
 										</span>
 									)}
 								</span>
-								<span className="w-full truncate text-xs text-slate-500">@{participant.handle}</span>
+								<span className="meta w-full truncate text-ink-faint">@{participant.handle}</span>
 							</span>
 							{/* No remove button on your own row — leaving has its own
 							    clearly-labelled action below, so a small × next to your
@@ -194,18 +199,18 @@ export function GroupMembersPanel({ conversation, currentUserId, onClose }: Grou
 										onClick={() => void handleMakeOwner(participant.id)}
 										disabled={promotingUserId === participant.id}
 										aria-label={`Make ${participant.displayName} the group owner`}
-										className="px-2"
+										className="size-8 rounded-md p-0"
 									>
-										<Crown className="size-4" />
+										<Crown className="size-4" strokeWidth={1.75} />
 									</Button>
 									<Button
 										variant="ghost"
 										onClick={() => void handleRemoveMember(participant.id)}
 										disabled={removingUserId === participant.id}
 										aria-label={`Remove ${participant.displayName} from the group`}
-										className="px-2"
+										className="size-8 rounded-md p-0"
 									>
-										<UserMinus className="size-4" />
+										<UserMinus className="size-4" strokeWidth={1.75} />
 									</Button>
 								</>
 							)}
@@ -218,30 +223,30 @@ export function GroupMembersPanel({ conversation, currentUserId, onClose }: Grou
 				variant="ghost"
 				onClick={() => void handleLeave()}
 				disabled={isLeaving}
-				className="mt-2 w-full text-red-600 hover:bg-red-50"
+				className="mt-3 w-full text-signal hover:bg-signal-soft hover:text-signal"
 			>
-				<LogOut className="size-4" />
+				<LogOut className="size-4" strokeWidth={1.75} />
 				Leave group
 			</Button>
 
 			<form onSubmit={search} className="mt-4">
-				<div className="relative">
-					<Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+				<div className="flex items-center gap-2.5 border-b border-rule pb-2.5 focus-within:border-ink">
+					<Search className="size-4 shrink-0 text-ink-faint" strokeWidth={1.75} />
 					<input
 						value={query}
 						onChange={(event) => setQuery(event.target.value)}
 						placeholder="Add someone by name or email"
 						aria-label="Add a member"
-						className="w-full rounded-lg border border-slate-300 py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+						className="w-full bg-transparent text-[0.8125rem] text-ink outline-none placeholder:text-ink-faint"
 					/>
 				</div>
 			</form>
 
-			{isSearching && <p className="mt-2 text-xs text-slate-500">Searching…</p>}
-			{searchError && <p className="mt-2 text-xs text-red-600">{searchError}</p>}
+			{isSearching && <p className="eyebrow mt-3 text-ink-faint">Searching…</p>}
+			{searchError && <p className="eyebrow mt-3 text-signal">{searchError}</p>}
 
 			{results.length > 0 && (
-				<ul className="mt-2 flex max-h-48 flex-col gap-1 overflow-y-auto">
+				<ul className="mt-3 flex max-h-48 flex-col gap-0.5 overflow-y-auto">
 					{results.map((user) => (
 						<li key={user.id}>
 							<Button
@@ -249,12 +254,14 @@ export function GroupMembersPanel({ conversation, currentUserId, onClose }: Grou
 								onClick={() => void handleAddMember(user)}
 								disabled={addingUserId === user.id}
 								aria-label={`Add ${user.displayName} @${user.handle}`}
-								className="w-full items-center justify-start gap-2 px-3 py-2 font-normal"
+								className="w-full items-center justify-start gap-2.5 rounded-md px-2.5 py-2 font-normal"
 							>
 								<Avatar user={user} size="sm" />
 								<span className="flex min-w-0 flex-1 flex-col">
-									<span className="w-full truncate text-left">{user.displayName}</span>
-									<span className="w-full truncate text-left text-xs text-slate-500">
+									<span className="w-full truncate text-left text-[0.8125rem] font-medium">
+										{user.displayName}
+									</span>
+									<span className="meta w-full truncate text-left text-ink-faint">
 										@{user.handle}
 									</span>
 								</span>

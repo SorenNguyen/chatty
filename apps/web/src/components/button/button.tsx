@@ -2,7 +2,7 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { cn } from "@/utils/cn";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-	variant?: "primary" | "ghost";
+	variant?: "primary" | "outline" | "ghost" | "danger";
 	children: ReactNode;
 }
 
@@ -20,6 +20,12 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
  *
  * Every genuine submit in this app already says `type="submit"` explicitly, so
  * this default costs nothing and closes the same trap in the other three forms.
+ *
+ * On the four variants: `danger` is outlined rather than filled, and that is the
+ * whole point of it existing separately from `primary`. A solid red block is the
+ * most attention-grabbing thing on the screen, which is the opposite of what a
+ * button guarding account deletion should be — it invites the click it is meant
+ * to slow down. The outline says "this one is different" without shouting.
  */
 export function Button({ variant = "primary", type = "button", className, children, ...rest }: ButtonProps) {
 	return (
@@ -28,10 +34,13 @@ export function Button({ variant = "primary", type = "button", className, childr
 			// `className` comes last so a caller's utility beats the defaults —
 			// that override is exactly what twMerge inside cn() exists to resolve.
 			className={cn(
-				"inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition",
-				"disabled:cursor-not-allowed disabled:opacity-50",
-				variant === "primary" && "bg-blue-600 text-white hover:bg-blue-700",
-				variant === "ghost" && "text-slate-600 hover:bg-slate-100",
+				"inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition",
+				"focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/15",
+				"disabled:cursor-not-allowed disabled:opacity-35",
+				variant === "primary" && "bg-ink text-paper hover:bg-ink/90",
+				variant === "outline" && "border border-ink text-ink hover:bg-ink/5",
+				variant === "ghost" && "text-ink-soft hover:bg-ink/5 hover:text-ink",
+				variant === "danger" && "border border-signal text-signal hover:bg-signal-soft",
 				className,
 			)}
 			{...rest}

@@ -1,6 +1,7 @@
 import type { ConversationDTO } from "@chatty/shared-types";
-import { Search, UserCog } from "lucide-react";
+import { Search, Users } from "lucide-react";
 import { Button } from "@/components/button";
+import { cn } from "@/utils/cn";
 import { formatLastSeen, getConversationTitle, getDirectPeer, getTypingMessage } from "../utils";
 import { ConversationAvatar } from "./conversation-avatar";
 
@@ -26,13 +27,13 @@ export function ConversationHeader({
 }: ConversationHeaderProps) {
 	const peer = getDirectPeer(conversation, currentUserId);
 	const typingMessage = getTypingMessage(typingUserIds, conversation.participants);
+	const isPeerOnline = Boolean(peer && onlineUserIds.has(peer.id));
 	// Typing wins over presence: someone typing is obviously online, and showing
 	// both would flicker the line between two facts that say the same thing.
-	const statusLine =
-		typingMessage ?? (peer && onlineUserIds.has(peer.id) ? "Online" : formatLastSeen(peer?.lastSeenAt ?? null));
+	const statusLine = typingMessage ?? (isPeerOnline ? "Online" : formatLastSeen(peer?.lastSeenAt ?? null));
 
 	return (
-		<header className="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
+		<header className="flex h-17.5 shrink-0 items-center gap-3 border-b border-rule bg-paper-raised px-6">
 			<ConversationAvatar
 				conversation={conversation}
 				currentUserId={currentUserId}
@@ -41,10 +42,33 @@ export function ConversationHeader({
 			/>
 
 			<div className="min-w-0 flex-1">
-				<h1 className="truncate text-sm font-semibold text-slate-900">
+				<h1 className="truncate text-[0.9375rem] font-semibold text-ink">
 					{getConversationTitle(conversation, currentUserId)}
 				</h1>
-				{statusLine && <p className="truncate text-xs text-slate-500">{statusLine}</p>}
+
+				{statusLine && (
+					<p className="mt-0.5 flex items-center gap-1.5">
+						{/* Three shrinking squares while someone types, one square for a
+						    settled presence. The squares are drawn rather than iconified
+						    because they are a state read from numbers, not a picture of a
+						    thing — the same reason a progress bar is not an icon. */}
+						{typingMessage ? (
+							<span aria-hidden="true" className="flex shrink-0 gap-0.5">
+								<span className="size-0.75 bg-signal" />
+								<span className="size-0.75 bg-signal/50" />
+								<span className="size-0.75 bg-signal/25" />
+							</span>
+						) : (
+							<span
+								aria-hidden="true"
+								className={cn("size-1.5 shrink-0", isPeerOnline ? "bg-live" : "bg-ink-faint")}
+							/>
+						)}
+						<span className={cn("eyebrow truncate", typingMessage ? "text-signal" : "text-ink-faint")}>
+							{statusLine}
+						</span>
+					</p>
+				)}
 			</div>
 
 			{onOpenMessageSearch && (
@@ -52,9 +76,9 @@ export function ConversationHeader({
 					variant="ghost"
 					onClick={onOpenMessageSearch}
 					aria-label="Search in conversation"
-					className="px-2"
+					className="size-8 rounded-md p-0"
 				>
-					<Search className="size-4" />
+					<Search className="size-4" strokeWidth={1.75} />
 				</Button>
 			)}
 
@@ -64,9 +88,9 @@ export function ConversationHeader({
 					onClick={onToggleGroupMembers}
 					aria-pressed={isManagingGroup}
 					aria-label="Group members"
-					className="px-2"
+					className={cn("size-8 rounded-md p-0", isManagingGroup && "bg-ink/8 text-ink")}
 				>
-					<UserCog className="size-4" />
+					<Users className="size-4" strokeWidth={1.75} />
 				</Button>
 			)}
 		</header>

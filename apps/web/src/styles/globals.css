@@ -1,1 +1,118 @@
+/* Self-hosted rather than pulled from fonts.googleapis.com, and that is a CSP
+   decision rather than a taste one: the production policy in
+   `apps/web/nginx.conf.template` is `style-src 'self'; font-src 'self'`, so a
+   Google Fonts <link> would be blocked outright. These packages ship the woff2
+   files, Vite fingerprints them into /assets/, and the policy stays as strict
+   as it was. Only the weights actually used are imported — each one is a
+   separate network request in dev and a separate file in the bundle. */
+@import "@fontsource/archivo/400.css";
+@import "@fontsource/archivo/500.css";
+@import "@fontsource/archivo/600.css";
+@import "@fontsource/archivo/700.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+@import "@fontsource/ibm-plex-mono/600.css";
+@import "@fontsource/instrument-serif/400.css";
+
 @import "tailwindcss";
+
+/*
+ * The palette is ink on paper, not grey on white.
+ *
+ * Three families and one signal:
+ *
+ * - `paper` / `paper-raised` are the two grounds. Paper is the page; raised is
+ *   what sits on top of it (the sidebar, a bubble, a card). They are a warm
+ *   off-white rather than #fff, so a surface can be lighter than the page
+ *   without needing a shadow to prove it.
+ * - `ink` / `ink-soft` / `ink-faint` are the text ramp, and `ink` doubles as a
+ *   fill: your own messages and the primary button are ink blocks. That is
+ *   what removes the need for an accent-coloured bubble.
+ * - `rule` / `rule-soft` are the 1px lines that do the structural work shadows
+ *   would otherwise do.
+ * - `signal` is vermilion and is deliberately scarce. It marks exactly three
+ *   things: an unread count, the conversation you are in, and an action you
+ *   cannot undo. The moment it decorates a fourth, it stops meaning anything.
+ * - `live` is presence only.
+ *
+ * oklch because the ramps were picked by holding chroma steady and moving
+ * lightness, which is the one colour space where that does what it says.
+ */
+@theme {
+	--color-paper: oklch(0.972 0.009 85);
+	--color-paper-raised: oklch(0.995 0.004 85);
+	--color-ink: oklch(0.205 0.012 60);
+	--color-ink-soft: oklch(0.455 0.01 60);
+	--color-ink-faint: oklch(0.635 0.008 60);
+	--color-rule: oklch(0.885 0.008 80);
+	--color-rule-soft: oklch(0.928 0.006 80);
+	--color-signal: oklch(0.555 0.195 32);
+	--color-signal-soft: oklch(0.952 0.03 32);
+	--color-live: oklch(0.585 0.155 148);
+
+	--font-ui: "Archivo", ui-sans-serif, system-ui, sans-serif;
+	--font-mono: "IBM Plex Mono", ui-monospace, monospace;
+	--font-display: "Instrument Serif", Georgia, serif;
+}
+
+/*
+ * Anything a machine produced is set in mono.
+ *
+ * A timestamp, a handle, a count, a status — none of them were typed by a
+ * person, and setting them in the same face as the words that were is what
+ * made the old UI read as undifferentiated. These two utilities exist because
+ * the combination appears in a dozen files and spelling out five classes each
+ * time is how one of them ends up at a different tracking to the rest.
+ *
+ * `eyebrow` is for labels and statuses; `meta` is for values, and is tabular so
+ * a changing count cannot shift the row it sits in.
+ */
+@utility eyebrow {
+	font-family: var(--font-mono);
+	font-size: 0.625rem;
+	font-weight: 600;
+	line-height: 1.2;
+	letter-spacing: 0.13em;
+	text-transform: uppercase;
+}
+
+@utility meta {
+	font-family: var(--font-mono);
+	font-size: 0.656rem;
+	line-height: 1.3;
+	font-variant-numeric: tabular-nums;
+}
+
+/*
+ * A message from you is notched at the bottom-right, one from them at the
+ * bottom-left. The notch is the primary signal of who spoke — it reads before
+ * colour does, and it still reads when colour is unavailable.
+ */
+@utility notch-mine {
+	border-radius: 0.625rem 0.625rem 0.125rem 0.625rem;
+}
+
+@utility notch-theirs {
+	border-radius: 0.625rem 0.625rem 0.625rem 0.125rem;
+}
+
+@layer base {
+	html {
+		font-family: var(--font-ui);
+	}
+
+	body {
+		background-color: var(--color-paper);
+		color: var(--color-ink);
+	}
+
+	/* Lucide draws with round caps and joins. Every icon in this app is squared
+	   off instead, to match the mitred corners of the rest of the drawing —
+	   without this the ticks and chevrons are visibly softer than the boxes
+	   they sit next to. Set here rather than per-icon because it is a property
+	   of the icon set in this product, not of any one usage. */
+	svg {
+		stroke-linecap: square;
+		stroke-linejoin: miter;
+	}
+}

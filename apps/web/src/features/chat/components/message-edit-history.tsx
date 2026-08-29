@@ -68,7 +68,7 @@ export function MessageEditHistory({ conversationId, messageId, onClose }: Messa
 
 	return (
 		<div
-			className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-[2px]"
+			className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 p-4"
 			onPointerDown={(event) => {
 				if (event.target === event.currentTarget) onClose();
 			}}
@@ -79,43 +79,47 @@ export function MessageEditHistory({ conversationId, messageId, onClose }: Messa
 				aria-modal="true"
 				aria-labelledby={titleId}
 				tabIndex={-1}
-				className="max-h-[min(70vh,36rem)] w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl outline-none"
+				className="max-h-[min(70vh,36rem)] w-full max-w-md overflow-hidden rounded-xl border border-rule bg-paper shadow-[0_40px_80px_-20px_rgba(40,30,20,0.35)] outline-none"
 			>
-				<header className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+				<header className="flex items-center justify-between border-b border-rule bg-paper-raised px-5 py-4">
 					<div className="flex items-center gap-3">
-						<span className="flex size-9 items-center justify-center rounded-full bg-blue-50 text-blue-600">
-							<History className="size-4" />
+						<span className="flex size-9 items-center justify-center rounded-md border border-rule text-ink-soft">
+							<History className="size-4" strokeWidth={1.75} />
 						</span>
 						<div>
-							<h2 id={titleId} className="font-semibold text-slate-900">
+							<h2 id={titleId} className="text-[0.9375rem] font-bold tracking-tight text-ink">
 								Edit history
 							</h2>
-							<p className="text-xs text-slate-500">Previous versions of this message</p>
+							<p className="eyebrow mt-1 text-ink-faint">Previous versions of this message</p>
 						</div>
 					</div>
 					<Button
 						variant="ghost"
 						onClick={onClose}
 						aria-label="Close edit history"
-						className="size-8 rounded-full p-0"
+						className="size-8 rounded-md border border-rule p-0"
 					>
-						<X className="size-4" />
+						<X className="size-4" strokeWidth={1.75} />
 					</Button>
 				</header>
 				<div className="max-h-[calc(min(70vh,36rem)-4.5rem)] overflow-y-auto p-4">
-					{isLoading && <p className="py-8 text-center text-sm text-slate-500">Loading edit history…</p>}
-					{error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+					{isLoading && <p className="eyebrow py-8 text-center text-ink-faint">Loading edit history…</p>}
+					{error && (
+						<p className="eyebrow rounded-md border border-signal/30 bg-signal-soft p-3 text-signal">
+							{error}
+						</p>
+					)}
 					{!isLoading && !error && edits.length === 0 && (
-						<p className="py-8 text-center text-sm text-slate-500">No previous versions.</p>
+						<p className="eyebrow py-8 text-center text-ink-faint">No previous versions.</p>
 					)}
 					{!isLoading && !error && edits.length > 0 && (
 						<ul className="space-y-3">
 							{edits.map((edit) => (
-								<li key={edit.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3.5">
-									<p className="whitespace-pre-wrap wrap-break-word text-sm text-slate-800">
+								<li key={edit.id} className="rounded-md border border-rule bg-paper-raised p-3.5">
+									<p className="whitespace-pre-wrap wrap-break-word text-sm text-ink">
 										{edit.content || "No caption"}
 									</p>
-									<time className="mt-2 block text-xs text-slate-400">
+									<time className="meta mt-2 block text-ink-faint">
 										{new Date(edit.editedAt).toLocaleString()}
 									</time>
 								</li>

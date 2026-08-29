@@ -60,10 +60,10 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps) {
 	if (isDone) {
 		return (
 			<div className="flex flex-col gap-4">
-				<p className="text-sm text-green-700">
+				<p className="eyebrow text-live">
 					Password changed. Any device that was still signed in has been signed out.
 				</p>
-				<Link to="/login" className="text-sm font-medium text-blue-600 hover:text-blue-700">
+				<Link to="/login" className="text-sm font-semibold text-ink underline-offset-4 hover:underline">
 					Sign in
 				</Link>
 			</div>
@@ -90,7 +90,7 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps) {
 			/>
 
 			{errors.form && (
-				<p role="alert" className="text-sm text-red-600">
+				<p role="alert" className="eyebrow text-signal">
 					{errors.form}
 				</p>
 			)}

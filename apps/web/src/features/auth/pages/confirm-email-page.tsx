@@ -1,4 +1,3 @@
-import { MessageCircle } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { ConfirmEmailForm } from "../components";
 
@@ -15,11 +14,14 @@ export function ConfirmEmailPage() {
 	const token = searchParams.get("token");
 
 	return (
-		<main className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
-			<div className="w-full max-w-sm rounded-2xl bg-white p-8 shadow-sm">
+		<main className="flex min-h-screen items-center justify-center bg-paper p-4">
+			<div className="w-full max-w-sm rounded-xl border border-rule bg-paper-raised p-8">
 				<div className="mb-6 flex flex-col items-center gap-2">
-					<MessageCircle className="size-8 text-blue-600" />
-					<h1 className="text-xl font-semibold text-slate-900">Confirm your email</h1>
+					<span className="flex items-baseline gap-1.5">
+						<span className="font-display text-3xl leading-none tracking-tight">Chatty</span>
+						<span aria-hidden="true" className="size-1.5 bg-signal" />
+					</span>
+					<h1 className="mt-1 text-base font-semibold tracking-tight text-ink">Confirm your email</h1>
 				</div>
 
 				{/* Same guard as the reset page: a link opened by hand, or mangled on
@@ -27,15 +29,12 @@ export function ConfirmEmailPage() {
 				{token ? (
 					<ConfirmEmailForm token={token} />
 				) : (
-					<p className="text-sm text-red-600">
+					<p className="eyebrow text-signal">
 						This link is missing its token. Ask for a new one from your profile.
 					</p>
 				)}
 
-				<Link
-					to="/login"
-					className="mt-4 block text-center text-sm font-medium text-slate-600 hover:text-slate-900"
-				>
+				<Link to="/login" className="mt-4 block text-center text-sm font-medium text-ink-soft hover:text-ink">
 					Back to sign in
 				</Link>
 			</div>

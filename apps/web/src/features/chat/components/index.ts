@@ -8,6 +8,8 @@ export { MessageAttachment } from "./message-attachment";
 export { MessageEditor } from "./message-editor";
 export { MessageEditHistory } from "./message-edit-history";
 export { MessageInput } from "./message-input";
+export { MessageMeta } from "./message-meta";
 export { MessageList } from "./message-list";
 export { NewConversationPanel } from "./new-conversation-panel";
 export { SelectedParticipants } from "./selected-participants";
+export { SystemMessageLine } from "./system-message-line";

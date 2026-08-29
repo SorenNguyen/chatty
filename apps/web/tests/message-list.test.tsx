@@ -100,8 +100,12 @@ describe("MessageList", () => {
 
 		expect(screen.getByText("written before they left")).toBeInTheDocument();
 		expect(screen.getByText("Deleted account")).toBeInTheDocument();
-		// Still a bubble, unlike a system line: somebody said this.
-		expect(document.querySelector(".rounded-2xl")).not.toBeNull();
+		// Still a message, unlike a system line: somebody said this, so it carries
+		// the actions menu that a system line has nothing to put in.
+		//
+		// This used to assert on a `.rounded-2xl` class, which broke the first time
+		// the bubble's radius changed and told nobody anything about behaviour.
+		expect(screen.getByRole("button", { name: "Message actions" })).toBeInTheDocument();
 	});
 
 	it("renders a group event as a line of its own", () => {

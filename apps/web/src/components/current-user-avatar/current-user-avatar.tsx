@@ -71,7 +71,7 @@ export function CurrentUserAvatar({ user, size = "md" }: CurrentUserAvatarProps)
 				onClick={() => fileInputRef.current?.click()}
 				disabled={isSaving}
 				aria-label="Change your profile picture"
-				className="rounded-full p-0 hover:opacity-80"
+				className="rounded-md p-0 hover:opacity-80"
 			>
 				<Avatar user={user} size={size} />
 			</Button>
@@ -80,9 +80,9 @@ export function CurrentUserAvatar({ user, size = "md" }: CurrentUserAvatarProps)
 				<span
 					role="status"
 					aria-label="Saving your profile picture"
-					className="absolute inset-0 flex items-center justify-center rounded-full bg-white/70"
+					className="absolute inset-0 flex items-center justify-center rounded-md bg-paper/75"
 				>
-					<Loader2 className="size-4 animate-spin text-slate-600" />
+					<Loader2 className="size-4 animate-spin text-ink-soft" />
 				</span>
 			)}
 
@@ -91,9 +91,9 @@ export function CurrentUserAvatar({ user, size = "md" }: CurrentUserAvatarProps)
 					variant="ghost"
 					onClick={() => void handleRemove()}
 					aria-label="Remove your profile picture"
-					className="absolute -right-1 -top-1 size-4 rounded-full border border-slate-200 bg-white p-0 text-slate-500 hover:bg-slate-100"
+					className="absolute -right-1.5 -top-1.5 size-4 rounded-[3px] border border-rule bg-paper-raised p-0 text-ink-soft hover:bg-paper"
 				>
-					<X className="size-3" />
+					<X className="size-2.5" strokeWidth={2.25} />
 				</Button>
 			)}
 
@@ -102,7 +102,7 @@ export function CurrentUserAvatar({ user, size = "md" }: CurrentUserAvatarProps)
 				// header's layout around; z-10 keeps it above the conversation list.
 				<p
 					role="alert"
-					className="absolute left-0 top-full z-10 mt-1 w-48 rounded-md bg-red-50 px-2 py-1 text-xs text-red-700 shadow-sm"
+					className="eyebrow absolute left-0 top-full z-10 mt-1.5 w-48 rounded-md border border-signal/30 bg-signal-soft px-2 py-1.5 text-signal"
 				>
 					{error}
 				</p>

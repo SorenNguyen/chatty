@@ -39,18 +39,18 @@ export function ConfirmEmailForm({ token }: ConfirmEmailFormProps) {
 			});
 	}, [token]);
 
-	if (status === "confirming") return <p className="text-sm text-slate-500">Confirming…</p>;
+	if (status === "confirming") return <p className="text-sm text-ink-faint">Confirming…</p>;
 
 	if (status === "failed") {
 		return (
-			<p role="alert" className="text-sm text-red-600">
+			<p role="alert" className="eyebrow text-signal">
 				{error}
 			</p>
 		);
 	}
 
 	return (
-		<p className="text-sm text-green-700">
+		<p className="eyebrow text-live">
 			Your email address has been updated. Sign in with it from now on — your password has not changed.
 		</p>
 	);

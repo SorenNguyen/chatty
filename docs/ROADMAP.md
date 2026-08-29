@@ -214,6 +214,11 @@ app renders inline — starting a conversation, managing a group — but those a
 screen. This one edits the account, and putting it in the chat sidebar would mean `features/chat`
 importing from `features/profile`, which the frontend conventions rule out.
 
+> Superseded by phase 16, in the second half only. `/profile` is still a route; it is no longer a
+> full-screen one. The cross-feature problem turned out to be avoidable without giving up the
+> conversation behind it: the router mounts `ChatPage` and `SettingsPage` as *siblings* on
+> `/profile`, and the dialog is `fixed inset-0`, so neither feature imports the other.
+
 **Only the changed field is sent.** The server accepts both, but a request carrying a field nobody
 touched can overwrite an edit made in another tab.
 
@@ -1051,6 +1056,64 @@ opens a compact menu. Edit and delete-for-everyone disappear at the exact eight-
 delete-for-me remains available, including on a tombstone. Search is scoped to the open conversation,
 uses a stable `(createdAt, id)` cursor, and returns an explicit `hasMore` rather than making the client
 guess from page length.
+
+## Phase 16 — a visual language of its own — `done`
+
+The app worked and looked like nothing. Slate borders, one bootstrap blue, a 2xl radius on
+everything: the defaults you get when no decision is made, which is why it read as generic rather
+than as a product. This phase makes the decisions.
+
+| # | Item | Status |
+| --- | --- | --- |
+| 59 | Replace the palette with ink-on-paper tokens and one scarce signal colour | Done |
+| 60 | Self-host the type so the strict CSP survives it | Done |
+| 61 | Give the small components a rule each, rather than a style | Done |
+| 62 | Move settings into a dialog over the conversation | Done |
+
+**Ink on paper, and a signal you can count.** The grounds are a warm off-white pair (`paper`,
+`paper-raised`) so a surface can sit above the page without a shadow to prove it; the text ramp is a
+warm near-black that doubles as a *fill* — your own messages and the primary button are ink blocks,
+which is what removes the need for an accent-coloured bubble at all. `signal` (vermilion) marks
+exactly three things: an unread count, the conversation you are in, and something you cannot undo.
+The moment it decorates a fourth it stops meaning anything, so the audit for this phase is a grep,
+not an opinion.
+
+**1px rules do the work shadows were doing.** Radii dropped from `rounded-2xl` to 6px. Two shadows
+survive, both on things that genuinely float: the actions menu and the settings dialog.
+
+**Anything a machine produced is set in mono.** Timestamps, handles, counts, statuses, field errors —
+none of them were typed by a person, and setting them in the same face as the words that were is
+most of why the old UI read as undifferentiated. Two utilities in `globals.css` (`eyebrow`, `meta`)
+carry it so a dozen files cannot drift to a dozen trackings. `meta` is tabular, so a count ticking
+from 9 to 10 does not shift the row it sits in.
+
+**Self-hosted webfonts, because the CSP said so.** `style-src 'self'; font-src 'self'` blocks a
+Google Fonts `<link>` outright. The three faces come from `@fontsource` packages instead, Vite
+fingerprints them into `/assets/`, and the policy did not have to be relaxed to get typography.
+
+**Every small component got a rule rather than a coat of paint.** The ones worth naming: a message
+is notched to 2px on the corner nearest its sender, so *who spoke* reads before colour does; the
+presence mark is a square, because a circle in the corner of an avatar is what every phone uses for
+an unread badge; the unread badge is a 3px rectangle with a mono numeral rather than a pill; a
+group's avatar is ink-filled where a person's is a tint, so the two kinds of row are tellable apart
+without reading either label; "edited" is a dotted underline, because it opens; and the destructive
+button is outlined rather than filled, since a solid red block invites the click it exists to slow
+down.
+
+**Settings became a dialog over the conversation.** Renaming yourself is a twenty-second job, and a
+full-screen route made it feel like leaving the app to do one — you lost the thread you were reading
+and came back to the top of the list. It is still a real route: `/profile` mounts `ChatPage` and
+`SettingsPage` as siblings, so a bookmark works, the back button closes the dialog, and neither
+feature imports the other. See the superseded note under phase 3.
+
+Two files crossed the 300-line audit line during this and were split rather than exempted:
+`use-conversation-list-events` took the four sidebar socket handlers out of `ChatPage`, and
+`MessageMeta` / `SystemMessageLine` came out of `MessageList`.
+
+One test was rewritten rather than repaired. `message-list.test.tsx` asserted
+`document.querySelector(".rounded-2xl")` to mean "this is still a message, not a system line" — the
+exact thing the frontend conventions forbid, and it broke on the first radius change while telling
+nobody anything. It now asserts the actions menu, which is the behaviour it was reaching for.
 
 ## Known gaps not on the roadmap yet
 

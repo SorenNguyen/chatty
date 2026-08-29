@@ -82,65 +82,89 @@ export function MessageInput({ conversationId }: MessageInputProps) {
 	}
 
 	return (
-		<form onSubmit={handleSubmit} className="border-t border-slate-200 p-3">
-			{error && <p className="mb-2 text-xs text-red-600">{error}</p>}
-			{isSending && attachment && (
-				<div className="mb-2" role="status" aria-label={`Uploading image ${uploadProgress}%`}>
-					<div className="mb-1 flex justify-between text-xs text-slate-500">
-						<span>Uploading image</span>
-						<span>{uploadProgress}%</span>
-					</div>
-					<div className="h-1.5 overflow-hidden rounded-full bg-slate-200">
-						<div
-							className="h-full rounded-full bg-blue-600 transition-[width]"
-							style={{ width: `${uploadProgress}%` }}
-						/>
-					</div>
-				</div>
-			)}
+		<form onSubmit={handleSubmit} className="shrink-0 px-6 pb-6">
+			{/* One bordered block holding the field and its controls, rather than a
+			    row of separate rounded pills. The composer is one object you type
+			    into; three floating capsules made it read as three. */}
+			<div className="rounded-lg border border-rule bg-paper-raised focus-within:border-ink">
+				{error && <p className="eyebrow border-b border-rule-soft px-4 py-2.5 text-signal">{error}</p>}
 
-			{previewUrl && (
-				<div className="relative mb-2 inline-block">
-					<img src={previewUrl} alt="Attached image preview" className="h-20 rounded-lg object-cover" />
-					<Button
-						variant="ghost"
-						onClick={() => setAttachment(null)}
-						aria-label="Remove attached image"
-						className="absolute -right-2 -top-2 size-5 rounded-full border border-slate-200 bg-white p-0 text-slate-500 hover:bg-slate-100"
+				{isSending && attachment && (
+					<div
+						className="border-b border-rule-soft px-4 py-2.5"
+						role="status"
+						aria-label={`Uploading image ${uploadProgress}%`}
 					>
-						<X className="size-3" />
-					</Button>
-				</div>
-			)}
+						<div className="mb-1.5 flex justify-between">
+							<span className="eyebrow text-ink-faint">Uploading image</span>
+							<span className="meta text-ink-faint">{uploadProgress}%</span>
+						</div>
+						<div className="h-0.5 overflow-hidden bg-rule">
+							{/* Inline width because the value is a number from a running
+							    upload — there is no class for 37%. Flagged rather than
+							    hidden: the production CSP is `style-src 'self'`, which
+							    blocks inline style attributes, so this bar does not move
+							    in a deployed build. Pre-existing; see the note in
+							    nginx.conf.template. */}
+							<div className="h-full bg-ink transition-[width]" style={{ width: `${uploadProgress}%` }} />
+						</div>
+					</div>
+				)}
 
-			<div className="flex items-center gap-2">
-				<input
-					ref={fileInputRef}
-					type="file"
-					accept={ACCEPTED_IMAGE_TYPES}
-					onChange={handleFileSelected}
-					className="hidden"
-				/>
-				<Button
-					variant="ghost"
-					onClick={() => fileInputRef.current?.click()}
-					disabled={isSending}
-					aria-label="Attach an image"
-					className="rounded-full px-2"
-				>
-					<ImagePlus className="size-4" />
-				</Button>
+				{previewUrl && (
+					<div className="relative m-3 mb-0 inline-block">
+						<img src={previewUrl} alt="Attached image preview" className="h-20 rounded-md object-cover" />
+						<Button
+							variant="ghost"
+							onClick={() => setAttachment(null)}
+							aria-label="Remove attached image"
+							className="absolute -right-2 -top-2 size-5 rounded-md border border-rule bg-paper-raised p-0 text-ink-soft hover:bg-paper"
+						>
+							<X className="size-3" strokeWidth={2} />
+						</Button>
+					</div>
+				)}
 
 				<input
 					value={content}
 					onChange={handleChange}
-					placeholder="Type a message"
+					placeholder="Write a message"
 					aria-label="Message"
-					className="flex-1 rounded-full border border-slate-300 px-4 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+					className="w-full bg-transparent px-4 pb-2.5 pt-3.5 text-sm text-ink outline-none placeholder:text-ink-faint"
 				/>
-				<Button type="submit" disabled={isSending || !hasSomethingToSend} className="rounded-full px-3">
-					<SendHorizontal className="size-4" />
-				</Button>
+
+				<div className="flex items-center justify-between px-2.5 pb-2.5">
+					<input
+						ref={fileInputRef}
+						type="file"
+						accept={ACCEPTED_IMAGE_TYPES}
+						onChange={handleFileSelected}
+						className="hidden"
+					/>
+					<Button
+						variant="ghost"
+						onClick={() => fileInputRef.current?.click()}
+						disabled={isSending}
+						aria-label="Attach an image"
+						className="size-7 rounded-md p-0"
+					>
+						<ImagePlus className="size-4" strokeWidth={1.75} />
+					</Button>
+
+					<div className="flex items-center gap-3">
+						{/* The keyboard shortcut said out loud. It is the fastest path and
+						    the one nobody discovers by looking at a send button. */}
+						<span className="eyebrow text-ink-faint max-sm:hidden">Enter to send</span>
+						<Button
+							type="submit"
+							disabled={isSending || !hasSomethingToSend}
+							aria-label="Send message"
+							className="size-8 rounded-md p-0"
+						>
+							<SendHorizontal className="size-4" strokeWidth={1.75} />
+						</Button>
+					</div>
+				</div>
 			</div>
 		</form>
 	);
