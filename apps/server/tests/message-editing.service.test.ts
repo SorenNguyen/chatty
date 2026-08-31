@@ -211,12 +211,12 @@ describe("editMessage", () => {
 	it("allows clearing the caption of a message that still has its image", async () => {
 		// The send rule, restated: a message has to be *something*. A picture is.
 		const { conversationId, authorId } = await makeConversation();
-		const sent = await sendMessage(authorId, conversationId, { content: "look", attachment: await makeImage() });
+		const sent = await sendMessage(authorId, conversationId, { content: "look", attachments: [await makeImage()] });
 
 		const edited = await editMessage(authorId, conversationId, sent.id, { content: "" });
 
 		expect(edited.content).toBe("");
-		expect(edited.attachment).not.toBeNull();
+		expect(edited.attachments).not.toHaveLength(0);
 	});
 
 	it("refuses someone who did not write the message", async () => {
@@ -332,13 +332,13 @@ describe("deleteMessage", () => {
 
 	it("removes the image, its row, and its file", async () => {
 		const { conversationId, authorId } = await makeConversation();
-		const sent = await sendMessage(authorId, conversationId, { content: "look", attachment: await makeImage() });
-		const attachmentId = sent.attachment!.id;
+		const sent = await sendMessage(authorId, conversationId, { content: "look", attachments: [await makeImage()] });
+		const attachmentId = sent.attachments[0]!.id;
 		expect(await findAttachmentPath(attachmentId)).not.toBeNull();
 
 		const deleted = await deleteMessage(authorId, conversationId, sent.id);
 
-		expect(deleted.attachment).toBeNull();
+		expect(deleted.attachments).toHaveLength(0);
 		await expect(prisma.attachment.count({ where: { id: attachmentId } })).resolves.toBe(0);
 		expect(await findAttachmentPath(attachmentId)).toBeNull();
 	});

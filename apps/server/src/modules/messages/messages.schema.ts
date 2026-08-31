@@ -13,6 +13,10 @@ export const sendMessageSchema = z.object({
 	// this id names a message in *this* conversation is not something a body
 	// schema can see, and it is the half that matters — see `sendMessage`.
 	replyToId: z.string().min(1).optional(),
+	// Validated as a string here and as one of *your own* stickers in the
+	// service: whether this id is in the caller's tray is not something a body
+	// schema can see, and it is the half that matters.
+	stickerId: z.string().min(1).max(64).optional(),
 });
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;
 

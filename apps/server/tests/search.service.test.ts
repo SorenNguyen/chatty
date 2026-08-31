@@ -117,17 +117,56 @@ describe("searchMessages", () => {
 		await expect(search(minh, "hẹn gặp")).resolves.toEqual(["Hẹn gặp lại bạn nhé"]);
 	});
 
-	it("does not match Vietnamese typed without its diacritics", async () => {
-		// A known limitation rather than a bug, and pinned here so it is noticed if
-		// it ever changes: `simple` keeps diacritics, so "hen gap" is a different
-		// word from "hẹn gặp". Closing it needs the unaccent extension — the phase
-		// 12 migration spells out exactly how.
+	it("matches Vietnamese typed without its diacritics", async () => {
+		// The gap phase 12 wrote out and left open. Vietnamese is written with
+		// diacritics and typed without them constantly, so a search that could not
+		// cross that failed the people most likely to use it, on most of what they
+		// looked for.
 		const minh = await makeUser("minh");
 		const an = await makeUser("an");
 		const conversation = await makeConversation([minh, an]);
 		await sendMessage(minh, conversation, { content: "Hẹn gặp lại bạn nhé" });
 
-		await expect(search(minh, "hen gap")).resolves.toEqual([]);
+		await expect(search(minh, "hen gap")).resolves.toEqual(["Hẹn gặp lại bạn nhé"]);
+	});
+
+	it("still matches Vietnamese typed with its diacritics", async () => {
+		// The half that would break if only the stored column were unaccented:
+		// stripping the accents from the message but not from the search term
+		// makes a message unfindable by its own words, which is worse than the
+		// bug being fixed.
+		const minh = await makeUser("minh");
+		const an = await makeUser("an");
+		const conversation = await makeConversation([minh, an]);
+		await sendMessage(minh, conversation, { content: "Hẹn gặp lại bạn nhé" });
+
+		await expect(search(minh, "hẹn gặp")).resolves.toEqual(["Hẹn gặp lại bạn nhé"]);
+	});
+
+	it("finds an accented message from an unaccented one and back again", async () => {
+		// Both directions, because unaccenting is applied to the column and the
+		// query: someone who types the accents finds what someone who does not
+		// wrote, which is the case that actually happens in a group chat.
+		const minh = await makeUser("minh");
+		const an = await makeUser("an");
+		const conversation = await makeConversation([minh, an]);
+		await sendMessage(minh, conversation, { content: "hen gap luc 7h" });
+
+		await expect(search(minh, "hẹn")).resolves.toEqual(["hen gap luc 7h"]);
+	});
+
+	it("keeps a word that only differs by an accent findable by either spelling", async () => {
+		// A consequence worth stating rather than discovering: unaccenting merges
+		// words Vietnamese treats as different. "ma", "má", "mà" and "mã" all
+		// become "ma", so any of them finds all of them. That is the trade this
+		// makes, and it is the right way round — a search that returns a few extra
+		// lines is useful, one that returns nothing is not.
+		const minh = await makeUser("minh");
+		const an = await makeUser("an");
+		const conversation = await makeConversation([minh, an]);
+		await sendMessage(minh, conversation, { content: "con mã đó" });
+
+		await expect(search(minh, "má")).resolves.toEqual(["con mã đó"]);
 	});
 
 	it("is case-insensitive", async () => {

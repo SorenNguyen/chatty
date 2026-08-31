@@ -84,6 +84,21 @@ export const loginRateLimiter = createAuthLimiter({
 });
 
 /**
+ * Caps `POST /auth/refresh`.
+ *
+ * Generous, because a legitimate client hits it every fifteen minutes per tab
+ * and several tabs are normal — a limit that catches a busy user is a limit
+ * that signs them out. Its job is to stop an unauthenticated endpoint that
+ * hashes and writes being used as a free write loop, not to stop guessing:
+ * guessing a 32-byte token is not a thing rate limiting is needed for.
+ */
+export const refreshRateLimiter = createAuthLimiter({
+	windowMs: 15 * 60 * 1000,
+	limit: 120,
+	message: "Too many session refreshes. Try again later.",
+});
+
+/**
  * Caps attempts at `POST /auth/password`, which is a password guess with a
  * better prize than login: it is reached with a token someone may have picked
  * up from an unlocked screen, and getting it right rewrites the credential.

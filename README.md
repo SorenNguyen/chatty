@@ -177,14 +177,32 @@ thumbnail). Message bursts now break after a real pause rather than sticking tog
 the mobile layout is a deliberate conversation-list → thread → back flow instead of a squeezed
 two-column desktop shell.
 
+Phases 18-21 are about the difference between working and being trusted. Phase 18 fixes three ways
+the screen quietly stopped telling the truth: a dropped socket now resyncs the sidebar and the thread
+when it comes back instead of leaving both silently stale, an expired session says so and returns you
+to the login form instead of failing every request separately, and a thread that could not load shows
+the reason and a retry rather than rendering as an empty conversation. Phase 19 closes the
+perceived-quality gap — a text message appears the instant you press Enter and is marked "Not sent"
+with a retry if it does not arrive, the unread count is in the tab title, browser notifications are
+available per-browser, and removing somebody from a group or leaving one now asks first. Phase 20
+makes search work the way Vietnamese is actually typed: `hen gap` finds `hẹn gặp`. Phase 21 makes
+signing out mean something — the session is now a revocable row rather than a seven-day JWT nothing
+could take back, access tokens last fifteen minutes, and a refresh rotates so a stolen one works at
+most once. Phase 22 lets a message carry up to ten images — a gallery in the bubble, a viewer that
+walks the set with the arrow keys — and gives the composer an emoji picker, searchable in English and
+in unaccented Vietnamese. A message that is nothing but one to three emoji is drawn large with no
+bubble at all; the *reactions* stay the closed set of five ink marks, because a full-colour glyph
+sitting permanently beside a bubble is the loudest thing on a page that spends its one colour very
+deliberately. Phase 23 replaced that gallery with a stacked album — a 2×2 grid took 320×320 of the
+conversation for a set that gets opened in a viewer anyway — and added **stickers**: a personal tray
+of saved images, one tap from every conversation, copied into the message when sent so clearing the
+tray never blanks a picture out of somebody else's chat.
+
 Largest known gaps:
 
 - **No real deployment yet, and it is blocked on purchases rather than code** — a domain, a host and
   an SMTP account. The cost of each, the two host options and what changes between them are worked
   out in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
-- **Search does not ignore diacritics.** Finding a message works (phase 12), but `hen gap` does not
-  match `hẹn gặp` — closing that needs the `unaccent` extension, which is a dependency not worth
-  taking on before the host is chosen. The phase 12 migration spells out the exact change.
 - **There is no second admin and no demotion** — the role is one seat, so nobody can cover for an
   owner who has gone quiet without them handing it over first — and any member can still invite a
   stranger. See [ADR 0008](docs/adr/0008-group-owner-role.md).
@@ -199,16 +217,21 @@ Largest known gaps:
   same limits.
 - **An attachment URL works for anyone holding it, until it expires.** Signed and scoped to one image
   with a one-hour life, but bearer proof for that hour — see
-  [ADR 0007](docs/adr/0007-signed-attachment-urls.md). Still one image per message — several would need
-  a gallery in the thread and an answer to what a mixed caption-plus-many-images looks like. Files left
-  behind by a send that failed midway are swept every six hours as of phase 14; avatar files are not
-  swept yet.
+  [ADR 0007](docs/adr/0007-signed-attachment-urls.md). Files left behind by a send that failed midway
+  are swept every six hours as of phase 14; avatar files are not swept yet.
 - **Still no TLS, reverse proxy, load balancer or object storage.** The two API instances sit on
   separate ports rather than behind anything, and uploads are a shared volume — which works on one
   machine and does not survive per-machine disks. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 - **The CSP is not verified against a live API.** The web app has one as of phase 14, checked in a
   real browser against the built image — but with no API behind it, so `img-src` and `connect-src`
   are argued from the header's contents rather than demonstrated end to end.
+- **The conversation list is not paginated,** and the sidebar re-lists the whole thing on every
+  incoming message. Fine at this size; the fix is not a cursor but replacing that re-list with
+  incremental patching, which is a redesign of the live-update path rather than a parameter. See
+  phase 21, item 80.
+- **The message list is not virtualised.** Messages accumulate only through explicit paging, so
+  reaching a DOM large enough to matter takes deliberate work — but the ceiling is real, and the two
+  cheap fixes both risk the scroll-position handling that already works. See phase 19, item 76.
 - Playwright covers one browser, and `test:e2e` is not part of `verify` — it needs two servers and a
   browser download.
 

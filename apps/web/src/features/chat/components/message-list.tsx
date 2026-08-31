@@ -1,6 +1,7 @@
 import type { MessageDTO, ParticipantDTO, ReactionKind } from "@chatty/shared-types";
 import { Fragment, useEffect, useState } from "react";
 import { Button } from "@/components/button";
+import type { ThreadMessage } from "../types/thread-message";
 import { useMessageScroll } from "../hooks";
 import { getClusterPosition, getReadReceipt, hasMessageTimeGap, isNewDay, isWithinMessageBurst } from "../utils";
 import { DaySeparator } from "./day-separator";
@@ -10,7 +11,7 @@ import { MessageTimeSeparator } from "./message-time-separator";
 import { SystemMessage } from "./system-message";
 
 interface MessageListProps {
-	messages: MessageDTO[];
+	messages: ThreadMessage[];
 	currentUserId: string;
 	participants: ParticipantDTO[];
 	/**
@@ -28,6 +29,12 @@ interface MessageListProps {
 	 * sending theirs stops seeing everyone else's.
 	 */
 	areReceiptsShared: boolean;
+	/**
+	 * True while the first page is in flight. Without it an unfinished load and
+	 * an empty conversation render identically, so a slow network shows "No
+	 * messages yet. Say hello." over a thread that has years in it.
+	 */
+	isLoadingThread: boolean;
 	hasMoreOlder: boolean;
 	isLoadingOlder: boolean;
 	onLoadOlder: () => void;
@@ -42,6 +49,9 @@ interface MessageListProps {
 	onEditMessage: (messageId: string, content: string) => void;
 	onDeleteMessage: (messageId: string) => void;
 	onHideMessage: (messageId: string) => void;
+	/** Both act on a draft this tab failed to send, never on a stored message. */
+	onRetrySend: (draftId: string) => void;
+	onDiscardDraft: (draftId: string) => void;
 	onToggleReaction: (messageId: string, kind: ReactionKind) => void;
 	/** Puts a message in the composer's reply slot. Owned by the page, which owns the composer. */
 	onReplyToMessage: (message: MessageDTO) => void;
@@ -63,6 +73,7 @@ export function MessageList({
 	participants,
 	isGroup,
 	areReceiptsShared,
+	isLoadingThread,
 	hasMoreOlder,
 	isLoadingOlder,
 	onLoadOlder,
@@ -72,6 +83,8 @@ export function MessageList({
 	onEditMessage,
 	onDeleteMessage,
 	onHideMessage,
+	onRetrySend,
+	onDiscardDraft,
 	onToggleReaction,
 	onReplyToMessage,
 	targetMessageId,
@@ -125,7 +138,9 @@ export function MessageList({
 				)}
 
 				{messages.length === 0 ? (
-					<p className="p-8 text-center text-sm text-ink-faint">No messages yet. Say hello.</p>
+					<p className="p-8 text-center text-sm text-ink-faint">
+						{isLoadingThread ? "Loading messages…" : "No messages yet. Say hello."}
+					</p>
 				) : (
 					<div className="flex flex-col px-3 pb-4 pt-2 sm:px-5 md:px-8 md:pb-5">
 						{messages.map((message, index) => {
@@ -213,6 +228,8 @@ export function MessageList({
 										onDeleteForEveryone={() => onDeleteMessage(message.id)}
 										onDeleteForMe={() => onHideMessage(message.id)}
 										onShowHistory={() => setHistoryMessageId(message.id)}
+										onRetrySend={() => onRetrySend(message.id)}
+										onDiscardDraft={() => onDiscardDraft(message.id)}
 										currentUserId={currentUserId}
 										participants={participants}
 										onToggleReaction={(kind) => onToggleReaction(message.id, kind)}

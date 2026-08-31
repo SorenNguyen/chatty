@@ -20,6 +20,17 @@ Everything else in the deployment path is configuration and code. These are purc
 
 That is the whole list. A domain is the only unavoidable cost.
 
+### One requirement the host must meet
+
+The database must allow `CREATE EXTENSION unaccent`. It is a standard contrib module — it ships
+inside the official `postgres` image these compose files run, and every managed Postgres worth
+deploying to has it on the allow-list — but it is the one thing this app needs from a database
+beyond plain SQL, so it is written down here rather than met by luck.
+
+Without it the phase 20 migration fails at deploy time and the app does not start, which is the
+correct failure: a search that silently stopped matching `hen gap` against `hẹn gặp` would be found
+by a user rather than by the deployment.
+
 ---
 
 ## What it costs

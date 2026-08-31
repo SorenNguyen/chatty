@@ -192,3 +192,17 @@ export async function listStoredAttachments(): Promise<StoredAttachmentFile[]> {
 export function buildAttachmentUrl(attachmentId: string): string {
 	return `${env.PUBLIC_URL}/attachments/${attachmentId}?token=${signAttachmentToken(attachmentId)}`;
 }
+
+/**
+ * The same scheme for a sticker, pointing at the route that actually serves one.
+ *
+ * Its own function rather than a second call to `buildAttachmentUrl`, which is
+ * what this shipped as at first: the token was right, the *path* was not, and
+ * every sticker in the tray rendered as a broken image because
+ * `/attachments/:id` looks the id up in a table stickers are not in. The unit
+ * test asserted the token and never the path, which is exactly the gap running
+ * the app closed.
+ */
+export function buildStickerUrl(stickerId: string): string {
+	return `${env.PUBLIC_URL}/stickers/${stickerId}?token=${signAttachmentToken(stickerId)}`;
+}

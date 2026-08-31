@@ -6,6 +6,7 @@ import {
 	loginRateLimiter,
 	passwordResetConfirmRateLimiter,
 	passwordResetRequestRateLimiter,
+	refreshRateLimiter,
 	registerRateLimiter,
 } from "../../middlewares/rate-limit.js";
 import { requireAuth } from "../../middlewares/require-auth.js";
@@ -13,6 +14,8 @@ import {
 	changePasswordController,
 	confirmEmailChangeController,
 	loginController,
+	logoutController,
+	refreshSessionController,
 	registerController,
 	requestEmailChangeController,
 	requestPasswordResetController,
@@ -25,6 +28,17 @@ export const authRouter = Router();
 // database, or the cost of probing is the same as the cost of a real signup.
 authRouter.post("/register", registerRateLimiter, registerController);
 authRouter.post("/login", loginRateLimiter, loginController);
+
+// Both unauthenticated, and that is the point rather than an oversight: a
+// client calls these exactly when its access token has expired, so requiring one
+// would make them useless at the only moment they matter. The refresh token in
+// the body is the credential, and it is checked against a database row.
+//
+// `refresh` is limited because it is an unauthenticated endpoint that hashes and
+// writes; `logout` is not, because a signed-out client that cannot sign out is a
+// worse failure than a flood of no-op updates.
+authRouter.post("/refresh", refreshRateLimiter, refreshSessionController);
+authRouter.post("/logout", logoutController);
 
 // `requireAuth` before the limiter, not after: the limiter counts per user id,
 // so it needs one to exist — and an unauthenticated flood must not be able to

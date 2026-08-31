@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { setSessionExpiredHandler } from "@/api/client";
 import { ConfirmEmailPage } from "@/features/auth/pages/confirm-email-page";
 import { ForgotPasswordPage } from "@/features/auth/pages/forgot-password-page";
 import { LoginPage } from "@/features/auth/pages/login-page";
@@ -14,6 +15,13 @@ export function App() {
 	const restoreSession = useAuth((state) => state.restoreSession);
 
 	useEffect(() => {
+		// A token that expires mid-session used to fail every request separately,
+		// with no route back to the login screen: the tab kept rendering a chat
+		// nothing could be sent from. The teardown is `logout`'s, and clearing the
+		// user is what makes the route guards below redirect. Wired here rather
+		// than inside the store because the api client is imported *by* the store,
+		// and this is the composition root where both are already in scope.
+		setSessionExpiredHandler(() => useAuth.getState().logout());
 		void restoreSession();
 	}, [restoreSession]);
 

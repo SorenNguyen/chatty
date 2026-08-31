@@ -16,17 +16,17 @@ describe("getConversationPreview", () => {
 	it("describes a picture that came with no caption", () => {
 		// Otherwise the row renders an empty line, which reads as a conversation
 		// with nothing in it — the one thing it is definitely not.
-		expect(getConversationPreview(makeMessage("m1", "an", "", makeAttachment()))).toBe("Sent an image");
+		expect(getConversationPreview(makeMessage("m1", "an", "", [makeAttachment()]))).toBe("Sent an image");
 	});
 
 	it("prefers the caption when a picture has one", () => {
-		expect(getConversationPreview(makeMessage("m1", "an", "look", makeAttachment()))).toBe("look");
+		expect(getConversationPreview(makeMessage("m1", "an", "look", [makeAttachment()]))).toBe("look");
 	});
 
 	it("uses the thread's own sentence for a message that was unsent", () => {
 		// The server empties `content` on delete, so without this the sidebar
 		// would show a blank row for a conversation that still has history.
-		const tombstone = makeMessage("m1", "an", "", makeAttachment(), { deletedAt: DELETED_AT });
+		const tombstone = makeMessage("m1", "an", "", [makeAttachment()], { deletedAt: DELETED_AT });
 
 		expect(getConversationPreview(tombstone)).toBe("This message was deleted");
 	});

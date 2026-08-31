@@ -33,6 +33,11 @@ interface MatchRow {
  * `websearch_to_tsquery`, not `to_tsquery`: it accepts whatever a person types.
  * `to_tsquery` throws a syntax error on a bare space, which would turn a normal
  * search into a 500 the first time anyone typed two words.
+ *
+ * `immutable_unaccent` wraps the search term because the stored vector is built
+ * from the same function — see the phase 20 migration. Both sides or neither:
+ * stripping accents from only the column would make `hẹn` fail to find its own
+ * message, which is a worse bug than the one being fixed.
  */
 async function findMatchingMessageIds(currentUserId: string, query: SearchMessagesQuery): Promise<string[]> {
 	const rows = await prisma.$queryRaw<MatchRow[]>`
@@ -40,7 +45,7 @@ async function findMatchingMessageIds(currentUserId: string, query: SearchMessag
 		FROM "Message" m
 		JOIN "ConversationParticipant" p
 			ON p."conversationId" = m."conversationId" AND p."userId" = ${currentUserId}
-		WHERE m."searchVector" @@ websearch_to_tsquery('simple', ${query.query})
+		WHERE m."searchVector" @@ websearch_to_tsquery('simple', immutable_unaccent(${query.query}))
 			-- A tombstone has an empty content and so an empty vector; excluded
 			-- explicitly anyway, because "cannot match" and "must not be returned"
 			-- are different promises and only one of them survives a schema change.

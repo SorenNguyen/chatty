@@ -2,6 +2,7 @@ import type {
 	ChangePasswordRequest,
 	ConfirmEmailChangeRequest,
 	LoginRequest,
+	RefreshTokenRequest,
 	RegisterRequest,
 	RequestEmailChangeRequest,
 	RequestPasswordResetRequest,
@@ -103,6 +104,18 @@ export const confirmEmailChangeSchema = z.object({
 export type ConfirmEmailChangeInput = z.infer<typeof confirmEmailChangeSchema>;
 
 /**
+ * The body of `POST /auth/refresh` and `POST /auth/logout`.
+ *
+ * Bounded like every other token field here: the value this app issues is 43
+ * base64url characters, and the cap is what stops an unauthenticated endpoint
+ * being handed a megabyte to hash.
+ */
+export const refreshTokenSchema = z.object({
+	refreshToken: z.string().min(1).max(512),
+});
+export type RefreshTokenInput = z.infer<typeof refreshTokenSchema>;
+
+/**
  * Compile-time proof that what these schemas produce is what the client sends.
  *
  * Zod validates at runtime and knows nothing about the client; the shared
@@ -118,3 +131,4 @@ export type RequestPasswordResetContract = AssertAssignable<RequestPasswordReset
 export type ResetPasswordContract = AssertAssignable<ResetPasswordInput, ResetPasswordRequest>;
 export type RequestEmailChangeContract = AssertAssignable<RequestEmailChangeInput, RequestEmailChangeRequest>;
 export type ConfirmEmailChangeContract = AssertAssignable<ConfirmEmailChangeInput, ConfirmEmailChangeRequest>;
+export type RefreshTokenContract = AssertAssignable<RefreshTokenInput, RefreshTokenRequest>;

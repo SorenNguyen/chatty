@@ -1,21 +1,20 @@
-import type { MessageDTO, ReactionKind, UserDTO } from "@chatty/shared-types";
-import { Ban, CheckCheck } from "lucide-react";
+import type { ReactionKind, UserDTO } from "@chatty/shared-types";
+import { Ban } from "lucide-react";
 import { Avatar } from "@/components/avatar";
-import { Button } from "@/components/button";
 import { cn } from "@/utils/cn";
-import { DELETED_AUTHOR_NAME, DELETED_MESSAGE_TEXT, EDITED_MESSAGE_LABEL } from "../constants/message";
-import { INCOMING_BUBBLE_RADIUS, OUTGOING_BUBBLE_RADIUS } from "../constants/message-cluster";
+import { DELETED_AUTHOR_NAME, DELETED_MESSAGE_TEXT } from "../constants/message";
 import type { ClusterPosition } from "../types/message-cluster";
+import type { ThreadMessage } from "../types/thread-message";
 import type { ReadReceipt } from "../utils/read-receipt";
-import { formatMessageTime } from "../utils";
+import { countJumboEmoji } from "../utils";
 import { MessageActions } from "./message-actions";
-import { MessageAttachment } from "./message-attachment";
+import { MessageBubble } from "./message-bubble";
 import { MessageEditor } from "./message-editor";
+import { MessageMeta } from "./message-meta";
 import { MessageReactions } from "./message-reactions";
-import { MessageReplyQuote } from "./message-reply-quote";
 
 interface MessageRowProps {
-	message: MessageDTO;
+	message: ThreadMessage;
 	isMine: boolean;
 	isGroup: boolean;
 	/** First of a run from the same author — the one that carries the avatar and the byline. */
@@ -43,6 +42,9 @@ interface MessageRowProps {
 	onDeleteForEveryone: () => void;
 	onDeleteForMe: () => void;
 	onShowHistory: () => void;
+	/** Both only ever reached from a draft that failed to send. */
+	onRetrySend: () => void;
+	onDiscardDraft: () => void;
 }
 
 /**
@@ -87,13 +89,19 @@ export function MessageRow({
 	onDeleteForEveryone,
 	onDeleteForMe,
 	onShowHistory,
+	onRetrySend,
+	onDiscardDraft,
 }: MessageRowProps) {
 	const author = message.author;
 	const isDeleted = Boolean(message.deletedAt);
 	const isEdited = Boolean(message.editedAt) && !isDeleted;
+	// Set only on a message this tab is still sending. Nothing may act on one:
+	// the server has no id for it yet, so an edit, a delete or a reaction would
+	// have nothing to name.
+	const deliveryState = message.deliveryState;
 	// A tombstone has no content and no image left to change, so the author's
 	// two actions have nothing to act on — the row stays only to hold its place.
-	const canModify = isMine && !isDeleted;
+	const canModify = isMine && !isDeleted && !deliveryState;
 	// The time is kept on screen for the message that ends a burst and hidden on
 	// the ones inside it: consecutive lines sent in the same minute would print
 	// the same number four times. Anything else is a hover away, and an edited
@@ -104,6 +112,12 @@ export function MessageRow({
 	// them has to be made here. The list already ends the run on a reacted
 	// message, so what this margin adds to is the 16px between runs, not the 3px
 	// inside one — a chip can never collide with the next bubble.
+	const hasImages = message.attachments.length > 0;
+	// A message that is nothing but a few emoji is drawn large and bare, the way
+	// every messenger worth using does it: at bubble size an emoji is a typo, and
+	// the bubble is chrome around content that does not need explaining. Only when
+	// it stands alone — a reply, a caption or a quote makes it part of something.
+	const jumboCount = !isDeleted && !hasImages && !message.replyTo ? countJumboEmoji(message.content) : 0;
 	const hasReactions = message.reactions.length > 0;
 	const reactedKinds = message.reactions
 		.filter((reaction) => reaction.userIds.includes(currentUserId))
@@ -120,6 +134,12 @@ export function MessageRow({
 				isFirstOfRun ? "mt-4 first:mt-0" : "mt-[3px]",
 				isTargeted && "bg-signal-soft ring-4 ring-signal-soft",
 				isMine ? "items-end" : "items-start",
+				// Held back from full ink until the server has it. The words are the
+				// point, so they stay legible — this says "not settled yet", not
+				// "unreadable". A failed draft goes back to full strength: it is the
+				// gutter's "Not sent" that carries the state, and a faded message
+				// with a decision attached to it reads as already dismissed.
+				deliveryState === "pending" && "opacity-60",
 			)}
 		>
 			{/* Outside the hover row and indented past the avatar, so the name sits
@@ -177,51 +197,18 @@ export function MessageRow({
 					) : isEditing ? (
 						<MessageEditor
 							initialContent={message.content}
-							hasAttachment={Boolean(message.attachment)}
+							hasAttachment={message.attachments.length > 0}
 							onSave={onSaveEdit}
 							onCancel={onCancelEdit}
 						/>
 					) : (
-						<div
-							className={cn(
-								"min-w-0 text-sm/[1.55]",
-								isMine ? "bg-ink text-paper" : "border border-rule bg-paper-raised text-ink",
-								(isMine ? OUTGOING_BUBBLE_RADIUS : INCOMING_BUBBLE_RADIUS)[clusterPosition],
-								// An image sits to the bubble's edge with a hairline of
-								// padding; text needs the full inset.
-								message.attachment ? "p-[5px]" : "px-3.5 py-2",
-							)}
-						>
-							{message.replyTo && (
-								<div className={cn(message.attachment && "px-2 pb-1.5 pt-1")}>
-									<MessageReplyQuote
-										replyTo={message.replyTo}
-										isMine={isMine}
-										onJumpToOriginal={onJumpToReplyOriginal}
-									/>
-								</div>
-							)}
-							{message.attachment && (
-								<MessageAttachment
-									attachment={message.attachment}
-									caption={message.content}
-									isMine={isMine}
-									clusterPosition={clusterPosition}
-								/>
-							)}
-							{/* Skipped entirely for an image with no caption, so the bubble
-							    does not carry an empty line under the picture. */}
-							{message.content && (
-								<p
-									className={cn(
-										"whitespace-pre-wrap wrap-break-word",
-										message.attachment && "px-2.5 pb-1 pt-2.5",
-									)}
-								>
-									{message.content}
-								</p>
-							)}
-						</div>
+						<MessageBubble
+							message={message}
+							isMine={isMine}
+							clusterPosition={clusterPosition}
+							jumboCount={jumboCount}
+							onJumpToReplyOriginal={onJumpToReplyOriginal}
+						/>
 					)}
 
 					{hasReactions && (
@@ -235,7 +222,7 @@ export function MessageRow({
 					)}
 				</div>
 
-				{!isEditing && (
+				{!isEditing && !deliveryState && (
 					<MessageActions
 						{...(canModify && { onEdit: onStartEdit, onDeleteForEveryone })}
 						onDeleteForMe={onDeleteForMe}
@@ -248,44 +235,18 @@ export function MessageRow({
 					/>
 				)}
 
-				{/* The gutter. It reserves its width whether or not anything in it is
-				    currently shown, which is the entire trick: revealing a timestamp
-				    on hover cannot reflow the bubble it belongs to. */}
-				<div
-					className={cn(
-						"flex shrink-0 items-center gap-2",
-						"max-sm:absolute max-sm:top-full max-sm:mt-1",
-						isMine ? "max-sm:right-0" : "max-sm:left-10",
-						!isTimeAlwaysVisible && !isEdited && "max-sm:hidden",
-					)}
-				>
-					{isEdited && (
-						<Button
-							variant="ghost"
-							onClick={onShowHistory}
-							className="eyebrow border-b border-dotted border-ink-faint px-0 py-0 text-ink-faint hover:bg-transparent hover:text-ink-soft"
-						>
-							{EDITED_MESSAGE_LABEL}
-						</Button>
-					)}
-					<span
-						className={cn(
-							"meta text-ink-faint transition-opacity",
-							!isTimeAlwaysVisible && "opacity-0 group-hover:opacity-100",
-						)}
-					>
-						{formatMessageTime(message.createdAt)}
-					</span>
-					{receipt && (
-						<span className="inline-flex items-center gap-1">
-							<CheckCheck
-								aria-label={isGroup ? `Seen by ${receipt.readerCount}` : "Seen"}
-								className="size-3.5 text-signal"
-							/>
-							{isGroup && <span className="meta text-signal">{receipt.readerCount}</span>}
-						</span>
-					)}
-				</div>
+				<MessageMeta
+					createdAt={message.createdAt}
+					isMine={isMine}
+					isGroup={isGroup}
+					isEdited={isEdited}
+					isTimeAlwaysVisible={isTimeAlwaysVisible}
+					receipt={receipt}
+					deliveryState={deliveryState}
+					onShowHistory={onShowHistory}
+					onRetrySend={onRetrySend}
+					onDiscardDraft={onDiscardDraft}
+				/>
 			</div>
 		</div>
 	);

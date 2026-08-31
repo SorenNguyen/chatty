@@ -13,6 +13,7 @@ import { ConflictError, UnauthorizedError, ValidationError } from "../../lib/err
 import { buildEmailChangeUrl, buildPasswordResetUrl } from "../../lib/mailer.js";
 import { enqueueMail } from "../../lib/outbox.js";
 import { prisma } from "../../lib/prisma.js";
+import { issueRefreshToken, revokeAllRefreshTokens, revokeRefreshToken, rotateRefreshToken } from "./auth.sessions.js";
 import { getIO, userRoom } from "../../lib/socket-bus.js";
 import type {
 	ChangePasswordInput,
@@ -56,6 +57,21 @@ const DUMMY_PASSWORD_HASH = "$2b$12$BdIK5mgDr8tlgbVgbzNmmuH05p8K0StmWZesMIqpepw.
 const PUBLIC_USER_FIELDS = { id: true, email: true, handle: true, displayName: true } as const;
 
 /**
+ * How long an access token is good for.
+ *
+ * Fifteen minutes, down from seven days. The number is short because nothing
+ * can revoke this token — it is a JWT, so it is valid because it says so, and
+ * the only thing that limits the damage of a copied one is how soon it expires.
+ * The session itself is the refresh token, which is a row and can be ended; see
+ * `auth.sessions.ts`.
+ *
+ * Not shorter, because every expiry costs the client a round trip and the
+ * socket a reconnect, and a minute-long token would spend more time refreshing
+ * than working.
+ */
+const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
+
+/**
  * Signs the access token. The payload shape is read by BOTH `requireAuth`
  * (HTTP) and the Socket.io handshake in `sockets/index.ts` — changing `sub`
  * here without changing those two breaks authentication on both transports.
@@ -63,7 +79,7 @@ const PUBLIC_USER_FIELDS = { id: true, email: true, handle: true, displayName: t
 function signAccessToken(userId: string): string {
 	const payload: JwtPayload = { sub: userId };
 
-	return jwt.sign(payload, env.JWT_SECRET, { expiresIn: "7d" });
+	return jwt.sign(payload, env.JWT_SECRET, { expiresIn: ACCESS_TOKEN_TTL_SECONDS });
 }
 
 /**
@@ -107,7 +123,7 @@ export async function register(input: RegisterInput): Promise<AuthResult> {
 		select: PUBLIC_USER_FIELDS,
 	});
 
-	return { token: signAccessToken(user.id), user };
+	return { token: signAccessToken(user.id), refreshToken: await issueRefreshToken(user.id), user };
 }
 
 /**
@@ -132,6 +148,7 @@ export async function login(input: LoginInput): Promise<AuthResult> {
 	// allow-list cannot leak a field that gets added to the model later.
 	return {
 		token: signAccessToken(user.id),
+		refreshToken: await issueRefreshToken(user.id),
 		user: { id: user.id, email: user.email, handle: user.handle, displayName: user.displayName },
 	};
 }
@@ -261,7 +278,10 @@ function endSessions(userId: string): void {
  * would be signed out of the tab they are looking at if they were not handed a
  * replacement; every other device is not, which is the entire point.
  */
-export async function changePassword(userId: string, input: ChangePasswordInput): Promise<{ token: string }> {
+export async function changePassword(
+	userId: string,
+	input: ChangePasswordInput,
+): Promise<{ token: string; refreshToken: string }> {
 	const user = await prisma.user.findUnique({ where: { id: userId }, select: { passwordHash: true } });
 
 	// Reachable only if the account was deleted between the token being issued
@@ -277,16 +297,55 @@ export async function changePassword(userId: string, input: ChangePasswordInput)
 	if (isSamePassword) throw new ValidationError("New password must be different from the current one");
 
 	const passwordHash = await bcrypt.hash(input.newPassword, PASSWORD_HASH_ROUNDS);
-	await prisma.user.update({
-		where: { id: userId },
-		data: { passwordHash, passwordChangedAt: new Date() },
-		select: { id: true },
+	// One transaction, because half of this is a security hole in each direction:
+	// revoked sessions with the old password still working signs someone out for
+	// nothing, and a changed password with live sessions leaves the person the
+	// change was made *against* still signed in.
+	await prisma.$transaction(async (transaction) => {
+		await transaction.user.update({
+			where: { id: userId },
+			data: { passwordHash, passwordChangedAt: new Date() },
+			select: { id: true },
+		});
+		// The access tokens are refused by `passwordChangedAt`; these are the rows
+		// that would otherwise let every other device mint a fresh one.
+		await revokeAllRefreshTokens(userId, transaction);
 	});
 	endSessions(userId);
 
 	// Signed after `passwordChangedAt` was written, so its `iat` is not behind
-	// the marker that would refuse it.
-	return { token: signAccessToken(userId) };
+	// the marker that would refuse it, and issued after the revocation so the
+	// caller's replacement session is not one of the ones just ended.
+	return { token: signAccessToken(userId), refreshToken: await issueRefreshToken(userId) };
+}
+
+/**
+ * Exchanges a refresh token for a new access token and a replacement refresh
+ * token.
+ *
+ * Unauthenticated, and it has to be: the whole reason this endpoint is called
+ * is that the caller's access token has expired. The refresh token in the body
+ * is the credential, and `rotateRefreshToken` is what checks it.
+ *
+ * The access token is signed *after* the rotation commits, so a refresh that
+ * fails hands out nothing at all.
+ */
+export async function refreshSession(refreshToken: string): Promise<{ token: string; refreshToken: string }> {
+	const rotated = await rotateRefreshToken(refreshToken);
+
+	return { token: signAccessToken(rotated.userId), refreshToken: rotated.refreshToken };
+}
+
+/**
+ * Ends one session — the thing "sign out" could not do before.
+ *
+ * It cannot reach back for the access token that was issued alongside it, which
+ * stays valid until it expires. That window is the reason `ACCESS_TOKEN_TTL_SECONDS`
+ * is fifteen minutes and not seven days; what this closes is the ability to keep
+ * minting new ones for the next month.
+ */
+export async function logout(refreshToken: string): Promise<void> {
+	await revokeRefreshToken(refreshToken);
 }
 
 /**
@@ -386,6 +445,11 @@ export async function resetPassword(input: ResetPasswordInput): Promise<void> {
 			data: { passwordHash, passwordChangedAt: claimedAt },
 			select: { id: true },
 		});
+		// A reset exists for "somebody else has my account", which is worth
+		// nothing if the sessions they opened keep working. `passwordChangedAt`
+		// stops their access tokens; this stops them minting new ones. In the same
+		// transaction as the password itself, so a failure leaves neither done.
+		await revokeAllRefreshTokens(record.userId, transaction);
 	});
 
 	// No token is returned. Whoever is at the keyboard has proved they can read

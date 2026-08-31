@@ -1,6 +1,6 @@
 import type { CurrentUserDTO, RegisterRequest } from "@chatty/shared-types";
 import { create } from "zustand";
-import { api, clearStoredToken, getStoredToken, storeToken } from "@/api/client";
+import { api, clearStoredToken, getStoredRefreshToken, getStoredToken, storeSession } from "@/api/client";
 import { closeSocket } from "@/lib/socket";
 
 interface AuthState {
@@ -51,14 +51,14 @@ export const useAuth = create<AuthState>((set) => ({
 	isRestoring: true,
 
 	async login(email, password) {
-		const { token } = await api.login({ email, password });
-		storeToken(token);
+		const { token, refreshToken } = await api.login({ email, password });
+		storeSession(token, refreshToken);
 		set({ currentUser: await api.getCurrentUser() });
 	},
 
 	async register(input) {
-		const { token } = await api.register(input);
-		storeToken(token);
+		const { token, refreshToken } = await api.register(input);
+		storeSession(token, refreshToken);
 		set({ currentUser: await api.getCurrentUser() });
 	},
 
@@ -67,8 +67,8 @@ export const useAuth = create<AuthState>((set) => ({
 	},
 
 	async changePassword(currentPassword, newPassword) {
-		const { token } = await api.changePassword({ currentPassword, newPassword });
-		storeToken(token);
+		const { token, refreshToken } = await api.changePassword({ currentPassword, newPassword });
+		storeSession(token, refreshToken);
 		// The old socket cannot be reused: the server closed it, and socket.io
 		// would reconnect with the token it captured when it was created — the one
 		// that no longer works. Dropping it makes the next getSocket() build one
@@ -88,6 +88,13 @@ export const useAuth = create<AuthState>((set) => ({
 	},
 
 	logout() {
+		// Told to the server first, and not awaited. Signing out must not depend on
+		// the network — a failed request would otherwise leave somebody looking at
+		// a chat they asked to leave — but before this call existed "sign out" only
+		// cleared this browser's copy and left the session itself alive for a week.
+		const refreshToken = getStoredRefreshToken();
+		if (refreshToken) void api.logout(refreshToken).catch(() => undefined);
+
 		clearStoredToken();
 		// The socket authenticated with the old token; leaving it open would keep
 		// pushing the previous user's messages into the next user's session.
@@ -96,7 +103,11 @@ export const useAuth = create<AuthState>((set) => ({
 	},
 
 	async restoreSession() {
-		if (!getStoredToken()) {
+		// The access token expires in minutes, so on any reload after a coffee
+		// break there is a stored refresh token and a dead access token. That is a
+		// session to restore, not one to throw away — `request` renews it on the
+		// 401 this next call gets.
+		if (!getStoredToken() && !getStoredRefreshToken()) {
 			set({ isRestoring: false });
 
 			return;

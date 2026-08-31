@@ -54,6 +54,8 @@ model User {
   messages            Message[]
   passwordResetTokens PasswordResetToken[]
   emailChangeTokens   EmailChangeToken[]
+  refreshTokens       RefreshToken[]
+  stickers            Sticker[]
   hiddenMessages      MessageHiddenFor[]
   reactions           MessageReaction[]
 }
@@ -107,6 +109,76 @@ model EmailChangeToken {
 /// hand over working credentials. SHA-256 rather than bcrypt because the value
 /// being hashed is 32 bytes of `crypto.randomBytes`, and a slow hash defends
 /// against guessing that is already impossible.
+/// One signed-in session, and the only thing in this app that can be revoked.
+///
+/// The access token is a JWT and is therefore unrevocable by construction: once
+/// signed it is valid until it expires, and nothing the server does can take it
+/// back. That was the whole session for a long time, at seven days, which meant
+/// "sign out" cleared a browser's `localStorage` and did nothing at all to a
+/// token somebody had already copied out of it.
+///
+/// Splitting the two fixes it without giving up stateless verification on the
+/// hot path: the access token stays a JWT and stays short-lived, so the window
+/// on a stolen one is minutes rather than a week, and the long-lived half is a
+/// row that `revokedAt` can end.
+model RefreshToken {
+  id String @id @default(cuid())
+
+  userId String
+  /// SHA-256 of the token that was handed out, never the token itself — the
+  /// same rule `PasswordResetToken` follows and for the same reason: a leaked
+  /// database must not be a drawer full of working sessions.
+  ///
+  /// SHA-256 rather than bcrypt because what is hashed is 32 random bytes and
+  /// already unguessable; a slow hash would defend against nothing and would be
+  /// run on every refresh.
+  tokenHash String @unique
+
+  expiresAt DateTime
+  /// Set when this token is spent or the session is ended. Rotation sets it on
+  /// the old row as the replacement is created, so a refresh token is
+  /// single-use — and a *second* use of an already-spent token is therefore
+  /// visible rather than silent.
+  revokedAt DateTime?
+  /// Moved on every successful refresh. Not used for anything yet; it is what a
+  /// "your sessions" screen would list, and recording it now costs one column.
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Revoking every session for one account — a password change, a reset, a
+  /// deleted account — is a query by user, and it happens on the security path
+  /// where a sequential scan is the worst place to be.
+  @@index([userId])
+}
+
+/// One image somebody saved to send again with a single tap.
+///
+/// Its own table rather than a flag on `Attachment`, because the two have
+/// different lifetimes: an attachment belongs to a message and dies with it,
+/// while a sticker outlives every message it was ever sent in. Sending one
+/// *copies* its bytes into a fresh attachment for exactly that reason —
+/// deleting the message must not empty the tray.
+model Sticker {
+  id     String @id @default(cuid())
+  userId String
+
+  /// Stored the same way an attachment is: re-encoded to WebP under this row's
+  /// own id. The dimensions are kept for the same reason too — the tray
+  /// reserves each tile before the bytes arrive.
+  width    Int
+  height   Int
+  byteSize Int
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The tray is always read as "mine, newest first".
+  @@index([userId, createdAt])
+}
+
 model PasswordResetToken {
   id        String    @id @default(cuid())
   userId    String
@@ -351,7 +423,18 @@ model Message {
   // that read markers and paging cursors point at without a foreign key to
   // protect them. See `authorId` above and `deletedAt` below.
   author       User?              @relation(fields: [authorId], references: [id], onDelete: SetNull)
-  attachment   Attachment?
+  /// True when this message is a sticker rather than a photograph.
+  ///
+  /// A column rather than something inferred from "one image and no text": that
+  /// shape is also a picture sent without a caption, and the two render nothing
+  /// alike — a sticker is drawn bare and large, a photo sits in a bubble.
+  isSticker    Boolean            @default(false)
+
+  /// A list since phase 22. It was `Attachment?` only because
+  /// `Attachment.messageId` carried a unique — the relation was always
+  /// one-to-many underneath, and dropping that unique is what let a message
+  /// carry a gallery.
+  attachments  Attachment[]
   edits        MessageEdit[]
   hiddenFor    MessageHiddenFor[]
   reactions    MessageReaction[]
@@ -443,8 +526,16 @@ model MessageHiddenFor {
 /// so the type is known and constant, and the name the uploader chose is a
 /// string from a stranger that nothing here needs.
 model Attachment {
-  id        String   @id @default(cuid())
-  messageId String   @unique
+  id        String @id @default(cuid())
+  messageId String
+  /// Where this image sits among the message's others, from 0.
+  ///
+  /// Stored rather than derived from `createdAt`, because the images of one
+  /// message are written inside a single transaction and share a timestamp to
+  /// the millisecond — ordering by it would shuffle a gallery between reads.
+  /// The order is the one the sender picked in the composer, and a gallery that
+  /// reorders itself on reload is a gallery nobody can point at.
+  position  Int
   // Stored so the message list can reserve the right space before the image
   // has loaded. Without them every arriving picture shoves the conversation
   // around as it decodes.
@@ -454,4 +545,11 @@ model Attachment {
   createdAt DateTime @default(now())
 
   message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  /// Replaces the unique on `messageId` alone, which is what limited a message
+  /// to one picture. Kept unique on the pair rather than dropped entirely: two
+  /// images claiming slot 0 is an ordering the database should refuse, not one
+  /// the reader discovers.
+  @@unique([messageId, position])
+  @@index([messageId])
 }

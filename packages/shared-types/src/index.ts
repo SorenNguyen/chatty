@@ -194,6 +194,21 @@ export interface ReactionDTO {
  * Not a whole `MessageDTO`: that would recurse — a reply to a reply to a reply
  * would carry the entire chain down the wire — and the quote shows one line.
  */
+/**
+ * One image in somebody's sticker tray.
+ *
+ * `url` carries the same signed, expiring token an attachment's does and for
+ * the same reason — an `<img>` cannot send an Authorization header. See
+ * ADR 0007.
+ */
+export interface StickerDTO {
+	id: string;
+	url: string;
+	width: number;
+	height: number;
+	createdAt: string;
+}
+
 export interface MessageReplyDTO {
 	id: string;
 	/** Null when the parent is a system line, or its author deleted their account. */
@@ -231,7 +246,25 @@ export interface MessageDTO {
 	 * snapshot rather than looked up live.
 	 */
 	content: string;
-	attachment: AttachmentDTO | null;
+	/**
+	 * The images on this message, in the order the sender chose.
+	 *
+	 * An array rather than a single nullable image since phase 22, and empty
+	 * rather than null when there are none — a caller that maps over it needs no
+	 * branch, which is what stops "no images" and "one image" being two shapes
+	 * every renderer has to tell apart.
+	 *
+	 * Always empty on a tombstone: deleting a message removes its image rows and
+	 * their files in the same write.
+	 */
+	attachments: AttachmentDTO[];
+	/**
+	 * Whether this message is a sticker rather than a photograph.
+	 *
+	 * Carried rather than inferred from "one image and no text": that shape is
+	 * also a picture sent without a caption, and the two render nothing alike.
+	 */
+	isSticker: boolean;
 	createdAt: string;
 	/**
 	 * When author-only edit and “delete for everyone” actions expire.
@@ -331,8 +364,38 @@ export interface LoginRequest {
 }
 
 export interface AuthResponse {
+	/**
+	 * The short-lived access token. Sent as `Authorization: Bearer` on every
+	 * request and in the socket handshake.
+	 *
+	 * Minutes, not days. It is a JWT, so nothing can revoke it once signed —
+	 * which is exactly why it must not be the session. See `refreshToken`.
+	 */
 	token: string;
+	/**
+	 * The long-lived half, and the one that can actually be ended.
+	 *
+	 * Exchanged at `POST /auth/refresh` for a new access token *and* a
+	 * replacement refresh token — each one is single use, so a token copied out
+	 * of storage stops working the moment the real client refreshes.
+	 */
+	refreshToken: string;
 	user: Pick<CurrentUserDTO, "id" | "email" | "handle" | "displayName">;
+}
+
+/** Body of `POST /auth/refresh` and `POST /auth/logout`. */
+export interface RefreshTokenRequest {
+	refreshToken: string;
+}
+
+/**
+ * What `POST /auth/refresh` answers with: a new pair, never just a new access
+ * token. Rotation is what makes a stolen refresh token expire on first honest
+ * use rather than lasting its full month.
+ */
+export interface RefreshTokenResponse {
+	token: string;
+	refreshToken: string;
 }
 
 /**
@@ -431,6 +494,12 @@ export interface ChangePasswordRequest {
  */
 export interface ChangePasswordResponse {
 	token: string;
+	/**
+	 * A replacement for the refresh token too, and it is not optional: changing
+	 * a password revokes every session row on the account, so the caller's old
+	 * refresh token is dead alongside their old access token.
+	 */
+	refreshToken: string;
 }
 
 /**
@@ -464,13 +533,24 @@ export interface MarkReadRequest {
 /**
  * Body of `POST /conversations/:conversationId/messages`.
  *
- * Sent as JSON for a text message, or as multipart with the file in an
- * `attachment` field when there is an image — in which case `content` is the
- * optional caption. One of the two must carry something: the server rejects a
- * request with neither.
+ * Sent as JSON for a text message, or as multipart with the files in an
+ * `attachment` field when there are images — in which case `content` is the
+ * optional caption for the set. One of the two must carry something: the server
+ * rejects a request with neither.
+ *
+ * The field name stays singular because multipart repeats one field name per
+ * file; renaming it would break nothing here and every client at once.
  */
 export interface SendMessageRequest {
 	content?: string | undefined;
+	/**
+	 * Sends one of your own saved stickers.
+	 *
+	 * Mutually exclusive with files and with `content`: a sticker is the whole
+	 * message. The server copies the sticker's bytes into a fresh attachment, so
+	 * deleting the message never empties the tray.
+	 */
+	stickerId?: string | undefined;
 	/**
 	 * The message this one answers.
 	 *

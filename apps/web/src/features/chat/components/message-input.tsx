@@ -1,18 +1,33 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, CornerUpLeft, ImagePlus, X } from "lucide-react";
+import { CornerUpLeft, X } from "lucide-react";
 import type { MessageDTO } from "@chatty/shared-types";
 import { Button } from "@/components/button";
-import { api } from "@/api/client";
 import { cn } from "@/utils/cn";
-import { ACCEPTED_IMAGE_TYPES } from "../constants/attachment";
-import { ATTACHMENT_PREVIEW_TEXT, DELETED_AUTHOR_NAME } from "../constants/message";
+import { MAX_ATTACHMENTS_PER_MESSAGE } from "../constants/attachment";
+import { DELETED_AUTHOR_NAME } from "../constants/message";
+import { getAttachmentPreviewText } from "../utils";
 import { useTypingNotifier } from "../hooks";
+import { ComposerAttachments } from "./composer-attachments";
+import { ComposerControls } from "./composer-controls";
 
 interface MessageInputProps {
 	conversationId: string;
 	/** The message being answered, or null for an ordinary send. Owned by the page. */
 	replyTo: MessageDTO | null;
 	onCancelReply: () => void;
+	/**
+	 * Owned by the page, because a text message appears in the thread before the
+	 * server has it and the thread is this component's sibling. A send carrying
+	 * an image still resolves only once it is stored — see `useConversationMessages`.
+	 */
+	onSend: (
+		content: string,
+		attachments: File[],
+		replyTo: MessageDTO | null,
+		onProgress?: (percent: number) => void,
+	) => Promise<void>;
+	/** Sends a saved sticker. Its own path because a sticker is the whole message. */
+	onSendSticker: (stickerId: string, replyTo: MessageDTO | null) => Promise<void>;
 }
 
 /**
@@ -21,48 +36,94 @@ interface MessageInputProps {
  * same shape as the bubbles above it, which is what makes writing look like the
  * beginning of the thread rather than a separate piece of furniture.
  */
-export function MessageInput({ conversationId, replyTo, onCancelReply }: MessageInputProps) {
+export function MessageInput({ conversationId, replyTo, onCancelReply, onSend, onSendSticker }: MessageInputProps) {
 	const [content, setContent] = useState("");
-	const [attachment, setAttachment] = useState<File | null>(null);
-	const [previewUrl, setPreviewUrl] = useState("");
+	const [attachments, setAttachments] = useState<File[]>([]);
+	const [previewUrls, setPreviewUrls] = useState<string[]>([]);
 	const [isSending, setIsSending] = useState(false);
 	const [uploadProgress, setUploadProgress] = useState(0);
 	const [error, setError] = useState("");
-	const fileInputRef = useRef<HTMLInputElement>(null);
+	const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
+	const [isStickerTrayOpen, setIsStickerTrayOpen] = useState(false);
+	const fieldRef = useRef<HTMLInputElement>(null);
 	const { notifyTyping, stopTyping } = useTypingNotifier(conversationId);
 
-	// A message is now allowed to be a picture with nothing written on it.
-	const hasSomethingToSend = Boolean(content.trim() || attachment);
+	// A message is allowed to be pictures with nothing written on them.
+	const hasSomethingToSend = Boolean(content.trim()) || attachments.length > 0;
+	const isFull = attachments.length >= MAX_ATTACHMENTS_PER_MESSAGE;
 
-	// The preview is an object URL, which holds the file in memory until it is
+	// Each preview is an object URL, which holds its file in memory until it is
 	// revoked. Doing that in the cleanup rather than at send time covers the two
-	// cases a send does not: swapping the picture for another, and navigating
-	// away with one still attached.
+	// cases a send does not: removing one, and navigating away with some still
+	// attached. The whole set is rebuilt whenever the list changes — cheap, and
+	// it makes the revoke a single obvious line rather than per-file bookkeeping.
 	useEffect(() => {
-		if (!attachment) {
-			setPreviewUrl("");
+		const objectUrls = attachments.map((file) => URL.createObjectURL(file));
+		setPreviewUrls(objectUrls);
 
-			return;
-		}
-
-		const objectUrl = URL.createObjectURL(attachment);
-		setPreviewUrl(objectUrl);
-
-		return () => URL.revokeObjectURL(objectUrl);
-	}, [attachment]);
+		return () => objectUrls.forEach((objectUrl) => URL.revokeObjectURL(objectUrl));
+	}, [attachments]);
 
 	function handleChange(event: React.ChangeEvent<HTMLInputElement>) {
 		setContent(event.target.value);
 		notifyTyping();
 	}
 
-	function handleFileSelected(event: React.ChangeEvent<HTMLInputElement>) {
-		const file = event.target.files?.[0] ?? null;
+	function handleFilesSelected(event: React.ChangeEvent<HTMLInputElement>) {
+		const picked = [...(event.target.files ?? [])];
 		// Resetting the input is what makes picking the same file twice work: the
 		// change event does not fire when the value is unchanged, so re-attaching
 		// after removing would do nothing.
 		event.target.value = "";
-		if (file) setAttachment(file);
+		if (picked.length === 0) return;
+
+		// Appended rather than replacing, so a second trip to the file dialog adds
+		// to the set. Trimmed here as well as on the server: refusing before the
+		// upload is the difference between a sentence and ten megabytes.
+		setAttachments((current) => [...current, ...picked].slice(0, MAX_ATTACHMENTS_PER_MESSAGE));
+		setError(
+			picked.length + attachments.length > MAX_ATTACHMENTS_PER_MESSAGE
+				? `A message may carry at most ${MAX_ATTACHMENTS_PER_MESSAGE} images`
+				: "",
+		);
+	}
+
+	/**
+	 * Puts an emoji where the caret is, not on the end.
+	 *
+	 * Appending is the version that looks fine until somebody goes back to fix a
+	 * word and their next emoji lands three sentences away from where they are
+	 * looking. Focus and the caret are restored afterwards, so the picker can be
+	 * used several times in a row without reaching for the field between each.
+	 */
+	function insertEmoji(char: string) {
+		const field = fieldRef.current;
+		const caret = field?.selectionStart ?? content.length;
+		const next = `${content.slice(0, caret)}${char}${content.slice(field?.selectionEnd ?? caret)}`;
+
+		setContent(next);
+		notifyTyping();
+		// After the render that applies `next`, or the caret is set against the old
+		// value and lands in the wrong place.
+		requestAnimationFrame(() => {
+			field?.focus();
+			field?.setSelectionRange(caret + char.length, caret + char.length);
+		});
+	}
+
+	function sendSticker(stickerId: string) {
+		// Closed on send: a sticker is the whole message, so there is nothing left
+		// to compose and a tray still covering the thread hides what was just sent.
+		setIsStickerTrayOpen(false);
+		stopTyping();
+		const target = replyTo;
+		onCancelReply();
+		void onSendSticker(stickerId, target);
+	}
+
+	function removeAttachment(index: number) {
+		setAttachments((current) => current.filter((_, position) => position !== index));
+		setError("");
 	}
 
 	async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -73,23 +134,31 @@ export function MessageInput({ conversationId, replyTo, onCancelReply }: Message
 		// the other side you finished, and leaving "typing…" up while the request
 		// is in flight makes a slow network look like a second message coming.
 		stopTyping();
+		setError("");
+
+		const draftContent = content.trim();
+		const draftReplyTo = replyTo;
+
+		// A text-only send empties the composer *before* the round trip, because
+		// the message is already in the thread by then — the whole point of the
+		// optimistic bubble is that writing the next one does not wait on the
+		// network. A failed send is reported on that bubble, not here.
+		if (attachments.length === 0) {
+			setContent("");
+			onCancelReply();
+			await onSend(draftContent, [], draftReplyTo);
+
+			return;
+		}
+
+		// Images still resolve only once they are stored, so the composer keeps
+		// the files and their progress bar until then.
 		setIsSending(true);
 		setUploadProgress(0);
-		setError("");
 		try {
-			await api.sendMessage(
-				conversationId,
-				content.trim(),
-				attachment ?? undefined,
-				setUploadProgress,
-				replyTo?.id,
-			);
-			// Deliberately no local append: the server broadcasts this message back
-			// over the socket, and rendering from that one source keeps the sender's
-			// view on the same code path as everyone else's. Appending here too
-			// would show it twice.
+			await onSend(draftContent, attachments, draftReplyTo, setUploadProgress);
 			setContent("");
-			setAttachment(null);
+			setAttachments([]);
 			// Cleared only on success, alongside the text. A reply that failed to
 			// send still has a target, and making the sender re-pick it after a
 			// dropped connection loses the one piece of context they chose.
@@ -120,12 +189,15 @@ export function MessageInput({ conversationId, replyTo, onCancelReply }: Message
 								Replying to {replyTo.author?.displayName ?? DELETED_AUTHOR_NAME}
 							</span>
 							<span className="truncate text-[12.5px]/[1.45] text-ink-soft">
-								{replyTo.content || (replyTo.attachment ? ATTACHMENT_PREVIEW_TEXT : "")}
+								{replyTo.content ||
+									(replyTo.attachments.length > 0
+										? getAttachmentPreviewText(replyTo.attachments.length)
+										: "")}
 							</span>
 						</div>
-						{replyTo.attachment && (
+						{replyTo.attachments[0] && (
 							<img
-								src={replyTo.attachment.url}
+								src={replyTo.attachments[0].url}
 								alt=""
 								className="ml-auto size-10 shrink-0 rounded-control border border-rule object-cover"
 							/>
@@ -136,7 +208,7 @@ export function MessageInput({ conversationId, replyTo, onCancelReply }: Message
 							aria-label="Cancel reply"
 							className={cn(
 								"size-6 shrink-0 p-0 text-ink-faint hover:bg-transparent hover:text-ink",
-								!replyTo.attachment && "ml-auto",
+								replyTo.attachments.length === 0 && "ml-auto",
 							)}
 						>
 							<X className="size-3.5" />
@@ -150,10 +222,12 @@ export function MessageInput({ conversationId, replyTo, onCancelReply }: Message
 					</p>
 				)}
 
-				{isSending && attachment && (
-					<div className="px-4 pt-3" role="status" aria-label={`Uploading image ${uploadProgress}%`}>
+				{isSending && attachments.length > 0 && (
+					<div className="px-4 pt-3" role="status" aria-label={`Uploading images ${uploadProgress}%`}>
 						<div className="mb-1.5 flex justify-between">
-							<span className="eyebrow text-ink-faint">Uploading image</span>
+							<span className="eyebrow text-ink-faint">
+								{attachments.length > 1 ? `Uploading ${attachments.length} images` : "Uploading image"}
+							</span>
 							<span className="meta text-ink-faint">{uploadProgress}%</span>
 						</div>
 						<div className="h-[3px] overflow-hidden rounded-badge bg-rule-soft">
@@ -162,25 +236,12 @@ export function MessageInput({ conversationId, replyTo, onCancelReply }: Message
 					</div>
 				)}
 
-				{previewUrl && (
-					<div className="relative m-4 mb-0 inline-block w-fit">
-						<img
-							src={previewUrl}
-							alt="Attached image preview"
-							className="h-20 rounded-control border border-rule object-cover"
-						/>
-						<Button
-							variant="ghost"
-							onClick={() => setAttachment(null)}
-							aria-label="Remove attached image"
-							className="absolute -right-2 -top-2 size-5 rounded-badge border border-rule bg-paper-raised p-0 text-ink-soft"
-						>
-							<X className="size-3" />
-						</Button>
-					</div>
+				{previewUrls.length > 0 && (
+					<ComposerAttachments previewUrls={previewUrls} onRemove={removeAttachment} />
 				)}
 
 				<input
+					ref={fieldRef}
 					value={content}
 					onChange={handleChange}
 					placeholder="Write a message"
@@ -188,36 +249,26 @@ export function MessageInput({ conversationId, replyTo, onCancelReply }: Message
 					className="bg-transparent px-4 pb-2.5 pt-3.5 text-sm text-ink outline-none placeholder:text-ink-faint"
 				/>
 
-				<div className="flex items-center justify-between gap-3 px-2.5 pb-2.5">
-					<input
-						ref={fileInputRef}
-						type="file"
-						accept={ACCEPTED_IMAGE_TYPES}
-						onChange={handleFileSelected}
-						className="hidden"
-					/>
-					<Button
-						variant="ghost"
-						onClick={() => fileInputRef.current?.click()}
-						disabled={isSending}
-						aria-label="Attach an image"
-						className="size-7 shrink-0 p-0"
-					>
-						<ImagePlus className="size-4" />
-					</Button>
-
-					<div className="flex items-center gap-3">
-						<span className="eyebrow text-ink-faint max-sm:hidden">Enter to send</span>
-						<Button
-							type="submit"
-							disabled={isSending || !hasSomethingToSend}
-							aria-label="Send message"
-							className="size-8 shrink-0 p-0"
-						>
-							<ArrowUp className="size-4" />
-						</Button>
-					</div>
-				</div>
+				<ComposerControls
+					isSending={isSending}
+					isFull={isFull}
+					canSend={hasSomethingToSend}
+					isEmojiPickerOpen={isEmojiPickerOpen}
+					isStickerTrayOpen={isStickerTrayOpen}
+					onToggleEmojiPicker={() => {
+						setIsStickerTrayOpen(false);
+						setIsEmojiPickerOpen((current) => !current);
+					}}
+					onToggleStickerTray={() => {
+						setIsEmojiPickerOpen(false);
+						setIsStickerTrayOpen((current) => !current);
+					}}
+					onCloseEmojiPicker={() => setIsEmojiPickerOpen(false)}
+					onCloseStickerTray={() => setIsStickerTrayOpen(false)}
+					onFilesSelected={handleFilesSelected}
+					onInsertEmoji={insertEmoji}
+					onPickSticker={sendSticker}
+				/>
 			</form>
 		</div>
 	);

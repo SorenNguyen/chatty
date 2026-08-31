@@ -3,6 +3,7 @@ import {
 	changePasswordSchema,
 	confirmEmailChangeSchema,
 	loginSchema,
+	refreshTokenSchema,
 	registerSchema,
 	requestEmailChangeSchema,
 	requestPasswordResetSchema,
@@ -35,6 +36,35 @@ export async function changePasswordController(req: Request, res: Response): Pro
 	// A replacement token, because the request that changed the password also
 	// invalidated the one it arrived with.
 	res.status(200).json(result);
+}
+
+/**
+ * Trades a refresh token for a new pair.
+ *
+ * Unauthenticated on purpose: this is what a client calls precisely because its
+ * access token has expired, so requiring one would make the endpoint useless at
+ * the only moment it is needed. The refresh token in the body is the credential.
+ */
+export async function refreshSessionController(req: Request, res: Response): Promise<void> {
+	const input = refreshTokenSchema.parse(req.body);
+	const result = await authService.refreshSession(input.refreshToken);
+
+	res.status(200).json(result);
+}
+
+/**
+ * Ends one session.
+ *
+ * 204 whether or not the token was real, and unauthenticated for the same
+ * reason as refresh — a client whose access token has just expired must still
+ * be able to sign out. Confirming that a token existed would tell somebody
+ * holding a stolen one that it was worth having.
+ */
+export async function logoutController(req: Request, res: Response): Promise<void> {
+	const input = refreshTokenSchema.parse(req.body);
+	await authService.logout(input.refreshToken);
+
+	res.status(204).send();
 }
 
 export async function requestPasswordResetController(req: Request, res: Response): Promise<void> {

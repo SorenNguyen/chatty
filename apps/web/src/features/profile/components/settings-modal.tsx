@@ -9,6 +9,7 @@ import type { SettingsSection } from "../types/settings";
 import { ChangeEmailForm } from "./change-email-form";
 import { ChangePasswordForm } from "./change-password-form";
 import { DeleteAccountForm } from "./delete-account-form";
+import { NotificationSettings } from "./notification-settings";
 import { ProfileForm } from "./profile-form";
 import { SettingsNav } from "./settings-nav";
 
@@ -89,6 +90,7 @@ export function SettingsModal({ user, onClose }: SettingsModalProps) {
 							</>
 						)}
 						{activeSection === "email" && <ChangeEmailForm user={user} />}
+						{activeSection === "notifications" && <NotificationSettings />}
 						{activeSection === "security" && <ChangePasswordForm />}
 						{activeSection === "danger" && <DeleteAccountForm />}
 					</div>

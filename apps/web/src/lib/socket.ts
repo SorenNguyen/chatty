@@ -1,6 +1,6 @@
 import type { ClientToServerEvents, ServerToClientEvents } from "@chatty/shared-types";
 import { io, type Socket } from "socket.io-client";
-import { getStoredToken } from "@/api/client";
+import { ensureFreshSession, getStoredToken } from "@/api/client";
 
 const SOCKET_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 
@@ -18,7 +18,14 @@ let socket: ChattySocket | undefined;
 export function getSocket(): ChattySocket {
 	if (!socket) {
 		socket = io(SOCKET_URL, {
-			auth: { token: getStoredToken() },
+			/**
+			 * A callback, not an object, and that is load-bearing since access
+			 * tokens started expiring in minutes. socket.io reads an object form
+			 * once, when the socket is created, and would then reconnect forever
+			 * with the token it captured — which is guaranteed to be stale after
+			 * the first renewal. The callback is read on every attempt.
+			 */
+			auth: (callback: (data: { token: string | null }) => void) => callback({ token: getStoredToken() }),
 			/**
 			 * WebSocket only, and this is a deployment decision rather than a
 			 * preference.
@@ -41,6 +48,20 @@ export function getSocket(): ChattySocket {
 			 * rare environment, over an intermittent one everywhere.
 			 */
 			transports: ["websocket"],
+		});
+
+		/**
+		 * A refused handshake is usually an expired access token, and the socket
+		 * has no HTTP response to piggyback the renewal on: nothing else may be
+		 * happening on a tab that was left open overnight, so without this it
+		 * would retry with the same dead token until somebody clicked something.
+		 *
+		 * `ensureFreshSession` is single-flighted and returns false when there is
+		 * nothing to renew with, so a genuinely ended session settles into
+		 * socket.io's own backoff rather than a refresh loop.
+		 */
+		socket.on("connect_error", () => {
+			void ensureFreshSession();
 		});
 	}
 

@@ -13,7 +13,8 @@ vi.mock("@/api/client", () => ({
 	},
 	clearStoredToken: vi.fn(),
 	getStoredToken: vi.fn(),
-	storeToken: vi.fn(),
+	storeSession: vi.fn(),
+	getStoredRefreshToken: () => null,
 }));
 
 vi.mock("@/lib/socket", () => ({ closeSocket: vi.fn() }));

@@ -1,5 +1,6 @@
 import type { MessageDTO } from "@chatty/shared-types";
-import { ATTACHMENT_PREVIEW_TEXT, DELETED_MESSAGE_TEXT, EMPTY_CONVERSATION_TEXT } from "../constants/message";
+import { DELETED_MESSAGE_TEXT, EMPTY_CONVERSATION_TEXT } from "../constants/message";
+import { getAttachmentPreviewText } from "./attachment-preview-text";
 
 /**
  * The one line of a conversation shown under its name in the sidebar.
@@ -13,7 +14,7 @@ export function getConversationPreview(lastMessage: MessageDTO | null): string {
 	if (!lastMessage) return EMPTY_CONVERSATION_TEXT;
 	if (lastMessage.deletedAt) return DELETED_MESSAGE_TEXT;
 	if (lastMessage.content) return lastMessage.content;
-	if (lastMessage.attachment) return ATTACHMENT_PREVIEW_TEXT;
+	if (lastMessage.attachments.length > 0) return getAttachmentPreviewText(lastMessage.attachments.length);
 
 	return EMPTY_CONVERSATION_TEXT;
 }

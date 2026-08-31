@@ -16,11 +16,13 @@ import type {
 	MessageEditDTO,
 	MessageSearchPageDTO,
 	ReactionKind,
+	RefreshTokenResponse,
 	RegisterRequest,
 	RenameConversationRequest,
 	RequestEmailChangeRequest,
 	RequestPasswordResetRequest,
 	ResetPasswordRequest,
+	StickerDTO,
 	ToggleReactionRequest,
 	TransferOwnershipRequest,
 	UpdateProfileRequest,
@@ -29,24 +31,146 @@ import type {
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 const TOKEN_STORAGE_KEY = "chatty:token";
+const REFRESH_TOKEN_STORAGE_KEY = "chatty:refresh-token";
+const SESSION_EXPIRED_KEY = "chatty:session-expired";
 
 export function getStoredToken(): string | null {
 	return localStorage.getItem(TOKEN_STORAGE_KEY);
 }
 
-export function storeToken(token: string): void {
+export function getStoredRefreshToken(): string | null {
+	return localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
+}
+
+/**
+ * Stores the pair. Always both, never one: the access token expires in minutes
+ * and is worthless without the refresh token that renews it, and a refresh
+ * token stored beside a stale access token would be renewed on the first
+ * request anyway. Keeping them together is what stops a half-written session.
+ */
+export function storeSession(token: string, refreshToken: string): void {
 	localStorage.setItem(TOKEN_STORAGE_KEY, token);
+	localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, refreshToken);
+	// There is a session again, so "your session ended" has stopped being true.
+	// Cleared here rather than when the notice is read — see `wasSessionExpired`.
+	sessionStorage.removeItem(SESSION_EXPIRED_KEY);
 }
 
 export function clearStoredToken(): void {
 	localStorage.removeItem(TOKEN_STORAGE_KEY);
+	localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+}
+
+/**
+ * Called on any 401 that means "this session is dead" rather than "wrong
+ * password". Registered by `useAuth` (which owns the teardown) instead of
+ * imported from it, because this module is imported *by* `useAuth` and the
+ * other direction would be a cycle.
+ */
+let onSessionExpired: (() => void) | null = null;
+
+export function setSessionExpiredHandler(handler: () => void): void {
+	onSessionExpired = handler;
+}
+
+/**
+ * Whether a 401 on this request is an answer about the *credentials in the
+ * body* — a wrong password on login, on a password change, on account deletion
+ * — and must reach the form that asked, not sign the user out. Everywhere else
+ * a 401 can only mean the token died, and every caller would otherwise handle
+ * that separately or not at all. Exact paths, not prefixes: `/users/me/avatar`
+ * and `/auth/password-reset` carry no password to be wrong about.
+ */
+function isCredentialFailure(path: string, method: string): boolean {
+	// `/users/me` is only a credential check when deleting the account (the body
+	// carries the password); reading or patching the profile proves nothing.
+	if (path === "/users/me") return method === "DELETE";
+
+	return path === "/auth/login" || path === "/auth/register" || path === "/auth/password" || path === "/auth/email";
+}
+
+function reportUnauthorized(path: string, method: string): void {
+	if (isCredentialFailure(path, method)) return;
+	// The login screen reads this once, so "you were signed out" has a stated
+	// reason instead of looking like the app forgot who you are.
+	sessionStorage.setItem(SESSION_EXPIRED_KEY, "true");
+	onSessionExpired?.();
+}
+
+/**
+ * Whether the last sign-out was a session expiring rather than a choice.
+ *
+ * A **pure read**. It used to read and clear in one call, which was wrong in a
+ * way only running the app showed: React's StrictMode double-invokes a
+ * `useState` lazy initialiser in development, so the first call consumed the
+ * flag and the second — whose result React keeps — returned false. The notice
+ * never appeared. The flag is cleared by `storeSession` instead, because
+ * signing in again is exactly when it stops being true.
+ */
+export function wasSessionExpired(): boolean {
+	return sessionStorage.getItem(SESSION_EXPIRED_KEY) === "true";
+}
+
+/**
+ * The one refresh allowed to be in flight at a time.
+ *
+ * Single-flighting this is not an optimisation, it is the whole thing working.
+ * An expired access token 401s every request the screen made at once, and the
+ * server rotates a refresh token on use — so five parallel refreshes would mean
+ * one success and four "invalid session" errors, and the client would sign
+ * itself out at the exact moment it had just successfully renewed.
+ */
+let refreshInFlight: Promise<boolean> | null = null;
+
+async function performRefresh(): Promise<boolean> {
+	const refreshToken = getStoredRefreshToken();
+	if (!refreshToken) return false;
+
+	try {
+		const response = await fetch(`${API_URL}/auth/refresh`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ refreshToken }),
+		});
+
+		if (!response.ok) return false;
+
+		const session = (await response.json()) as RefreshTokenResponse;
+		storeSession(session.token, session.refreshToken);
+
+		return true;
+	} catch {
+		// A network failure is not an expired session, and treating it as one
+		// would sign people out every time their train went into a tunnel. The
+		// caller reports the original request's failure instead.
+		return false;
+	}
+}
+
+/**
+ * Renews the session if it can, and answers whether it did.
+ *
+ * Exported for `lib/socket.ts`: a socket that cannot complete its handshake
+ * because the access token expired has no HTTP request to piggyback on, so it
+ * asks for the renewal itself.
+ */
+export function ensureFreshSession(): Promise<boolean> {
+	refreshInFlight ??= performRefresh().finally(() => {
+		refreshInFlight = null;
+	});
+
+	return refreshInFlight;
 }
 
 /**
  * Thin fetch wrapper: attaches the base URL and Authorization header, and
  * throws on non-2xx so callers can `await` without checking `response.ok`.
+ *
+ * A 401 is retried once behind a session refresh. `hasRetried` is what stops
+ * that being a loop: if the request 401s again with a token minted seconds ago,
+ * the problem is not the token's age and no further renewal will help.
  */
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, options: RequestInit = {}, hasRetried = false): Promise<T> {
 	const token = getStoredToken();
 	// FormData sets its own Content-Type, and it has to: the header carries the
 	// multipart boundary the browser generated. Declaring JSON over the top of it
@@ -62,6 +186,15 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 	});
 
 	if (!response.ok) {
+		const method = options.method ?? "GET";
+
+		if (response.status === 401 && !hasRetried && !isCredentialFailure(path, method)) {
+			// The ordinary case now that access tokens last minutes: renew and go
+			// again, so an expiry is invisible rather than an error on screen.
+			if (await ensureFreshSession()) return request<T>(path, options, true);
+		}
+
+		if (response.status === 401) reportUnauthorized(path, method);
 		// The server's error middleware sends { error, message }; fall back to the
 		// status when the body is empty or not JSON (e.g. a proxy returned the error).
 		const errorBody = await response.json().catch(() => ({}));
@@ -87,6 +220,7 @@ function post<T>(path: string, body: unknown): Promise<T> {
 /** Field names the server reads files from — see server middlewares/upload-image.ts. */
 const AVATAR_FIELD = "avatar";
 const ATTACHMENT_FIELD = "attachment";
+const STICKER_FIELD = "sticker";
 
 /**
  * One named method per endpoint rather than raw get/post at the call site, so
@@ -167,6 +301,46 @@ export const api = {
 		return request<void>("/users/me", { method: "DELETE", body: JSON.stringify(input) });
 	},
 
+	/**
+	 * Ends this session on the server.
+	 *
+	 * Unauthenticated by design — the refresh token in the body is the credential
+	 * — so it still works when the access token has already expired, which is
+	 * exactly when somebody closing a laptop needs it to.
+	 */
+	logout(refreshToken: string): Promise<void> {
+		return post<void>("/auth/logout", { refreshToken });
+	},
+
+	/**
+	 * Sends one of your own saved stickers.
+	 *
+	 * Its own method rather than an argument on `sendMessage`, because a sticker
+	 * is the whole message — the server refuses it alongside text or files, and a
+	 * shared signature would invite exactly that call.
+	 */
+	sendSticker(conversationId: string, stickerId: string, replyToId?: string): Promise<MessageDTO> {
+		return post<MessageDTO>(`/conversations/${conversationId}/messages`, {
+			stickerId,
+			...(replyToId ? { replyToId } : {}),
+		});
+	},
+
+	listStickers(): Promise<StickerDTO[]> {
+		return get<StickerDTO[]>("/stickers");
+	},
+
+	addSticker(file: File): Promise<StickerDTO> {
+		const body = new FormData();
+		body.append(STICKER_FIELD, file);
+
+		return request<StickerDTO>("/stickers", { method: "POST", body });
+	},
+
+	removeSticker(stickerId: string): Promise<void> {
+		return request<void>(`/stickers/${stickerId}`, { method: "DELETE" });
+	},
+
 	searchUsers(query: string): Promise<UserDTO[]> {
 		return get<UserDTO[]>(`/users?query=${encodeURIComponent(query)}`);
 	},
@@ -210,24 +384,26 @@ export const api = {
 	},
 
 	/**
-	 * Sends a message, with an optional image.
+	 * Sends a message, with any number of images.
 	 *
 	 * Same endpoint either way — JSON when it is only text, multipart when there
-	 * is a file. One write path rather than two, so there is one place where
+	 * are files. One write path rather than two, so there is one place where
 	 * membership is checked and one broadcast everyone renders from.
 	 */
 	sendMessage(
 		conversationId: string,
 		content: string,
-		attachment?: File,
+		attachments: File[] = [],
 		onProgress?: (percent: number) => void,
 		replyToId?: string,
 	): Promise<MessageDTO> {
 		const path = `/conversations/${conversationId}/messages`;
-		if (!attachment) return post<MessageDTO>(path, { content, ...(replyToId ? { replyToId } : {}) });
+		if (attachments.length === 0) return post<MessageDTO>(path, { content, ...(replyToId ? { replyToId } : {}) });
 
 		const body = new FormData();
-		body.append(ATTACHMENT_FIELD, attachment);
+		// The same field name once per file: that is how multipart carries a list,
+		// and why the server's field stayed singular when the column became many.
+		for (const attachment of attachments) body.append(ATTACHMENT_FIELD, attachment);
 		// Omitted rather than sent empty: an image with no caption is a message
 		// with no text, and the server trims what it gets either way.
 		if (content) body.append("content", content);
@@ -251,6 +427,10 @@ export const api = {
 					return;
 				}
 
+				// The one request that does not go through `request()` still has to
+				// report a dead session, or an expired token during an image send
+				// would strand the user on a composer that only ever errors.
+				if (upload.status === 401) reportUnauthorized(path, "POST");
 				const errorBody = JSON.parse(upload.responseText || "{}") as { message?: string };
 				reject(new Error(errorBody.message ?? `Request to ${path} failed with ${upload.status}`));
 			});

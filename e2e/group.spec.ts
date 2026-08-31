@@ -48,6 +48,10 @@ test.describe("a group with an owner", () => {
 
 		await leaver.page.getByRole("button", { name: "Group members" }).click();
 		await leaver.page.getByRole("button", { name: "Leave group" }).click();
+		// Leaving is irreversible from here, so it asks first (phase 19). This
+		// spec is why the confirmation could not ship unnoticed: every unit test
+		// of the panel passed, and the browser found the flow had gained a step.
+		await leaver.page.getByRole("button", { name: "Leave", exact: true }).click();
 
 		// The notice the app used to leave out entirely: membership changed and
 		// nothing anywhere said so.

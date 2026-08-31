@@ -1,11 +1,13 @@
 import type { ConversationDTO, UserDTO } from "@chatty/shared-types";
 import { useEffect, useState } from "react";
-import { Crown, LogOut, Search, UserMinus, X } from "lucide-react";
+import { LogOut, Search, X } from "lucide-react";
 import { api } from "@/api/client";
 import { Avatar } from "@/components/avatar";
 import { Button } from "@/components/button";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { TextField } from "@/components/text-field";
 import { useUserSearch } from "../hooks";
+import { GroupMemberRow } from "./group-member-row";
 
 interface GroupMembersPanelProps {
 	conversation: ConversationDTO;
@@ -32,6 +34,11 @@ export function GroupMembersPanel({ conversation, currentUserId, onClose }: Grou
 	const [isLeaving, setIsLeaving] = useState(false);
 	const [actionError, setActionError] = useState("");
 	const [addingUserId, setAddingUserId] = useState<string | null>(null);
+	// Who is about to be removed, and whether leaving is about to happen. Both
+	// hold the *pending* decision — the action runs when the dialog confirms it,
+	// which is the whole point of asking.
+	const [memberPendingRemoval, setMemberPendingRemoval] = useState<UserDTO | null>(null);
+	const [isConfirmingLeave, setIsConfirmingLeave] = useState(false);
 
 	const participantIds = conversation.participants.map((participant) => participant.id);
 	const isOwner = conversation.participants.some(
@@ -83,6 +90,7 @@ export function GroupMembersPanel({ conversation, currentUserId, onClose }: Grou
 	}
 
 	async function handleRemoveMember(userId: string) {
+		setMemberPendingRemoval(null);
 		setRemovingUserId(userId);
 		setActionError("");
 		try {
@@ -110,6 +118,7 @@ export function GroupMembersPanel({ conversation, currentUserId, onClose }: Grou
 	}
 
 	async function handleLeave() {
+		setIsConfirmingLeave(false);
 		setIsLeaving(true);
 		setActionError("");
 		try {
@@ -165,60 +174,26 @@ export function GroupMembersPanel({ conversation, currentUserId, onClose }: Grou
 			)}
 
 			<ul className="mt-4 flex max-h-48 flex-col gap-0.5 overflow-y-auto">
-				{conversation.participants.map((participant) => {
-					const isSelf = participant.id === currentUserId;
-
-					return (
-						<li key={participant.id} className="flex items-center gap-2.5 py-1">
-							<Avatar user={participant} size="sm" />
-							<span className="flex min-w-0 flex-1 flex-col">
-								<span className="w-full truncate text-[13px] font-medium text-ink">
-									{participant.displayName}
-									{isSelf && <span className="font-normal text-ink-faint"> (you)</span>}
-									{/* Who to ask, when the rename field is greyed out and
-									    the remove buttons are not there. */}
-									{participant.role === "owner" && (
-										<span className="eyebrow ml-2 rounded-badge border border-rule px-1.5 py-0.5 text-ink-faint">
-											Owner
-										</span>
-									)}
-								</span>
-								<span className="meta w-full truncate text-ink-faint">@{participant.handle}</span>
-							</span>
-							{/* No remove button on your own row — leaving has its own
-							    clearly-labelled action below, so a small × next to your
-							    own name cannot be clicked by accident. */}
-							{!isSelf && isOwner && (
-								<>
-									{/* Handing the group over costs the person pressing it
-									    their own role, so it is spelled out in the label
-									    rather than left to the crown to imply. */}
-									<Button
-										variant="ghost"
-										onClick={() => void handleMakeOwner(participant.id)}
-										disabled={promotingUserId === participant.id}
-										aria-label={`Make ${participant.displayName} the group owner`}
-										className="size-8 p-0"
-									>
-										<Crown className="size-4" />
-									</Button>
-									<Button
-										variant="ghost"
-										onClick={() => void handleRemoveMember(participant.id)}
-										disabled={removingUserId === participant.id}
-										aria-label={`Remove ${participant.displayName} from the group`}
-										className="size-8 p-0"
-									>
-										<UserMinus className="size-4" />
-									</Button>
-								</>
-							)}
-						</li>
-					);
-				})}
+				{conversation.participants.map((participant) => (
+					<GroupMemberRow
+						key={participant.id}
+						participant={participant}
+						isSelf={participant.id === currentUserId}
+						canManage={isOwner}
+						isPromoting={promotingUserId === participant.id}
+						isRemoving={removingUserId === participant.id}
+						onMakeOwner={() => void handleMakeOwner(participant.id)}
+						onRemove={() => setMemberPendingRemoval(participant)}
+					/>
+				))}
 			</ul>
 
-			<Button variant="danger" onClick={() => void handleLeave()} disabled={isLeaving} className="mt-3 w-full">
+			<Button
+				variant="danger"
+				onClick={() => setIsConfirmingLeave(true)}
+				disabled={isLeaving}
+				className="mt-3 w-full"
+			>
 				<LogOut className="size-4" />
 				Leave group
 			</Button>
@@ -267,6 +242,26 @@ export function GroupMembersPanel({ conversation, currentUserId, onClose }: Grou
 						</li>
 					))}
 				</ul>
+			)}
+
+			{memberPendingRemoval && (
+				<ConfirmDialog
+					title="Remove from the group?"
+					body={`${memberPendingRemoval.displayName} will lose access to this conversation and everything in it. Anyone can add them back.`}
+					confirmLabel="Remove"
+					onConfirm={() => void handleRemoveMember(memberPendingRemoval.id)}
+					onCancel={() => setMemberPendingRemoval(null)}
+				/>
+			)}
+
+			{isConfirmingLeave && (
+				<ConfirmDialog
+					title="Leave this group?"
+					body="You will stop receiving its messages and it will disappear from your list, including from your search. Somebody still in it can add you back."
+					confirmLabel="Leave"
+					onConfirm={() => void handleLeave()}
+					onCancel={() => setIsConfirmingLeave(false)}
+				/>
 			)}
 		</div>
 	);

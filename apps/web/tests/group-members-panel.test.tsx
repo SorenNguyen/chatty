@@ -63,13 +63,26 @@ describe("GroupMembersPanel", () => {
 		expect(screen.getByRole("button", { name: "Remove An from the group" })).toBeInTheDocument();
 	});
 
-	it("removes another member when their remove button is clicked", async () => {
+	it("removes another member once the removal is confirmed", async () => {
 		const user = userEvent.setup();
 		render(<GroupMembersPanel conversation={group} currentUserId="minh" onClose={vi.fn()} />);
 
 		await user.click(screen.getByRole("button", { name: "Remove An from the group" }));
+		await user.click(screen.getByRole("button", { name: "Remove" }));
 
 		expect(removeParticipant).toHaveBeenCalledWith("group-1", "an");
+	});
+
+	it("does not remove anyone when the dialog is cancelled", async () => {
+		// The dialog is the whole point of the change: a mis-click on a small icon
+		// beside somebody's name used to take them out of the group immediately.
+		const user = userEvent.setup();
+		render(<GroupMembersPanel conversation={group} currentUserId="minh" onClose={vi.fn()} />);
+
+		await user.click(screen.getByRole("button", { name: "Remove An from the group" }));
+		await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+		expect(removeParticipant).not.toHaveBeenCalled();
 	});
 
 	it("hands the group to another member", async () => {
@@ -84,11 +97,12 @@ describe("GroupMembersPanel", () => {
 		expect(screen.queryByRole("button", { name: "Make Minh the group owner" })).not.toBeInTheDocument();
 	});
 
-	it('leaves the group when "Leave group" is clicked', async () => {
+	it("leaves the group once leaving is confirmed", async () => {
 		const user = userEvent.setup();
 		render(<GroupMembersPanel conversation={group} currentUserId="minh" onClose={vi.fn()} />);
 
 		await user.click(screen.getByRole("button", { name: "Leave group" }));
+		await user.click(screen.getByRole("button", { name: "Leave" }));
 
 		expect(removeParticipant).toHaveBeenCalledWith("group-1", "minh");
 	});
@@ -142,6 +156,7 @@ describe("GroupMembersPanel", () => {
 		render(<GroupMembersPanel conversation={group} currentUserId="minh" onClose={vi.fn()} />);
 
 		await user.click(screen.getByRole("button", { name: "Remove An from the group" }));
+		await user.click(screen.getByRole("button", { name: "Remove" }));
 
 		expect(await screen.findByText("Network is down")).toBeInTheDocument();
 	});
@@ -192,6 +207,7 @@ describe("GroupMembersPanel, seen by a member who does not own the group", () =>
 		render(<GroupMembersPanel conversation={group} currentUserId="an" onClose={vi.fn()} />);
 
 		await user.click(screen.getByRole("button", { name: "Leave group" }));
+		await user.click(screen.getByRole("button", { name: "Leave" }));
 
 		expect(removeParticipant).toHaveBeenCalledWith("group-1", "an");
 	});

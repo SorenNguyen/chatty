@@ -49,7 +49,8 @@ interface ReplyParentRow {
 	content: string;
 	deletedAt: Date | null;
 	author: { displayName: string } | null;
-	attachment: { id: string } | null;
+	/** At most one, because a quote shows a thumbnail rather than a gallery. */
+	attachments: { id: string }[];
 }
 
 /**
@@ -78,7 +79,8 @@ export interface MessageRow {
 	createdAt: Date;
 	editedAt: Date | null;
 	deletedAt: Date | null;
-	attachment: AttachmentRow | null;
+	isSticker: boolean;
+	attachments: AttachmentRow[];
 	reactions: ReactionRow[];
 	replyTo: ReplyParentRow | null;
 }
@@ -96,7 +98,15 @@ export const messageSelect = {
 	createdAt: true,
 	editedAt: true,
 	deletedAt: true,
-	attachment: { select: { id: true, width: true, height: true, byteSize: true } },
+	isSticker: true,
+	// Ordered by the column the sender's choice was written to, not by
+	// `createdAt`: a message's images are inserted in one transaction and share a
+	// timestamp to the millisecond, so ordering by time would let a gallery
+	// shuffle itself between two reads of the same message.
+	attachments: {
+		select: { id: true, width: true, height: true, byteSize: true },
+		orderBy: { position: "asc" },
+	},
 	// Oldest first, which is what makes the chip order stable: a kind holds the
 	// position it was first used in rather than hopping about as counts change
 	// under it. Grouping happens in `toReactionDTOs`, not in SQL — the rows are a
@@ -109,7 +119,9 @@ export const messageSelect = {
 			content: true,
 			deletedAt: true,
 			author: { select: { displayName: true } },
-			attachment: { select: { id: true } },
+			// Only the first, and only to draw a thumbnail beside the quote. A
+			// reply points at a message; it does not re-show the whole gallery.
+			attachments: { select: { id: true }, orderBy: { position: "asc" }, take: 1 },
 		},
 	},
 } as const;
@@ -141,13 +153,14 @@ function toReactionDTOs(rows: ReactionRow[]): ReactionDTO[] {
  */
 function toReplyDTO(row: ReplyParentRow): MessageReplyDTO {
 	const isDeleted = row.deletedAt !== null;
+	const firstImage = isDeleted ? undefined : row.attachments[0];
 
 	return {
 		id: row.id,
 		authorName: row.author?.displayName ?? null,
 		content: isDeleted ? "" : row.content,
-		hasAttachment: !isDeleted && row.attachment !== null,
-		attachmentUrl: !isDeleted && row.attachment ? buildAttachmentUrl(row.attachment.id) : null,
+		hasAttachment: firstImage !== undefined,
+		attachmentUrl: firstImage ? buildAttachmentUrl(firstImage.id) : null,
 		isDeleted,
 	};
 }
@@ -159,17 +172,16 @@ export function toMessageDTO(row: MessageRow): MessageDTO {
 		kind: row.kind === "SYSTEM" ? "system" : "user",
 		author: row.author ? toUserDTO(row.author) : null,
 		content: row.content,
-		// The URL is built per response rather than stored: it carries a signed
+		// The URLs are built per response rather than stored: each carries a signed
 		// token that expires, so a cached copy would rot.
-		attachment: row.attachment
-			? {
-					id: row.attachment.id,
-					url: buildAttachmentUrl(row.attachment.id),
-					width: row.attachment.width,
-					height: row.attachment.height,
-					byteSize: row.attachment.byteSize,
-				}
-			: null,
+		isSticker: row.isSticker,
+		attachments: row.attachments.map((attachment) => ({
+			id: attachment.id,
+			url: buildAttachmentUrl(attachment.id),
+			width: attachment.width,
+			height: attachment.height,
+			byteSize: attachment.byteSize,
+		})),
 		createdAt: row.createdAt.toISOString(),
 		authorActionExpiresAt:
 			row.kind === "USER"

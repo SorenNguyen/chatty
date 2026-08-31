@@ -268,7 +268,8 @@ own session is one of the ones that just ended.
 
 ### Item 11: image attachments
 
-One image per message, sent through the **same** `POST /conversations/:id/messages` that text goes
+One image per message (**relaxed to ten in phase 22**), sent through the **same**
+`POST /conversations/:id/messages` that text goes
 through — JSON when there is no file, multipart when there is. The upload middleware passes a
 non-multipart body straight through, so one route serves both without a branch in front of it, and
 there is still exactly one write path where membership is checked and one broadcast everyone renders
@@ -308,9 +309,9 @@ case for anything keyed on it.
 
 Known, deliberately deferred rather than missed:
 
-- One attachment per message, enforced by a unique on `messageId`. Several would need a gallery in
-  the message list and a decision about what a mixed caption-plus-many-images looks like. Dropping
-  the unique later relaxes this without moving any data; going the other way would not.
+- ~~One attachment per message, enforced by a unique on `messageId`.~~ **Closed in phase 22**, and the
+  prediction held exactly: dropping the unique relaxed it without moving any data. The gallery and
+  the caption question were the real work, not the schema.
 - Images only. The MIME filter and the re-encode both assume it, and a general file type would need
   a download flow rather than an `<img>`.
 - No lightbox — a picture is shown at up to 320×400 in the bubble and cannot be opened full size.
@@ -797,12 +798,9 @@ messages are mostly Vietnamese, where that is wrong: it would discard "a", "the"
 and do nothing useful to anything else. `simple` lowercases and splits on word boundaries — exactly
 right for Vietnamese, and merely unambitious for English, where "running" will not match "run".
 
-What it does **not** do is ignore diacritics, so `hen gap` does not find `hẹn gặp`. That is a real gap
-for the people most likely to use this, and the fix is written out in full in the migration: the
-`unaccent` extension plus an IMMUTABLE wrapper, because a generated column may only call immutable
-functions and `unaccent` is declared STABLE. Not taken on, for the same reason object storage was
-not: it is a host-level dependency, and the host is not chosen. A test pins the current behaviour so
-the change is noticed rather than assumed.
+What it did **not** do is ignore diacritics, so `hen gap` did not find `hẹn gặp`. The fix was written
+out in full in this migration and deferred as a host-level dependency — **closed in phase 20**, where
+that reasoning turned out to have expired rather than been overturned.
 
 ### Authorization is a join, not a filter
 
@@ -1214,9 +1212,6 @@ under-describes what works is the same class of lie as one that over-describes i
   anywhere for up to an hour, and someone removed from a group can still fetch an image whose token
   they were handed a minute earlier. Inherent to signed URLs rather than an oversight — see
   [ADR 0007](adr/0007-signed-attachment-urls.md) — and the TTL is the whole mitigation.
-- **Search keeps diacritics.** `hen gap` does not find `hẹn gặp`. The fix is the `unaccent`
-  extension plus an IMMUTABLE wrapper, written out in full in the phase 12 migration — deliberately
-  not taken on, because it is a host-level dependency and the host is not chosen.
 - **A deleted account's name is gone from its messages, and cannot be brought back.** The messages
   survive with `author` null and render as "Deleted account" (phase 13). Anyone who wants the history
   to keep reading as a conversation between named people would need a display-name snapshot on every
@@ -1224,6 +1219,17 @@ under-describes what works is the same class of lie as one that over-describes i
   answer to what deletion means.
 - **A read marker pointing outside the loaded page shows no "Seen".** Correct rather than wrong (the
   alternative is guessing), but it means a receipt can disappear when you scroll far enough back.
+- **A failed draft is lost when you switch conversations.** The thread's message array is replaced on
+  every conversation change, so a message marked "Not sent" goes with it and takes its text along.
+  Retry and Discard are both right there while the conversation is open, which is the common case; a
+  draft that survives navigation needs somewhere to live outside the open thread.
+- **Notifications need the tab to exist.** They are raised from the socket in the page, so closing
+  the tab ends them. Anything more needs a service worker and Web Push — a different piece of
+  machinery, and one that needs VAPID keys, which is the same class of blocked-on-a-purchase as the
+  mail provider.
+- **An image send is not optimistic.** It keeps the awaited path and its upload progress bar, because
+  an optimistic image bubble has to reserve the picture's space and the client does not know its
+  dimensions until it has decoded the file. See phase 19, item 73.
 - **Typing is only shown for the conversation you have open.** The event arrives for every
   conversation you are in — `use-typing-participants` drops the rest on purpose, because a sidebar
   badge for something that expires in seconds is mostly flicker. Real messengers do show it there,
@@ -1369,6 +1375,458 @@ the same state becomes a two-screen flow: the list fills the viewport, choosing 
 the thread, and a labelled Back action returns to the list. Message meta moves below the bubble at
 that width instead of permanently buying a horizontal gutter, and the thread has no horizontal
 overflow at a 390px viewport.
+
+## Phase 18 — Staying truthful when the connection is not — `done`
+
+Three of these were found by reading the client against the network rather than against the tests,
+and none of them is a feature: each is a way the UI silently stops telling the truth.
+
+| # | Item | Status |
+| --- | --- | --- |
+| 69 | Resync after a socket reconnect | Done |
+| 70 | Centralised 401 handling — a dead session says so and signs out | Done |
+| 71 | A failed message load shows an error and a retry, not an empty thread | Done |
+| 72 | A connection banner, so silence has a stated reason | Done |
+
+### A reconnect has to fetch, not just de-duplicate
+
+`use-conversation-messages` already guarded against a reconnect *replaying* an event that was on
+screen. Nothing did the opposite and more important half: fetch what arrived while the socket was
+down. A laptop waking from sleep re-joined its rooms and then sat there, rendering a sidebar and a
+thread that were both quietly out of date until somebody reloaded.
+
+`useSocketConnection` fires its callback on a *re*connection only — the first connect happens
+alongside the fetches that populate the screen, and resyncing then would just repeat them.
+
+**The resync refetches a page rather than everything after the newest message held**, and that is the
+part worth keeping. A dead socket does not only miss new messages: an edit, a delete or a reaction
+that landed while it was down changed a message that is still on screen, and no amount of appending
+repairs that. `mergeReloadedMessages` lets the reloaded copy win for every id it carries and keeps
+what it does not.
+
+**When the two no longer overlap it replaces everything.** If the disconnection outlasted a whole
+page, stitching the newest page onto the loaded history renders a thread with a hole in it and
+nothing saying so. Dropping the history is the same state as opening the conversation now, which is
+honest, and paging back up is how the rest is reached.
+
+The resync is **skipped while `hasMoreNewer` is true**: that state means the reader jumped to a
+search result and is looking at a window in the middle of the history, and pulling them to the live
+end would throw away the thing they went to find.
+
+### A 401 means two different things
+
+The access token lives for seven days and nothing handled its expiry. Every request failed on its
+own, the socket would not open, and the tab kept rendering a chat that nothing could be sent from —
+with no route back to the login screen.
+
+The distinction the fix rests on: a 401 answering `/auth/login`, `/auth/password`, `/auth/email` or
+`DELETE /users/me` is about **the password in the body** and belongs to the form that asked.
+Anywhere else it can only mean the token is dead. Exact paths, not prefixes — `/users/me/avatar` and
+`/auth/password-reset` carry no password to be wrong about, and a prefix match would have silently
+stopped signing people out on the two routes most likely to meet an expired token.
+
+`setSessionExpiredHandler` is wired in `app.tsx` rather than at import time in the store. The store
+imports the api client, so the reverse direction would be a cycle — and a module-level side effect
+also made three unrelated test files fail for want of a stub they had no reason to care about.
+
+**The notice needed a third attempt, and only running the app found it.** The reason is read from
+`sessionStorage`, and the first version read *and cleared* in one call, from a `useState` lazy
+initialiser — with a comment claiming the lazy initialiser was what made it safe under StrictMode.
+It is the opposite: React double-invokes that initialiser in development, so the first call consumed
+the flag and the second, whose result React keeps, returned false. Every unit test passed, because
+none of them renders under StrictMode. The read is now pure and the flag is cleared by
+`storeSession` — signing in again is exactly when "your session ended" stops being true, and a read
+that changes nothing cannot be double-invoked into the wrong answer.
+
+### The two silent states
+
+A failed first page rendered an **empty thread**, which is indistinguishable from a conversation
+nobody has written in and offered nothing to try again with. It now shows the server's own message —
+"Network request failed" and "You are no longer in this conversation" ask the reader to do different
+things — and a retry that re-runs the same load.
+
+The connection banner is delayed by two seconds rather than following `socket.connected` exactly.
+The socket is legitimately disconnected for the moment before its first handshake, and a banner that
+flashes on every page load is one people learn to ignore before the day it means something.
+
+## Phase 19 — What a messenger feels like — `done`
+
+The perceived-quality gap against Telegram/Messenger, in order of how often a user hits each.
+
+| # | Item | Status |
+| --- | --- | --- |
+| 73 | Optimistic send — a pending bubble immediately, a failed state with retry | Done |
+| 74 | Unread count in the tab title, browser notifications behind a settings toggle | Done |
+| 75 | Confirmation dialogs for a kick and a leave | Done |
+| 76 | Virtualise the message list once histories get long | `planned` — see below |
+
+### Item 73: the message is on screen before the server has it
+
+The composer used to await the round trip and render from the broadcast that followed, on the stated
+grounds that the sender should see their message through the same code path as everyone else. That
+is still true of *how* it renders; what it cost was the half-second between pressing Enter and seeing
+anything, on every message, which is the single most-felt piece of latency in a chat app.
+
+**The reconciliation needs no correlation id, and that is the part worth keeping.** The obvious
+problem with an optimistic bubble is the duplicate: the server emits `message:new` before it
+serialises the HTTP response, so the real message usually lands *first*, and replacing the draft by
+id afterwards would show it twice. The fix is one line — when the send resolves, drop the draft and
+append the server's message **only if it is not already there**. Both orders come out right, with no
+client id echoed through the wire types and no matching on content.
+
+**Text only.** A send carrying an image keeps the awaited path and its progress bar, because an
+optimistic image bubble has to state the picture's dimensions to reserve its space and the client
+does not know them until it has decoded the file. A bubble that resizes when the upload finishes is
+worse than the progress bar that is already there and says more.
+
+**A failed send stays on screen.** It keeps its text, is marked "Not sent" in the app's one colour,
+and offers Try again and Discard. The alternative — the bubble vanishing — takes the words with it,
+and the sender usually does not notice until much later.
+
+Two things a draft must never be mistaken for a stored message, both found by asking what takes an
+id back to the server: the **read marker** and the **newer-page cursor**. `getNewestStoredMessage`
+exists for exactly those two call sites; without it, marking a conversation read would post an id the
+server can only refuse.
+
+### Item 74: the tab that is not being looked at
+
+The count goes in **front** of the app name — `(3) Chatty` — because a tab strip truncates from the
+right, so `Chatty (3)` loses the only part worth showing the moment more than three tabs are open.
+It is summed from the same `unreadCount` the sidebar badges render, so the title and the badges
+under it cannot disagree.
+
+**The notification setting is per-browser and says so.** Permission is granted by one browser on one
+machine, so it lives in `localStorage` rather than on the account: a preference synced to the account
+would leave the phone saying notifications are on while its browser had never been asked. The store
+keeps the *preference* and the *permission* as two facts, because either can be revoked without the
+other, and a single boolean would let the UI claim notifications are on for a browser that has
+quietly turned them off.
+
+### Item 75: two dialogs, not three
+
+Removing somebody from a group and leaving one had no confirmation at all, and both are irreversible
+from the person doing them. `components/confirm-dialog` is the shared primitive, built on the
+`use-dialog` phase 16 introduced — which is what makes the old reason for deferring this ("nothing
+else in the app has one") no longer true.
+
+**Delete-for-everyone deliberately did not get one.** It turned out already to have a two-step
+confirmation inside the actions menu, and a modal on top of that would be asking three times. The
+rule that came out of it: confirm an irreversible action once, wherever the action already lives.
+
+**The e2e suite caught what the unit tests could not.** Every component test of the panel was updated
+alongside the dialog and passed; `group.spec.ts` then failed, because a spec that clicks "Leave
+group" and waits for the system message had no idea the flow had gained a step. That is the same
+lesson phase 5 recorded when Playwright found the dropped attachment: a unit test asserts what the
+component was asked to do, and only a browser notices that a *flow* now takes one more click.
+
+### What the browser proves about item 73
+
+Two specs in `e2e/sending.spec.ts`, and both make assertions nothing below a browser can. The send is
+held open with a route handler so "before the server answers" is a state the test can stand in rather
+than a race it hopes to win: the message is in the thread and the composer is already empty. The
+failure path aborts the first POST and lets the retry through, then asserts the message appears on
+the recipient's screen **exactly once** — which is the check that would catch the duplicate the whole
+draft-dropping design exists to avoid.
+
+### Item 76, and why it is still `planned`
+
+Not deferred for effort. Messages accumulate only through explicit paging, 50 at a time, so reaching
+a DOM large enough to matter takes forty deliberate scroll-ups — the problem is real in principle and
+has not been demonstrated here. Against that, the two cheap versions both carry a specific risk to
+work that is already correct:
+
+- **`content-visibility: auto`** interacts with scroll anchoring, and `useMessageScroll` carefully
+  preserves position when a page of older messages is prepended. Trading a demonstrated behaviour for
+  an undemonstrated saving is the wrong way round.
+- **Windowing** needs row heights, and the phase 17 cluster grammar makes them depend on the
+  neighbours: a reaction row, a reply quote, a day rule and an image all change a row's height, and
+  three of those depend on the message before it.
+
+The honest version of this item is a measurement first. Recorded here rather than half-shipped.
+
+## Phase 20 — Vietnamese-first search — `done`
+
+| # | Item | Status |
+| --- | --- | --- |
+| 77 | Accent-insensitive search: `hen gap` finds `hẹn gặp` | Done |
+| 78 | UI copy localisation | `planned` — only if the real audience needs it; it is a large item and English copy is a stated convention |
+
+### A deferral that expired rather than being overturned
+
+Phase 12 wrote this fix out in full, in the migration, and did not take it on because it "needs an
+extension the host must allow" and the host was not chosen. Re-examined: `unaccent` is a contrib
+module that ships **inside the official postgres image these compose files already run**, and is on
+the allow-list of every managed Postgres this app could plausibly be deployed to. The host decides
+nothing here. What it costs is one line in the deployment checklist, which is now in
+[DEPLOYMENT.md](DEPLOYMENT.md) rather than discovered at the first search.
+
+It matters more than the English stemming this app deliberately does not do. Vietnamese is written
+with diacritics and typed without them constantly, so a search that could not cross that gap failed
+the people most likely to use it, on most of what they looked for.
+
+### The IMMUTABLE claim, and what makes it true
+
+A generated column may only call IMMUTABLE functions and `unaccent` is declared STABLE — because its
+one-argument form resolves its dictionary through `search_path` and could answer differently in two
+sessions. The wrapper uses the **two-argument form**, which names the dictionary outright and removes
+exactly that freedom. What is left is a promise that the dictionary's *contents* never change; if
+that file is ever edited, the stored vectors are stale and the column has to be rebuilt the way this
+migration rebuilds it.
+
+**Both sides or neither.** The stored vector and the search term go through the same function.
+Unaccenting only the column would have made `hẹn` fail to find its own message — a worse bug than the
+one being fixed — and there is a test for that direction as well as the one everybody thinks of.
+
+The column is dropped and recreated rather than altered, because PostgreSQL cannot change the
+expression behind a generated column in place. That rewrites the table and rebuilds the GIN index,
+which is the real cost of the migration and the reason to do it once rather than reach for a trigger.
+
+**What it merges, stated rather than discovered:** unaccenting collapses words Vietnamese treats as
+different — "ma", "má", "mà" and "mã" all become "ma", so any of them finds all of them. That trade
+is the right way round for a chat search: a few extra lines is useful, nothing at all is not. A test
+pins it so it is a decision rather than a surprise.
+
+## Phase 21 — Sessions, scale, and the host-shaped holes — `done` (what code can close)
+
+| # | Item | Status |
+| --- | --- | --- |
+| 79 | Refresh tokens: short-lived access, revocable sessions, a logout that means it | Done |
+| 80 | Conversation list pagination | `planned` — see below; it is a redesign, not a patch |
+| 81 | Object storage for uploads | `blocked` — needs the host chosen; ADRs 0004/0007 already isolate the swap to two modules |
+| 82 | Mail provider, verified domain, SPF/DKIM/DMARC | `blocked` — paperwork, not code |
+| 83 | Error tracking / observability provider | `blocked` — needs an account and a DSN, same class as item 82 |
+
+### Item 79: sign out used to be a lie
+
+The session **was** a seven-day JWT in `localStorage`. A JWT cannot be taken back — it is valid
+because it says so — which meant "sign out" cleared this browser's copy and left every other copy
+working for the rest of the week, and a password change could only refuse tokens by `iat`.
+
+Splitting the two fixes it without giving up stateless verification on the hot path. The access token
+stays a JWT and drops to **fifteen minutes**, so a copied one is worth minutes rather than a week;
+the session is a `RefreshToken` row, and `revokedAt` can end it.
+
+**Thirty days is not a relaxation of seven.** The seven days belonged to a token nothing could
+revoke. Trading an unrevocable week for a revocable month is a straight improvement, and the row is
+what makes the difference.
+
+**Rotation, claimed conditionally.** A refresh spends the token it was given and issues a
+replacement, in one transaction, with the claim written as a conditional `updateMany` rather than a
+read-then-write — the same shape phase 7 gave the password reset. Two tabs waking together would
+otherwise both pass the read and leave one session that had quietly become two. Rotation is also the
+whole mitigation for a refresh token read out of storage: it works once, and the real client's next
+refresh finds it spent.
+
+**A spent token answers the same as an imaginary one.** Telling a caller that their token was real
+but already used tells somebody holding a stolen copy that it was worth having and that they were
+beaten to it.
+
+Both `/auth/refresh` and `/auth/logout` are **unauthenticated**, which is the point rather than an
+oversight: a client calls them precisely because its access token has expired, so requiring one would
+make them useless at the only moment they matter. The refresh token in the body is the credential,
+and it is checked against a row.
+
+Revocation is wired to everything that should end a session, each inside the transaction that makes
+the change: a password change, a password reset (a reset exists for "somebody else has my account",
+which is worth nothing if the sessions they opened survive it), and an account deletion, which
+cascades.
+
+#### The two client-side traps
+
+- **Single-flight the refresh.** An expired access token 401s every request the screen has in flight
+  at once. Without single-flighting, five parallel refreshes mean one success and four "invalid
+  session" errors — and the client signs itself out at the exact moment it has just successfully
+  renewed.
+- **The socket's `auth` must be a callback.** socket.io reads the object form once, when the socket
+  is created, and would then reconnect forever with the token it captured — guaranteed to be stale
+  after the first renewal. It also asks for a renewal itself on `connect_error`: a tab left open
+  overnight has no HTTP request for the refresh to piggyback on.
+
+### Item 80, and why it is `planned` rather than done
+
+The server's conversation list is unbounded, which is a real thing to fix. Pagination alone does not
+fix it, though, because of how the client uses it: `ChatPage` re-lists the whole sidebar on **every
+incoming message**, which is what keeps ordering, previews and unread counts true. Add a cursor
+underneath that and every message resets the sidebar to page one, discarding whatever the reader had
+scrolled to.
+
+Closing this properly means replacing "re-list everything on every change" with incremental patching
+of the row that changed — which is a redesign of the most delicate live-update code in the app, not a
+parameter on a query. Recorded as one item so it is picked up as one piece of work.
+
+## Phase 22 — a message can carry a gallery, and emoji are first-class — `done`
+
+Asked for directly: "chưa cho phép gửi nhiều ảnh cùng lúc nhỉ, không có bộ sticker hay emoji của tele
+xịn xò nữa". Two of the three shipped; the third was a decision, not a deferral.
+
+| # | Item | Status |
+| --- | --- | --- |
+| 84 | Several images on one message | Done |
+| 85 | An emoji picker in the composer | Done |
+| 86 | A message that is only emoji is drawn large and bare | Done |
+| 87 | Stickers | Done in phase 23 — the source question had an answer |
+
+### Item 84: the unique that phase 4 said would come off
+
+Phase 4 wrote the one-image limit down as deliberate and reversible: "Dropping the unique later
+relaxes this without moving any data; going the other way would not." This is that drop, and it was
+indeed data-free — every existing row became the first image of its message.
+
+**The order is a stored column, not `createdAt`.** A message's images are written inside one
+transaction and share a timestamp to the millisecond, so ordering by time would let a gallery shuffle
+itself between two reads of the same message. The unique moved to `(messageId, position)` rather than
+being dropped outright: two images claiming slot 0 is an ordering the database should refuse, not one
+the reader discovers.
+
+**`MessageDTO.attachment` became `attachments`, and empty rather than null.** A caller that maps over
+it needs no branch, which is what stops "no images" and "one image" being two shapes every renderer
+has to tell apart.
+
+**The re-encodes run in sequence, not `Promise.all`.** Each decodes and re-encodes a full-size image;
+ten sharp pipelines at once compete for the same cores and spike memory for no wall-clock gain.
+
+**The multipart field stayed singular.** Multipart carries a list by repeating one field name, so
+`attachment` appears once per file — renaming it would have broken every client to describe the same
+bytes.
+
+Two things the gallery decides rather than inherits. **One picture keeps its true proportions**, with
+`width`/`height` on the element so the box is reserved before the bytes arrive; **several become
+squares**, because a row of mixed portrait and landscape thumbnails shares no edge for the eye to
+follow and the bubble's geometry stops meaning anything. The grid caps at four tiles and the fourth
+counts the rest — the lightbox holds the whole set, so the "+6" is never a count of pictures nobody
+can open.
+
+### Items 85 and 86: emoji, without spending the colour budget
+
+The request named Telegram, and Telegram's emoji story is three things: a picker, emoji reactions,
+and stickers. Only the first was taken as-is.
+
+**The picker is hand-built.** Every emoji picker on npm arrives with its own stylesheet, which means
+its own look, in an app whose entire premise is one declared look. The chrome here is the app's —
+hairline rules, ink on paper, mono for machine-produced labels — and only the emoji are colour,
+because they are the content. The data is a curated ~250 rather than the full ~1,900: the rest is a
+megabyte of table nobody scrolls past the first screen of.
+
+Keywords carry unaccented Vietnamese alongside English — `cuoi` finds 😂, `tim` finds ❤️ — on the
+same reasoning phase 20's search rests on: unaccented is what actually gets typed.
+
+**Reactions deliberately stayed the closed set of five ink marks**, reversing nothing. The phase 17
+argument still holds and is still the right one: a full-colour glyph sitting *permanently* beside a
+bubble is the loudest thing on a page that spends its one colour on unread counts and things you
+cannot undo. A picker is transient and dismissed; a reaction is furniture. The Unicode half of that
+argument is unchanged too — ❤ and ❤️ are two strings and one heart, which is what makes a free-text
+reaction column undecidable.
+
+**What was added instead is item 86**, which gives emoji the prominence the request was really about
+without putting colour anywhere the design did not intend: a message that is nothing but one to three
+emoji is drawn large, with no fill, no border and no radius. There is nothing for a bubble to
+contain.
+
+The counting is `\p{Extended_Pictographic}` with the joiners around it rather than a hand-written
+range, because an emoji is regularly several code points — a flag is two regional indicators, 🧑‍💻 is
+two people and a joiner, ❤️ is a heart plus a variation selector. Counting code points would call one
+flag two emoji and refuse to enlarge a message of three.
+
+### Item 87: why stickers are not here
+
+Not effort — a source. A sticker set means artwork, and the two honest options were a built-in pack
+drawn in this app's ink style (which is not what "Telegram stickers" means to anybody) or
+user-uploaded packs (which is the attachment pipeline plus a per-account library). Asked, and the
+answer was to do emoji and images first. Recorded so the next person knows it is waiting on a
+decision.
+
+## Phase 23 — an album instead of a grid, and stickers — `done`
+
+Both asked for directly, and the first is a correction of something phase 22 had only just shipped.
+
+| # | Item | Status |
+| --- | --- | --- |
+| 88 | Several images render as a stacked album, not a grid | Done |
+| 89 | Stickers: a personal tray, one tap to send | Done |
+| 90 | Pictures lose the bubble around them | Done |
+
+### Item 90: a photograph is not a quotation
+
+An image message sat in the same bubble a sentence does, with 5px of padding — which on an outgoing
+message meant a **dark frame around every photograph somebody sent**. The verdict was that it felt
+unnatural, and it is: a photograph is already a rectangle of somebody else's content, and a fill
+around it is a second frame the picture never asked for. Worse, it was the ink fill — the one that
+carries "ink on paper" everywhere else in the app — used as a mount.
+
+Pictures now render bare, on the paper, the same call stickers and emoji-only messages already made:
+the picture *is* the message. A caption keeps its bubble and sits **under** the image rather than
+around it, because the words still need the fill that says whose they are. The image also went back
+to all four corners rounded — the two that squared off were butting against a caption that is no
+longer in the same box.
+
+### Item 88: the grid was the wrong answer to the right question
+
+Phase 22 laid several pictures out as a 2×2 of square tiles. It read fine and it was too big: 320×320
+of a conversation spent on a set that gets opened in a viewer anyway, pushing everything said around
+it off the screen. The complaint was exactly that — "nó chiếm nhiều diện tích".
+
+An album stack takes roughly a quarter of the space and says the same two things: there are pictures
+here, and how many. One tap opens the viewer on the whole set, which is where a set of ten was always
+going to be looked at.
+
+**It took two attempts to look like anything.** The first drew the cards as blank paper, offset
+straight down with no rotation. It was legible and it was dead — the block read as a rendering fault
+rather than a pile of photographs, and the verdict on seeing it was "xấu quá". What fixes it, from
+the messenger it was compared against:
+
+- **The cards behind are the next pictures, not blank paper.** Showing the real images is also the
+  more useful half: a glance says what is in the set, not merely that there is one.
+- **They are turned a few degrees.** This is the one place in the app where a rotation earns its
+  keep — everything else here is set square because it is type and rules, and a photograph thrown on
+  a desk is neither. Five degrees per card; past about six the corners look like a mistake rather
+  than a hand.
+- **Two cards behind, whatever the count.** They say "more than one"; the badge carries the number.
+  A fan that deepens with the count is noise at this size.
+
+The room for the turned corners is worked out rather than guessed, and the first version got it
+wrong: a square of side S turned by θ spans `S·(cos θ + sin θ)`, so at 168px and ten degrees the
+furthest card reaches ~14px past its own box on every side — plus the 8px it is nudged up and right.
+Reserving 8px let the cards poke out through the top of the bubble, which reads as clipping. The
+padding is asymmetric now, because the fan leans one way.
+
+A single picture is untouched — it still gets its true proportions and its `width`/`height`
+attributes, because there is nothing for it to line up with and nothing to count.
+
+### Item 89: the sticker source question had an answer
+
+Phase 22 recorded stickers as blocked on artwork: either a built-in pack drawn in this app's ink
+style, which is not what anybody means by "stickers", or something else. The something else is the
+answer — **a sticker is an image you saved to send again**. The artwork is the user's, there is
+nothing to license, and it reuses the image pipeline the gallery had just put in place.
+
+**A sticker is copied into a fresh attachment when it is sent, never referenced.** Referencing would
+tie every message it was ever sent in to one row, so removing a sticker from the tray would blank
+pictures out of other people's conversations — the same failure that made a message delete a
+tombstone in phase 8. A test sends one, removes it from the tray, and asserts the message's file is
+still there.
+
+**`Sticker` is its own table rather than a flag on `Attachment`**, because the two have different
+lifetimes: an attachment dies with its message, a sticker outlives every message it was sent in.
+
+**`Message.isSticker` is a column rather than something inferred** from "one image and no text" —
+that shape is also a photograph sent without a caption, and the two render nothing alike. A sticker
+is drawn bare at a fixed 128px, on the same reasoning as phase 22's emoji-only messages: the picture
+*is* the message, and a bubble around it is chrome around content that needs no explaining. Fixed
+rather than its own size, because a tray holds whatever people put in it and letting each size itself
+would make every sticker a different height in the thread.
+
+**A sticker is refused alongside text or files.** Letting them compose would mean deciding how a
+bare, oversized image sits next to a bubble, and there is no answer to that worth having.
+
+Serving reuses the attachment *scheme* exactly — same re-encode, same signed expiring token, same 404
+for a bad one. `<img>` cannot send an Authorization header, which is the whole reason that scheme
+exists (ADR 0007).
+
+**And it shipped pointing at the wrong route.** The DTO built its URL with `buildAttachmentUrl`,
+which produces `/attachments/:id` — a path that looks the id up in a table stickers are not in, so
+every thumbnail in the tray was a 404 and a broken image. The unit test asserted the URL carried a
+token and never asserted its *path*, which is precisely the gap. Found by opening the app;
+`buildStickerUrl` now exists as its own function and the test checks the pathname.
 
 ## Verification bar
 

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { wasSessionExpired } from "@/api/client";
 import { Button } from "@/components/button";
 import { TextField } from "@/components/text-field";
 import { useAuth } from "@/hooks/use-auth";
@@ -9,6 +10,11 @@ export function LoginForm() {
 	const [fields, setFields] = useState({ email: "", password: "" });
 	const [errors, setErrors] = useState({ email: "", password: "", form: "" });
 	const [isSubmitting, setIsSubmitting] = useState(false);
+	// A plain read on every render, not state: the flag is cleared when a session
+	// is stored, so there is nothing here to consume and nothing for StrictMode's
+	// double render to consume twice. Being signed out by an expired session
+	// deserves a stated reason, or it reads as the app forgetting who you are.
+	const hasExpiredSession = wasSessionExpired();
 
 	function validate() {
 		const nextErrors = { email: "", password: "", form: "" };
@@ -39,6 +45,15 @@ export function LoginForm() {
 
 	return (
 		<form onSubmit={handleSubmit} className="flex flex-col gap-4">
+			{hasExpiredSession && !errors.form && (
+				<p
+					role="status"
+					className="rounded-control border border-rule bg-paper-raised px-3 py-2.5 text-[13px] text-ink-soft"
+				>
+					Your session ended. Sign in again to carry on.
+				</p>
+			)}
+
 			<TextField
 				label="Email"
 				type="email"

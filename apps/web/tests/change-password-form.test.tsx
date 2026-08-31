@@ -4,18 +4,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ChangePasswordForm } from "@/features/profile/components/change-password-form";
 
 const changePassword = vi.fn();
-const storeToken = vi.fn();
+const storeSession = vi.fn();
 const closeSocket = vi.fn();
 
 vi.mock("@/api/client", () => ({
 	api: {
 		changePassword: (input: unknown) => changePassword(input),
 	},
-	// `useAuth` reaches for these three as well, and the form now goes through
-	// the store rather than calling the API itself — because a password change
-	// replaces this session's token and drops its socket.
-	storeToken: (token: string) => storeToken(token),
+	// `useAuth` reaches for these as well, and the form goes through the store
+	// rather than calling the API itself — because a password change replaces
+	// this session's *pair* of tokens and drops its socket.
+	storeSession: (token: string, refreshToken: string) => storeSession(token, refreshToken),
 	getStoredToken: () => null,
+	getStoredRefreshToken: () => null,
 	clearStoredToken: () => undefined,
 }));
 
@@ -24,8 +25,8 @@ vi.mock("@/lib/socket", () => ({
 }));
 
 beforeEach(() => {
-	changePassword.mockReset().mockResolvedValue({ token: "replacement-token" });
-	storeToken.mockReset();
+	changePassword.mockReset().mockResolvedValue({ token: "replacement-token", refreshToken: "replacement-refresh" });
+	storeSession.mockReset();
 	closeSocket.mockReset();
 });
 
@@ -95,7 +96,7 @@ describe("ChangePasswordForm", () => {
 		await submit(typist, { current: "SuperSecret123", next: "BrandNewSecret456" });
 
 		expect(await screen.findByText(/password changed/i)).toBeInTheDocument();
-		expect(storeToken).toHaveBeenCalledWith("replacement-token");
+		expect(storeSession).toHaveBeenCalledWith("replacement-token", "replacement-refresh");
 		expect(closeSocket).toHaveBeenCalled();
 	});
 

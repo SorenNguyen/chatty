@@ -23,6 +23,7 @@ function renderList(overrides: Partial<React.ComponentProps<typeof MessageList>>
 		participants: [makeParticipant("minh", "Minh"), makeParticipant("an", "An")],
 		isGroup: false,
 		areReceiptsShared: true,
+		isLoadingThread: false,
 		hasMoreOlder: false,
 		isLoadingOlder: false,
 		onLoadOlder: vi.fn(),
@@ -32,6 +33,8 @@ function renderList(overrides: Partial<React.ComponentProps<typeof MessageList>>
 		onEditMessage: vi.fn(),
 		onDeleteMessage: vi.fn(),
 		onHideMessage: vi.fn(),
+		onRetrySend: vi.fn(),
+		onDiscardDraft: vi.fn(),
 		onToggleReaction: vi.fn(),
 		onReplyToMessage: vi.fn(),
 		...overrides,
@@ -66,7 +69,7 @@ describe("MessageList", () => {
 	it("keeps a reaction inside the author's message run", () => {
 		renderList({
 			messages: [
-				makeMessage("m1", "an", "first", null, {
+				makeMessage("m1", "an", "first", [], {
 					reactions: [{ kind: "heart", userIds: ["minh"] }],
 				}),
 				makeMessage("m2", "an", "second"),
@@ -80,8 +83,8 @@ describe("MessageList", () => {
 	it("marks the time when a conversation resumes after a long pause", () => {
 		renderList({
 			messages: [
-				makeMessage("m1", "an", "morning", null, { createdAt: "2026-08-23T08:00:00.000Z" }),
-				makeMessage("m2", "an", "back now", null, { createdAt: "2026-08-23T10:00:00.000Z" }),
+				makeMessage("m1", "an", "morning", [], { createdAt: "2026-08-23T08:00:00.000Z" }),
+				makeMessage("m2", "an", "back now", [], { createdAt: "2026-08-23T10:00:00.000Z" }),
 			],
 		});
 
@@ -238,7 +241,7 @@ describe("MessageList editing and deleting", () => {
 
 	it("allows a tombstone to be removed for the current user", () => {
 		const { onHideMessage } = renderList({
-			messages: [makeMessage("m1", "minh", "", null, { deletedAt: FIXED_DELETED_AT })],
+			messages: [makeMessage("m1", "minh", "", [], { deletedAt: FIXED_DELETED_AT })],
 		});
 		openMessageActions();
 		fireEvent.click(screen.getByRole("menuitem", { name: "Delete message" }));
@@ -252,7 +255,7 @@ describe("MessageList editing and deleting", () => {
 
 	it("hides author-only actions after their 8-hour deadline", () => {
 		renderList({
-			messages: [makeMessage("m1", "minh", "old", null, { authorActionExpiresAt: "2000-01-01T00:00:00.000Z" })],
+			messages: [makeMessage("m1", "minh", "old", [], { authorActionExpiresAt: "2000-01-01T00:00:00.000Z" })],
 		});
 		openMessageActions();
 
@@ -298,7 +301,7 @@ describe("MessageList editing and deleting", () => {
 
 	it("lets the caption of a message with an image be cleared", () => {
 		const { onEditMessage } = renderList({
-			messages: [makeMessage("m1", "minh", "look", makeAttachment())],
+			messages: [makeMessage("m1", "minh", "look", [makeAttachment()])],
 		});
 
 		openMessageActions();
@@ -355,7 +358,7 @@ describe("MessageList editing and deleting", () => {
 	});
 
 	it("stands a placeholder in for a deleted message", () => {
-		renderList({ messages: [makeMessage("m1", "minh", "", null, { deletedAt: FIXED_DELETED_AT })] });
+		renderList({ messages: [makeMessage("m1", "minh", "", [], { deletedAt: FIXED_DELETED_AT })] });
 
 		expect(screen.getByText("This message was deleted")).toBeInTheDocument();
 	});
@@ -364,14 +367,14 @@ describe("MessageList editing and deleting", () => {
 		// The server drops the attachment on delete, so this is belt and braces —
 		// and the one thing a client must never render from a stale copy.
 		renderList({
-			messages: [makeMessage("m1", "minh", "", makeAttachment(), { deletedAt: FIXED_DELETED_AT })],
+			messages: [makeMessage("m1", "minh", "", [makeAttachment()], { deletedAt: FIXED_DELETED_AT })],
 		});
 
 		expect(screen.queryByRole("img")).not.toBeInTheDocument();
 	});
 
 	it("marks a message its author rewrote", () => {
-		renderList({ messages: [makeMessage("m1", "minh", "fixed", null, { editedAt: FIXED_EDITED_AT })] });
+		renderList({ messages: [makeMessage("m1", "minh", "fixed", [], { editedAt: FIXED_EDITED_AT })] });
 
 		expect(screen.getByText(/edited/)).toBeInTheDocument();
 	});
@@ -382,8 +385,8 @@ describe("MessageList editing and deleting", () => {
 		]);
 		renderList({
 			messages: [
-				makeMessage("m1", "minh", "first fixed", null, { editedAt: FIXED_EDITED_AT }),
-				makeMessage("m2", "an", "second fixed", null, { editedAt: FIXED_EDITED_AT }),
+				makeMessage("m1", "minh", "first fixed", [], { editedAt: FIXED_EDITED_AT }),
+				makeMessage("m2", "an", "second fixed", [], { editedAt: FIXED_EDITED_AT }),
 			],
 		});
 
@@ -404,7 +407,7 @@ describe("MessageList editing and deleting", () => {
 		// Both timestamps can be set: edit it, then delete it. "Edited" beside
 		// "This message was deleted" describes text nobody can read either way.
 		renderList({
-			messages: [makeMessage("m1", "minh", "", null, { editedAt: FIXED_EDITED_AT, deletedAt: FIXED_DELETED_AT })],
+			messages: [makeMessage("m1", "minh", "", [], { editedAt: FIXED_EDITED_AT, deletedAt: FIXED_DELETED_AT })],
 		});
 
 		expect(screen.queryByText(/edited/)).not.toBeInTheDocument();

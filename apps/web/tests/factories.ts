@@ -59,7 +59,7 @@ export function makeMessage(
 	id: string,
 	authorId: string,
 	content: string,
-	attachment: AttachmentDTO | null = null,
+	attachments: AttachmentDTO[] = [],
 	// Last, and both defaulting to "never": a message that was neither edited nor
 	// deleted is what every existing test means by one, and adding these ahead of
 	// `attachment` would have rewritten every call site to say so.
@@ -74,7 +74,8 @@ export function makeMessage(
 		kind: "user",
 		author: makeUser(authorId, authorId),
 		content,
-		attachment,
+		attachments,
+		isSticker: false,
 		createdAt: "2026-08-23T10:00:00.000Z",
 		authorActionExpiresAt: "2099-08-23T18:00:00.000Z",
 		editedAt: null,
@@ -98,7 +99,8 @@ export function makeSystemMessage(id: string, content: string): MessageDTO {
 		kind: "system",
 		author: null,
 		content,
-		attachment: null,
+		attachments: [],
+		isSticker: false,
 		createdAt: "2026-08-23T10:00:00.000Z",
 		authorActionExpiresAt: null,
 		// Not overridable, unlike `makeMessage`: nobody wrote a system line, so

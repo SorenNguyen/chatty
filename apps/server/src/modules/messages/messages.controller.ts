@@ -18,17 +18,29 @@ export async function sendMessageController(req: Request, res: Response): Promis
 	// caption of three spaces is not a caption.
 	const content = input.content?.trim() ?? "";
 
-	// The one rule that spans body and file, so it cannot live in either schema:
+	// `upload.array` puts the files here. Narrowed rather than trusted: the typing
+	// allows multer's field-map form, which this route never uses.
+	const files = Array.isArray(req.files) ? req.files : [];
+
+	// The one rule that spans body and files, so it cannot live in either schema:
 	// a message has to be something. Without it, posting `{}` stores a row with
 	// no text and no image that renders as an empty bubble nobody can delete.
-	if (!content && !req.file) {
+	if (!content && files.length === 0 && !input.stickerId) {
 		throw new ValidationError("A message needs text, an image, or both");
+	}
+
+	// A sticker is the whole message. Letting it arrive alongside a caption or
+	// files would mean deciding how a bare, oversized image composes with a
+	// bubble, and there is no answer to that worth having.
+	if (input.stickerId && (content || files.length > 0)) {
+		throw new ValidationError("A sticker is sent on its own");
 	}
 
 	const message = await messagesService.sendMessage(req.userId!, conversationId, {
 		content,
 		...(input.replyToId ? { replyToId: input.replyToId } : {}),
-		...(req.file ? { attachment: req.file.buffer } : {}),
+		...(input.stickerId ? { stickerId: input.stickerId } : {}),
+		...(files.length > 0 ? { attachments: files.map((file) => file.buffer) } : {}),
 	});
 	res.status(201).json(message);
 }

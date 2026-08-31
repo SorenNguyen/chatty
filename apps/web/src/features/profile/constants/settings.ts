@@ -1,4 +1,4 @@
-import { CircleUserRound, Lock, Mail, TriangleAlert } from "lucide-react";
+import { Bell, CircleUserRound, Lock, Mail, TriangleAlert } from "lucide-react";
 import type { SettingsNavigationItem } from "../types/settings";
 
 /**
@@ -20,6 +20,12 @@ export const SETTINGS_NAVIGATION: SettingsNavigationItem[] = [
 		label: "Email",
 		description: "Where account mail is sent, and how to move it.",
 		icon: Mail,
+	},
+	{
+		id: "notifications",
+		label: "Notifications",
+		description: "Be told about a message while you are looking elsewhere.",
+		icon: Bell,
 	},
 	{
 		id: "security",

@@ -87,7 +87,7 @@ async function createReferencedAttachment(id: string): Promise<void> {
 		select: { id: true },
 	});
 	await prisma.attachment.create({
-		data: { id, messageId: message.id, width: 10, height: 10, byteSize: 19 },
+		data: { id, messageId: message.id, position: 0, width: 10, height: 10, byteSize: 19 },
 		select: { id: true },
 	});
 }

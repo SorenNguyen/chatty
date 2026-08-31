@@ -42,8 +42,8 @@ afterAll(async () => {
 	await rm(UPLOAD_DIR, { recursive: true, force: true });
 });
 
-async function makeImage(): Promise<Buffer> {
-	return sharp({ create: { width: 800, height: 400, channels: 3, background: { r: 9, g: 9, b: 9 } } })
+async function makeImage(width = 800, height = 400): Promise<Buffer> {
+	return sharp({ create: { width, height, channels: 3, background: { r: 9, g: 9, b: 9 } } })
 		.png()
 		.toBuffer();
 }
@@ -102,11 +102,11 @@ describe("POST /conversations/:id/messages with an image", () => {
 		expect(response.status).toBe(201);
 		const message = (await response.json()) as {
 			content: string;
-			attachment: { id: string; width: number } | null;
+			attachments: { id: string; width: number }[];
 		};
 		expect(message.content).toBe("look at this");
-		expect(message.attachment).not.toBeNull();
-		expect(message.attachment!.width).toBe(800);
+		expect(message.attachments).toHaveLength(1);
+		expect(message.attachments[0]!.width).toBe(800);
 	});
 
 	it("accepts an image with no caption", async () => {
@@ -127,7 +127,7 @@ describe("POST /conversations/:id/messages with an image", () => {
 		});
 
 		expect(response.status).toBe(201);
-		expect(((await response.json()) as { attachment: unknown }).attachment).toBeNull();
+		expect(((await response.json()) as { attachments: unknown[] }).attachments).toEqual([]);
 	});
 
 	it("400s on a message with neither text nor image", async () => {
@@ -153,13 +153,56 @@ describe("POST /conversations/:id/messages with an image", () => {
 	});
 });
 
+describe("POST /conversations/:id/messages with several images", () => {
+	/** Repeats the same field name once per file — how multipart carries a list. */
+	async function sendImages(token: string, conversationId: string, count: number): Promise<Response> {
+		const body = new FormData();
+		for (let index = 0; index < count; index += 1) {
+			// Distinct sizes, so the response's order can be checked against the
+			// order they were appended in rather than assumed.
+			const bytes = await makeImage(200 + index * 100, 200);
+			body.append("attachment", new Blob([bytes], { type: "image/png" }), `photo-${index}.png`);
+		}
+
+		return fetch(`${baseUrl}/conversations/${conversationId}/messages`, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${token}` },
+			body,
+		});
+	}
+
+	it("accepts a repeated field and keeps the order it arrived in", async () => {
+		// Nothing below this layer can check it: multer's `array()` parse and the
+		// order it hands the buffers over are exactly what a service test stubs.
+		const { token, conversationId } = await makeSender();
+
+		const response = await sendImages(token, conversationId, 3);
+		const message = (await response.json()) as { attachments: { width: number }[] };
+
+		expect(response.status).toBe(201);
+		expect(message.attachments.map((attachment) => attachment.width)).toEqual([200, 300, 400]);
+	});
+
+	it("refuses more than the cap with a sentence rather than a 500", async () => {
+		// Multer aborts with LIMIT_FILE_COUNT, which reaches the error middleware
+		// as an unrecognised error unless it is translated — "something broke"
+		// instead of "that is too many pictures".
+		const { token, conversationId } = await makeSender();
+
+		const response = await sendImages(token, conversationId, 11);
+
+		expect(response.status).toBe(400);
+		expect(((await response.json()) as { message: string }).message).toMatch(/at most 10 images/i);
+	});
+});
+
 describe("GET /attachments/:attachmentId", () => {
 	async function sendAndGetUrl(): Promise<{ url: string; attachmentId: string; token: string }> {
 		const { token, conversationId } = await makeSender();
 		const response = await sendImage(token, conversationId);
-		const message = (await response.json()) as { attachment: { id: string; url: string } };
+		const message = (await response.json()) as { attachments: { id: string; url: string }[] };
 
-		return { url: message.attachment.url, attachmentId: message.attachment.id, token };
+		return { url: message.attachments[0]!.url, attachmentId: message.attachments[0]!.id, token };
 	}
 
 	/** The DTO's absolute URL points at PUBLIC_URL, which is not this test server. */
@@ -226,11 +269,11 @@ describe("GET /attachments/:attachmentId", () => {
 describe("the two kinds of token cannot be swapped", () => {
 	it("refuses a user's access token as an attachment token", async () => {
 		const { token, conversationId } = await makeSender();
-		const message = (await (await sendImage(token, conversationId)).json()) as { attachment: { id: string } };
+		const message = (await (await sendImage(token, conversationId)).json()) as { attachments: { id: string }[] };
 
 		// Signed with the same secret and verifies fine — only the `typ` claim and
 		// the `sub` comparison tell them apart.
-		const response = await fetch(`${baseUrl}/attachments/${message.attachment.id}?token=${token}`);
+		const response = await fetch(`${baseUrl}/attachments/${message.attachments[0]!.id}?token=${token}`);
 
 		expect(response.status).toBe(404);
 	});

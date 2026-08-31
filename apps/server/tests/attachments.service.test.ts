@@ -6,7 +6,7 @@ import { isValidAttachmentToken, signAttachmentToken } from "../src/lib/attachme
 import { ValidationError } from "../src/lib/errors.js";
 import { prisma } from "../src/lib/prisma.js";
 import { getAttachmentFilePath } from "../src/modules/attachments/attachments.service.js";
-import { listMessages, sendMessage } from "../src/modules/messages/messages.service.js";
+import { deleteMessage, listMessages, sendMessage } from "../src/modules/messages/messages.service.js";
 import { installFakeIO } from "./fake-io.js";
 
 const UPLOAD_DIR = ".data/test-uploads";
@@ -53,11 +53,14 @@ describe("sendMessage with an attachment", () => {
 	it("stores the image and returns it on the message", async () => {
 		const { conversationId, authorId } = await makeConversation();
 
-		const message = await sendMessage(authorId, conversationId, { content: "look", attachment: await makeImage() });
+		const message = await sendMessage(authorId, conversationId, {
+			content: "look",
+			attachments: [await makeImage()],
+		});
 
 		expect(message.content).toBe("look");
-		expect(message.attachment).not.toBeNull();
-		expect(message.attachment!.byteSize).toBeGreaterThan(0);
+		expect(message.attachments).not.toHaveLength(0);
+		expect(message.attachments[0]!.byteSize).toBeGreaterThan(0);
 	});
 
 	it("scales the longest edge down to the cap and keeps the aspect ratio", async () => {
@@ -65,10 +68,10 @@ describe("sendMessage with an attachment", () => {
 		// which is what `fit: "cover"` (what avatars use) would produce.
 		const { conversationId, authorId } = await makeConversation();
 
-		const message = await sendMessage(authorId, conversationId, { content: "", attachment: await makeImage() });
+		const message = await sendMessage(authorId, conversationId, { content: "", attachments: [await makeImage()] });
 
-		expect(message.attachment!.width).toBe(1600);
-		expect(message.attachment!.height).toBe(800);
+		expect(message.attachments[0]!.width).toBe(1600);
+		expect(message.attachments[0]!.height).toBe(800);
 	});
 
 	it("does not enlarge an image that is already smaller than the cap", async () => {
@@ -76,27 +79,27 @@ describe("sendMessage with an attachment", () => {
 
 		const message = await sendMessage(authorId, conversationId, {
 			content: "",
-			attachment: await makeImage(400, 300),
+			attachments: [await makeImage(400, 300)],
 		});
 
-		expect(message.attachment).toMatchObject({ width: 400, height: 300 });
+		expect(message.attachments[0]).toMatchObject({ width: 400, height: 300 });
 	});
 
 	it("writes the file under the attachment's own id", async () => {
 		const { conversationId, authorId } = await makeConversation();
 
-		const message = await sendMessage(authorId, conversationId, { content: "", attachment: await makeImage() });
+		const message = await sendMessage(authorId, conversationId, { content: "", attachments: [await makeImage()] });
 
-		expect(await findAttachmentPath(message.attachment!.id)).not.toBeNull();
+		expect(await findAttachmentPath(message.attachments[0]!.id)).not.toBeNull();
 	});
 
 	it("allows a message that is only an image", async () => {
 		const { conversationId, authorId } = await makeConversation();
 
-		const message = await sendMessage(authorId, conversationId, { content: "", attachment: await makeImage() });
+		const message = await sendMessage(authorId, conversationId, { content: "", attachments: [await makeImage()] });
 
 		expect(message.content).toBe("");
-		expect(message.attachment).not.toBeNull();
+		expect(message.attachments).not.toHaveLength(0);
 	});
 
 	it("leaves attachment null on a text-only message", async () => {
@@ -104,7 +107,7 @@ describe("sendMessage with an attachment", () => {
 
 		const message = await sendMessage(authorId, conversationId, { content: "just text" });
 
-		expect(message.attachment).toBeNull();
+		expect(message.attachments).toHaveLength(0);
 	});
 
 	it("rejects a file that is not an image, without creating a message", async () => {
@@ -113,7 +116,7 @@ describe("sendMessage with an attachment", () => {
 		const { conversationId, authorId } = await makeConversation();
 
 		await expect(
-			sendMessage(authorId, conversationId, { content: "", attachment: Buffer.from("not an image at all") }),
+			sendMessage(authorId, conversationId, { content: "", attachments: [Buffer.from("not an image at all")] }),
 		).rejects.toBeInstanceOf(ValidationError);
 
 		expect(await prisma.message.count({ where: { conversationId } })).toBe(0);
@@ -124,7 +127,7 @@ describe("sendMessage with an attachment", () => {
 		const { conversationId, outsiderId } = await makeConversation();
 
 		await expect(
-			sendMessage(outsiderId, conversationId, { content: "", attachment: await makeImage() }),
+			sendMessage(outsiderId, conversationId, { content: "", attachments: [await makeImage()] }),
 		).rejects.toThrow();
 
 		expect(await prisma.attachment.count()).toBe(0);
@@ -132,11 +135,11 @@ describe("sendMessage with an attachment", () => {
 
 	it("comes back on the message list too", async () => {
 		const { conversationId, authorId } = await makeConversation();
-		await sendMessage(authorId, conversationId, { content: "", attachment: await makeImage() });
+		await sendMessage(authorId, conversationId, { content: "", attachments: [await makeImage()] });
 
 		const [listed] = await listMessages(authorId, conversationId, { limit: 50 });
 
-		expect(listed!.attachment).not.toBeNull();
+		expect(listed!.attachments).not.toHaveLength(0);
 	});
 
 	it("addresses the image by a signed token rather than a bare path", async () => {
@@ -146,21 +149,107 @@ describe("sendMessage with an attachment", () => {
 		// signed in the same second match. That is precisely why the id, and not
 		// the url, is what anything downstream keys on.
 		const { conversationId, authorId } = await makeConversation();
-		const sent = await sendMessage(authorId, conversationId, { content: "", attachment: await makeImage() });
+		const sent = await sendMessage(authorId, conversationId, { content: "", attachments: [await makeImage()] });
 
 		const [listed] = await listMessages(authorId, conversationId, { limit: 50 });
 
-		expect(listed!.attachment!.id).toBe(sent.attachment!.id);
-		expect(new URL(listed!.attachment!.url).searchParams.get("token")).toBeTruthy();
+		expect(listed!.attachments[0]!.id).toBe(sent.attachments[0]!.id);
+		expect(new URL(listed!.attachments[0]!.url).searchParams.get("token")).toBeTruthy();
 	});
 
 	it("is deleted with its message", async () => {
 		const { conversationId, authorId } = await makeConversation();
-		const message = await sendMessage(authorId, conversationId, { content: "", attachment: await makeImage() });
+		const message = await sendMessage(authorId, conversationId, { content: "", attachments: [await makeImage()] });
 
 		await prisma.message.delete({ where: { id: message.id } });
 
-		expect(await prisma.attachment.count({ where: { id: message.attachment!.id } })).toBe(0);
+		expect(await prisma.attachment.count({ where: { id: message.attachments[0]!.id } })).toBe(0);
+	});
+});
+
+describe("a message with several images", () => {
+	it("keeps them in the order the sender picked", async () => {
+		// The whole reason `position` is a column. The rows are written inside one
+		// transaction and share a `createdAt` to the millisecond, so ordering by
+		// time would let the gallery shuffle itself between two reads.
+		const { conversationId, authorId } = await makeConversation();
+
+		const message = await sendMessage(authorId, conversationId, {
+			content: "three of them",
+			attachments: [await makeImage(400, 300), await makeImage(300, 400), await makeImage(500, 500)],
+		});
+
+		expect(message.attachments.map((attachment) => [attachment.width, attachment.height])).toEqual([
+			[400, 300],
+			[300, 400],
+			[500, 500],
+		]);
+	});
+
+	it("gives every image its own row, file and signed url", async () => {
+		const { conversationId, authorId } = await makeConversation();
+
+		const message = await sendMessage(authorId, conversationId, {
+			content: "",
+			attachments: [await makeImage(200, 200), await makeImage(200, 200)],
+		});
+
+		expect(await prisma.attachment.count()).toBe(2);
+		for (const attachment of message.attachments) {
+			expect(await findAttachmentPath(attachment.id)).not.toBeNull();
+			expect(new URL(attachment.url).searchParams.get("token")).toBeTruthy();
+		}
+		// Two images of one message must not share an id, or one would serve the
+		// other and the gallery would be the same picture twice.
+		expect(new Set(message.attachments.map((attachment) => attachment.id)).size).toBe(2);
+	});
+
+	it("reads back in the same order it was written", async () => {
+		const { conversationId, authorId } = await makeConversation();
+		const sent = await sendMessage(authorId, conversationId, {
+			content: "",
+			attachments: [await makeImage(400, 300), await makeImage(300, 400)],
+		});
+
+		const [listed] = await listMessages(authorId, conversationId, { limit: 10 });
+
+		expect(listed!.attachments.map((attachment) => attachment.id)).toEqual(
+			sent.attachments.map((attachment) => attachment.id),
+		);
+	});
+
+	it("takes every file with it when the message is deleted", async () => {
+		// Nine files surviving because the message only remembered one of them is
+		// exactly the leak the single-attachment shape could not have.
+		const { conversationId, authorId } = await makeConversation();
+		const message = await sendMessage(authorId, conversationId, {
+			content: "",
+			attachments: [await makeImage(200, 200), await makeImage(200, 200), await makeImage(200, 200)],
+		});
+
+		await deleteMessage(authorId, conversationId, message.id);
+
+		expect(await prisma.attachment.count()).toBe(0);
+		for (const attachment of message.attachments) {
+			expect(await findAttachmentPath(attachment.id)).toBeNull();
+		}
+	});
+
+	it("refuses two images claiming the same slot", async () => {
+		// The database's job, not the service's: the unique on (messageId,
+		// position) is what makes the order a fact rather than a convention.
+		const { conversationId, authorId } = await makeConversation();
+		const message = await sendMessage(authorId, conversationId, {
+			content: "",
+			attachments: [await makeImage(200, 200)],
+		});
+
+		await expect(
+			prisma.attachment.create({
+				data: { messageId: message.id, position: 0, width: 10, height: 10, byteSize: 1 },
+				select: { id: true },
+			}),
+		).rejects.toThrow();
 	});
 });
 
@@ -182,8 +271,8 @@ describe("attachment tokens", () => {
 describe("getAttachmentFilePath", () => {
 	it("returns the path for a valid token", async () => {
 		const { conversationId, authorId } = await makeConversation();
-		const message = await sendMessage(authorId, conversationId, { content: "", attachment: await makeImage() });
-		const attachmentId = message.attachment!.id;
+		const message = await sendMessage(authorId, conversationId, { content: "", attachments: [await makeImage()] });
+		const attachmentId = message.attachments[0]!.id;
 
 		const filePath = await getAttachmentFilePath(attachmentId, signAttachmentToken(attachmentId));
 
@@ -193,8 +282,10 @@ describe("getAttachmentFilePath", () => {
 	it("hides a real attachment behind a bad token", async () => {
 		// 404 rather than 401 on purpose: 401 would confirm the id exists.
 		const { conversationId, authorId } = await makeConversation();
-		const message = await sendMessage(authorId, conversationId, { content: "", attachment: await makeImage() });
+		const message = await sendMessage(authorId, conversationId, { content: "", attachments: [await makeImage()] });
 
-		await expect(getAttachmentFilePath(message.attachment!.id, "nonsense")).rejects.toThrow("Attachment not found");
+		await expect(getAttachmentFilePath(message.attachments[0]!.id, "nonsense")).rejects.toThrow(
+			"Attachment not found",
+		);
 	});
 });

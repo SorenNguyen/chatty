@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import type { MessageContextDTO, MessageDTO, MessageEditDTO } from "@chatty/shared-types";
 import type { Prisma } from "@prisma/client";
 import { deleteAttachment, saveAttachment } from "../../lib/attachment-storage.js";
 import { ForbiddenError, NotFoundError, ValidationError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
 import { prisma } from "../../lib/prisma.js";
+import { readOwnedStickerPath } from "../stickers/stickers.service.js";
 import { getIO, userRoom } from "../../lib/socket-bus.js";
 import { assertParticipant } from "../conversations/conversations.service.js";
 import { messageSelect, toMessageDTO } from "./messages.mapper.js";
@@ -21,9 +23,12 @@ import type {
  * rather than in the body, so it never passes through a body schema.
  */
 export interface SendMessageArgs {
-	/** Empty string for a message that is only an image. */
+	/** Empty string for a message that is only images. */
 	content: string;
-	attachment?: Buffer | undefined;
+	/** In the order the sender picked them; empty for a text-only message. */
+	attachments?: Buffer[] | undefined;
+	/** One of the sender's own stickers. The whole message when it is set. */
+	stickerId?: string | undefined;
 	/** The message being answered, already validated as a string by the schema. */
 	replyToId?: string | undefined;
 }
@@ -47,12 +52,31 @@ export async function sendMessage(
 	// below is the authority when membership changes concurrently.
 	await assertParticipant(currentUserId, conversationId);
 
-	// The id is generated here, not by the database, so the file can be written
-	// before the row that points at it exists. A crash between the two leaves an
-	// unreferenced file, which costs bytes; the other order leaves a message
-	// showing a broken image forever. Same trade avatar upload makes.
-	const attachmentId = input.attachment ? randomUUID() : null;
-	const stored = input.attachment && attachmentId ? await saveAttachment(attachmentId, input.attachment) : null;
+	// The ids are generated here, not by the database, so each file can be
+	// written before the row that points at it exists. A crash between the two
+	// leaves an unreferenced file, which costs bytes and is swept; the other
+	// order leaves a message showing a broken image forever. Same trade the
+	// avatar upload makes.
+	//
+	// Sequential rather than `Promise.all`: each of these decodes and re-encodes
+	// a full-size image, and ten of them at once is ten sharp pipelines competing
+	// for the same cores — slower in wall-clock terms and a memory spike besides.
+	const storedAttachments: { id: string; position: number; width: number; height: number; byteSize: number }[] = [];
+
+	// A sticker is *copied* into a fresh attachment rather than referenced.
+	// Referencing would tie every message it was ever sent in to one row, so
+	// removing it from the tray would blank pictures out of other people's
+	// conversations — the same failure that made a message delete a tombstone.
+	if (input.stickerId) {
+		const stickerPath = await readOwnedStickerPath(currentUserId, input.stickerId);
+		const id = randomUUID();
+		storedAttachments.push({ id, position: 0, ...(await saveAttachment(id, await readFile(stickerPath))) });
+	}
+
+	for (const [position, buffer] of (input.attachments ?? []).entries()) {
+		const id = randomUUID();
+		storedAttachments.push({ id, position, ...(await saveAttachment(id, buffer)) });
+	}
 
 	const message = await prisma.$transaction(async (transaction) => {
 		// Membership changes take the same conversation lock. Re-checking after it
@@ -89,7 +113,8 @@ export async function sendMessage(
 				authorId: currentUserId,
 				content: input.content,
 				...(input.replyToId ? { replyToId: input.replyToId } : {}),
-				...(stored && attachmentId ? { attachment: { create: { id: attachmentId, ...stored } } } : {}),
+				...(input.stickerId ? { isSticker: true } : {}),
+				...(storedAttachments.length > 0 ? { attachments: { createMany: { data: storedAttachments } } } : {}),
 			},
 			select: messageSelect,
 		});
@@ -198,7 +223,7 @@ export async function getMessageContext(
  */
 interface EditableMessage {
 	deletedAt: Date | null;
-	attachmentId: string | null;
+	attachmentIds: string[];
 	content: string;
 	createdAt: Date;
 }
@@ -239,7 +264,7 @@ async function loadEditableMessage(
 			deletedAt: true,
 			content: true,
 			createdAt: true,
-			attachment: { select: { id: true } },
+			attachments: { select: { id: true }, orderBy: { position: "asc" } },
 		},
 	});
 
@@ -260,7 +285,7 @@ async function loadEditableMessage(
 
 	return {
 		deletedAt: message.deletedAt,
-		attachmentId: message.attachment?.id ?? null,
+		attachmentIds: message.attachments.map((attachment) => attachment.id),
 		content: message.content,
 		createdAt: message.createdAt,
 	};
@@ -298,7 +323,7 @@ export async function editMessage(
 		// The send rule, restated where it still applies: a message has to be
 		// something. Clearing the caption of a picture is fine; clearing the whole
 		// of a text message leaves an empty bubble that only delete should produce.
-		if (!content && !message.attachmentId) {
+		if (!content && message.attachmentIds.length === 0) {
 			throw new ValidationError("A message needs text, an image, or both");
 		}
 
@@ -365,7 +390,7 @@ export async function deleteMessage(
 	conversationId: string,
 	messageId: string,
 ): Promise<MessageDTO> {
-	const { deleted, removedAttachmentId, wasAlreadyDeleted } = await prisma.$transaction(async (transaction) => {
+	const { deleted, removedAttachmentIds, wasAlreadyDeleted } = await prisma.$transaction(async (transaction) => {
 		const message = await loadEditableMessage(transaction, currentUserId, conversationId, messageId);
 
 		if (message.deletedAt) {
@@ -374,16 +399,16 @@ export async function deleteMessage(
 				select: messageSelect,
 			});
 
-			return { deleted: unchanged, removedAttachmentId: null, wasAlreadyDeleted: true };
+			return { deleted: unchanged, removedAttachmentIds: [], wasAlreadyDeleted: true };
 		}
 		if (Date.now() - message.createdAt.getTime() >= MESSAGE_AUTHOR_ACTION_WINDOW_MS) {
 			throw new ValidationError("Messages can only be deleted for everyone for 8 hours");
 		}
 
-		// The attachment row goes with the text. Leaving it would keep serving the
-		// picture — the image is the part of an image message worth deleting.
-		if (message.attachmentId) {
-			await transaction.attachment.delete({ where: { id: message.attachmentId } });
+		// The attachment rows go with the text. Leaving them would keep serving the
+		// pictures — the images are the part of an image message worth deleting.
+		if (message.attachmentIds.length > 0) {
+			await transaction.attachment.deleteMany({ where: { messageId } });
 		}
 
 		const updated = await transaction.message.update({
@@ -395,18 +420,20 @@ export async function deleteMessage(
 			select: messageSelect,
 		});
 
-		return { deleted: updated, removedAttachmentId: message.attachmentId, wasAlreadyDeleted: false };
+		return { deleted: updated, removedAttachmentIds: message.attachmentIds, wasAlreadyDeleted: false };
 	});
 
 	// After the commit, and on purpose. The other order — file first — leaves a
 	// message pointing at a picture that is gone if the transaction then rolls
 	// back, which is the broken-image case `sendMessage` also refuses to risk.
 	// A crash here instead leaves an unreferenced file, which costs bytes.
-	if (removedAttachmentId) {
-		await deleteAttachment(removedAttachmentId).catch((error: unknown) => {
-			// Not rethrown: the message *is* deleted, and failing the request now
-			// would tell the caller otherwise. The file is the recoverable half.
-			logger.error({ err: error, attachmentId: removedAttachmentId }, "failed to remove attachment file");
+	for (const attachmentId of removedAttachmentIds) {
+		await deleteAttachment(attachmentId).catch((error: unknown) => {
+			// Not rethrown, and the loop is not abandoned: the message *is* deleted,
+			// and failing the request now would tell the caller otherwise. One file
+			// that will not unlink must not strand the nine behind it either — each
+			// is independent, and the sweep picks up whatever is left.
+			logger.error({ err: error, attachmentId }, "failed to remove attachment file");
 		});
 	}
 
