@@ -1,6 +1,6 @@
 import type { ConversationDTO } from "@chatty/shared-types";
 import { cn } from "@/utils/cn";
-import { formatLastSeen, getConversationTitle, getDirectPeer } from "../utils";
+import { getConversationPresence, getConversationTitle } from "../utils";
 import { ConversationAvatar } from "./conversation-avatar";
 
 interface ConversationDetailsIdentityProps {
@@ -27,10 +27,11 @@ export function ConversationDetailsIdentity({
 	currentUserId,
 	onlineUserIds,
 }: ConversationDetailsIdentityProps) {
-	const peer = getDirectPeer(conversation, currentUserId);
-	const isPeerOnline = Boolean(peer && onlineUserIds.has(peer.id));
-	const lastSeen = formatLastSeen(peer?.lastSeenAt ?? null);
-	const onlineCount = conversation.participants.filter((participant) => onlineUserIds.has(participant.id)).length;
+	const { peer, isPeerOnline, peerStatus, onlineCount } = getConversationPresence(
+		conversation,
+		currentUserId,
+		onlineUserIds,
+	);
 
 	return (
 		<div className="flex shrink-0 flex-col items-center gap-3 border-b border-rule px-6 py-6 text-center">
@@ -50,7 +51,7 @@ export function ConversationDetailsIdentity({
 					<>
 						<p className="meta max-w-full truncate text-ink-faint">@{peer.handle}</p>
 						<p className={cn("eyebrow max-w-full truncate", isPeerOnline ? "text-live" : "text-ink-faint")}>
-							{isPeerOnline ? "Online" : (lastSeen ?? "Last seen hidden")}
+							{peerStatus}
 						</p>
 					</>
 				) : (

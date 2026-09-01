@@ -22,3 +22,4 @@ export { findMyReaction, groupReactors } from "./reaction-groups";
 export { getReactionSummary } from "./reaction-summary";
 export { getSearchResultTitle } from "./search-result-title";
 export { getTypingMessage } from "./typing-message";
+export { getConversationPresence } from "./conversation-presence";

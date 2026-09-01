@@ -2,7 +2,7 @@ import type { ConversationDTO } from "@chatty/shared-types";
 import { ArrowLeft, PanelRight, Search } from "lucide-react";
 import { Button } from "@/components/button";
 import { cn } from "@/utils/cn";
-import { formatLastSeen, getConversationTitle, getDirectPeer, getTypingMessage } from "../utils";
+import { getConversationPresence, getConversationTitle, getTypingMessage } from "../utils";
 import { ConversationAvatar } from "./conversation-avatar";
 
 interface ConversationHeaderProps {
@@ -33,13 +33,14 @@ export function ConversationHeader({
 	onOpenMessageSearch,
 	onBack,
 }: ConversationHeaderProps) {
-	const peer = getDirectPeer(conversation, currentUserId);
 	// Typing wins over presence: someone typing is obviously online, and showing
 	// both would flicker the line between two facts that say the same thing.
 	const typingMessage = getTypingMessage(typingUserIds, conversation.participants);
-	const isPeerOnline = Boolean(peer && onlineUserIds.has(peer.id));
-	const lastSeen = formatLastSeen(peer?.lastSeenAt ?? null);
-	const onlineCount = conversation.participants.filter((participant) => onlineUserIds.has(participant.id)).length;
+	const { isPeerOnline, peerStatus, onlineCount } = getConversationPresence(
+		conversation,
+		currentUserId,
+		onlineUserIds,
+	);
 
 	return (
 		<header className="flex h-[70px] shrink-0 items-center gap-3 border-b border-rule bg-paper-raised px-4 sm:px-5 md:px-7">
@@ -95,7 +96,7 @@ export function ConversationHeader({
 						</>
 					) : (
 						<span className={cn("eyebrow truncate", isPeerOnline ? "text-live" : "text-ink-faint")}>
-							{isPeerOnline ? "Online" : (lastSeen ?? "Last seen hidden")}
+							{peerStatus}
 						</span>
 					)}
 				</div>
