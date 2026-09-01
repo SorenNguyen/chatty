@@ -181,7 +181,10 @@ export function MessageRow({
 				className={cn(
 					"group relative flex max-w-full items-center gap-2 sm:gap-3",
 					isMine && "flex-row-reverse",
-					hasReactions && "mb-[18px]",
+					// Only the half of the reaction pill that hangs below the bubble needs
+					// reserving — 10px of a 20px pill, plus 6px so the next message does
+					// not touch it. It moved with the pill when that shrank from 22px.
+					hasReactions && "mb-4",
 					!hasReactions && (isTimeAlwaysVisible || isEdited) && "max-sm:mb-4",
 				)}
 			>

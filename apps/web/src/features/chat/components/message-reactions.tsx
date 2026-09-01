@@ -8,38 +8,46 @@ interface MessageReactionsProps {
 	reactions: ReactionDTO[];
 	currentUserId: string;
 	users: UserDTO[];
-	/** Which side the bubble sits on — the chips hang off its inner corner. */
+	/** Which side the bubble sits on — the pill hangs off its inner corner. */
 	isMine: boolean;
 	onToggle: (emoji: ReactionEmoji) => void;
-	/** Opens the reactor list. Reached from the overflow chip and from the actions menu. */
+	/** Opens the reactor list. Reached from the overflow count and from the actions menu. */
 	onShowDetails: () => void;
 }
 
 /**
- * The chips a message wears, straddling its bottom edge.
+ * The reactions a message wears, straddling its bottom edge.
+ *
+ * **One pill, not one chip per emoji.** Each emoji used to carry its own border,
+ * its own `ring-2` cut-out and its own shadow, and the group overlapped them with
+ * negative spacing — so three reactions drew three borders, three haloes and
+ * three shadows into a 60px strip and read as clutter stuck to the corner of the
+ * bubble. Instagram draws the same information as a single small capsule with
+ * the emoji sitting inside it, and that is what this is: the chrome is paid for
+ * once, by the container, and the emoji inside are bare.
  *
  * **Half on the bubble and half on the page**, which is the arrangement
  * Messenger and Instagram both use and the single biggest thing this component
- * used to get wrong: it hung the chips 18px clear of the bubble, so they read as
- * something that had fallen off it rather than as a sticker put on it. `top-full`
- * puts the group's top edge on the bubble's bottom edge and `-translate-y-1/2`
- * lifts it by half its own height, so the overlap is exact at any chip size and
- * the row below only has to reserve the half that hangs.
+ * used to get wrong: it hung clear of the bubble by 18px, so it read as something
+ * that had fallen off rather than as a sticker put on. `top-full` puts the pill's
+ * top edge on the bubble's bottom edge and `-translate-y-1/2` lifts it by half its
+ * own height, so the overlap stays exact at any pill height and the row below only
+ * has to reserve the half that hangs.
  *
- * The chips sit at the bubble's *inner* corner — bottom-right of an incoming
- * message, bottom-left of one you sent. Two reasons, and neither is symmetry:
- * they stay off the window edge on a narrow screen, and they land nearer the
- * middle of the thread, which is where the eye already is.
+ * It sits at the bubble's *inner* corner — bottom-right of an incoming message,
+ * bottom-left of one you sent. Two reasons, and neither is symmetry: it stays off
+ * the window edge on a narrow screen, and it lands nearer the middle of the
+ * thread, which is where the eye already is.
  *
- * Each chip carries `ring-2 ring-paper`, and that ring is what makes the slight
- * overlap between them legible: it cuts a page-coloured gap out of the chip
- * behind, so two chips read as two objects instead of one blurred pill. Against
- * the bubble's own fill the same ring reads as a halo, which is exactly what it
- * looks like in the apps this is modelled on.
+ * `ring-2 ring-paper` is still here and still load-bearing, but now there is one
+ * of it. An incoming bubble is `bg-paper-raised`, the same fill as this pill, so
+ * without a page-coloured ring cut between them the two surfaces merge and the
+ * reactions look printed on the message. The ring is what makes it an object
+ * resting on top.
  *
  * Past three distinct emoji the rest collapse into one `+N`, which opens the
- * reactor list rather than toggling anything. An open emoji set has no ceiling
- * on how many chips a group can produce, and the bubble does.
+ * reactor list rather than toggling anything. An open emoji set has no ceiling on
+ * how many emoji a group can put on one sentence, and the bubble does.
  */
 export function MessageReactions({
 	reactions,
@@ -57,7 +65,8 @@ export function MessageReactions({
 			role="group"
 			aria-label={isMine ? "Reactions to your message" : "Reactions to received message"}
 			className={cn(
-				"absolute top-full z-10 flex -translate-y-1/2 items-center -space-x-1",
+				"absolute top-full z-10 flex h-5 -translate-y-1/2 items-center gap-0.5 px-1",
+				"rounded-full border border-rule bg-paper-raised ring-2 ring-paper shadow-reaction",
 				isMine ? "left-2.5" : "right-2.5",
 			)}
 		>
@@ -74,19 +83,17 @@ export function MessageReactions({
 						aria-label={`${reaction.emoji}, ${count}`}
 						title={getReactionSummary(reaction, users, currentUserId)}
 						className={cn(
-							"h-[22px] rounded-full py-0 ring-2 ring-paper transition",
-							"shadow-reaction hover:-translate-y-px",
-							count > 1 ? "gap-1 px-1.5" : "size-[22px] p-0",
-							// Yours is filled rather than tinted. The palette spends its
-							// one colour on unread counts and things you cannot undo, and
-							// a reaction is neither — so "mine" is said with the ink block
-							// the app already uses for a message you sent.
-							isReacted
-								? "bg-block text-block-ink hover:bg-block"
-								: "border border-rule bg-paper-raised text-ink hover:bg-paper-raised",
+							"h-4 rounded-full py-0 transition",
+							count > 1 ? "gap-0.5 px-1" : "w-4 p-0",
+							// Yours is a filled disc rather than a tinted chip. The palette
+							// spends its one colour on unread counts and things you cannot
+							// undo, and a reaction is neither — so "mine" is said with the
+							// ink block the app already uses for a message you sent, at the
+							// smallest size that still reads as deliberate.
+							isReacted ? "bg-block text-block-ink hover:bg-block" : "hover:bg-ink/5",
 						)}
 					>
-						<span aria-hidden="true" className="text-[13px] leading-none">
+						<span aria-hidden="true" className="text-[12px] leading-none">
 							{reaction.emoji}
 						</span>
 						{count > 1 && <span className="meta">{count}</span>}
@@ -99,11 +106,7 @@ export function MessageReactions({
 					variant="ghost"
 					onClick={onShowDetails}
 					aria-label={`${hiddenCount} more reactions. Show everyone who reacted`}
-					className={cn(
-						"h-[22px] gap-1 rounded-full border border-rule bg-paper-raised px-1.5 py-0",
-						"text-ink-soft ring-2 ring-paper shadow-reaction transition",
-						"hover:-translate-y-px hover:bg-paper-raised hover:text-ink",
-					)}
+					className="h-4 rounded-full px-1 py-0 text-ink-soft transition hover:bg-ink/5 hover:text-ink"
 				>
 					<span className="meta">+{hiddenCount}</span>
 				</Button>

@@ -60,12 +60,20 @@ export function ConversationHeader({
 				size="sm"
 			/>
 
-			<div className="min-w-0 flex-1">
-				<h1 className="truncate text-[15px] font-semibold tracking-tight text-ink">
+			{/*
+				The text column is boxed to the avatar's own 32px — an 18px name line
+				over a 14px status line, no gap between them. Left to their natural
+				leading the pair ran to about 38px, so the block stood taller than the
+				face beside it and the two stopped reading as one unit. Both numbers are
+				fixed rather than derived: `eyebrow` is 10px at 1.4, and the name has to
+				make up the remainder exactly or the column drifts off the avatar again.
+			*/}
+			<div className="flex min-w-0 flex-1 flex-col justify-center">
+				<h1 className="truncate text-[15px] font-semibold leading-[18px] tracking-tight text-ink">
 					{getConversationTitle(conversation, currentUserId)}
 				</h1>
 
-				<div className="mt-0.5 flex items-center gap-2">
+				<div className="flex h-[14px] items-center gap-2">
 					{typingMessage ? (
 						<>
 							<span aria-hidden="true" className="flex shrink-0 gap-0.5">
