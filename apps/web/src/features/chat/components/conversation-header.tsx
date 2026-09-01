@@ -69,7 +69,7 @@ export function ConversationHeader({
 				make up the remainder exactly or the column drifts off the avatar again.
 			*/}
 			<div className="flex min-w-0 flex-1 flex-col justify-center">
-				<h1 className="truncate text-[15px] font-semibold leading-[18px] tracking-tight text-ink">
+				<h1 className="truncate text-[14px] font-semibold leading-[18px] tracking-tight text-ink">
 					{getConversationTitle(conversation, currentUserId)}
 				</h1>
 
