@@ -182,76 +182,90 @@ export function GroupMembersPanel({
 				</p>
 			)}
 
-			<ul className="mt-4 flex max-h-48 flex-col gap-0.5 overflow-y-auto">
-				{conversation.participants.map((participant) => (
-					<GroupMemberRow
-						key={participant.id}
-						participant={participant}
-						isSelf={participant.id === currentUserId}
-						canManage={isOwner}
-						isPromoting={promotingUserId === participant.id}
-						isRemoving={removingUserId === participant.id}
-						onMakeOwner={() => void handleMakeOwner(participant.id)}
-						onRemove={() => setMemberPendingRemoval(participant)}
-					/>
-				))}
-			</ul>
-
-			<Button
-				variant="danger"
-				onClick={() => setIsConfirmingLeave(true)}
-				disabled={isLeaving}
-				className="mt-3 w-full"
-			>
-				<LogOut className="size-4" />
-				Leave group
-			</Button>
-
-			<form onSubmit={search} className="mt-4">
-				<div className="flex items-center gap-2.5 border-b border-rule pb-2.5 transition-colors focus-within:border-ink">
-					<Search className="size-[15px] shrink-0 text-ink-faint" />
-					<input
-						value={query}
-						onChange={(event) => setQuery(event.target.value)}
-						placeholder="Add someone by name, @handle or email"
-						aria-label="Add a member"
-						className="min-w-0 flex-1 bg-transparent text-[13.5px] text-ink outline-none placeholder:text-ink-faint"
-					/>
-				</div>
-			</form>
-
-			{isSearching && <p className="eyebrow mt-3 text-ink-faint">Searching…</p>}
-			{searchError && (
-				<p role="alert" className="eyebrow mt-3 text-signal">
-					{searchError}
-				</p>
-			)}
-
-			{results.length > 0 && (
-				<ul className="mt-3 flex max-h-48 flex-col gap-0.5 overflow-y-auto">
-					{results.map((user) => (
-						<li key={user.id}>
-							<Button
-								variant="ghost"
-								onClick={() => void handleAddMember(user)}
-								disabled={addingUserId === user.id}
-								aria-label={`Add ${user.displayName} @${user.handle}`}
-								className="w-full items-center justify-start gap-2.5 px-2 py-2 font-normal"
-							>
-								<Avatar user={user} size="sm" />
-								<span className="flex min-w-0 flex-1 flex-col">
-									<span className="w-full truncate text-left text-[13px] font-medium text-ink">
-										{user.displayName}
-									</span>
-									<span className="meta w-full truncate text-left text-ink-faint">
-										@{user.handle}
-									</span>
-								</span>
-							</Button>
-						</li>
+			{/* Three sections in the order Instagram puts them: who is here, how to
+			    add someone, and only then the way out. Leaving used to sit between the
+			    member list and the search box, so the most destructive control on the
+			    panel was also the one the eye reached first on the way to the least. */}
+			<section className="mt-5">
+				<h3 className="eyebrow text-ink-faint">Members · {conversation.participants.length}</h3>
+				<ul className="mt-2 flex max-h-56 flex-col gap-0.5 overflow-y-auto">
+					{conversation.participants.map((participant) => (
+						<GroupMemberRow
+							key={participant.id}
+							participant={participant}
+							isSelf={participant.id === currentUserId}
+							canManage={isOwner}
+							isPromoting={promotingUserId === participant.id}
+							isRemoving={removingUserId === participant.id}
+							onMakeOwner={() => void handleMakeOwner(participant.id)}
+							onRemove={() => setMemberPendingRemoval(participant)}
+						/>
 					))}
 				</ul>
-			)}
+			</section>
+
+			<section className="mt-5">
+				<h3 className="eyebrow text-ink-faint">Add people</h3>
+				<form onSubmit={search} className="mt-2">
+					<div className="flex items-center gap-2.5 border-b border-rule pb-2.5 transition-colors focus-within:border-ink">
+						<Search className="size-[15px] shrink-0 text-ink-faint" />
+						<input
+							value={query}
+							onChange={(event) => setQuery(event.target.value)}
+							placeholder="Name, @handle or email"
+							aria-label="Add a member"
+							className="min-w-0 flex-1 bg-transparent text-[13.5px] text-ink outline-none placeholder:text-ink-faint"
+						/>
+					</div>
+				</form>
+
+				{isSearching && <p className="eyebrow mt-3 text-ink-faint">Searching…</p>}
+				{searchError && (
+					<p role="alert" className="eyebrow mt-3 text-signal">
+						{searchError}
+					</p>
+				)}
+
+				{results.length > 0 && (
+					<ul className="mt-2 flex max-h-48 flex-col gap-0.5 overflow-y-auto">
+						{results.map((user) => (
+							<li key={user.id}>
+								<Button
+									variant="ghost"
+									onClick={() => void handleAddMember(user)}
+									disabled={addingUserId === user.id}
+									aria-label={`Add ${user.displayName} @${user.handle}`}
+									className="w-full items-center justify-start gap-2.5 px-2 py-2 font-normal"
+								>
+									<Avatar user={user} size="sm" />
+									<span className="flex min-w-0 flex-1 flex-col">
+										<span className="w-full truncate text-left text-[13px] font-medium text-ink">
+											{user.displayName}
+										</span>
+										<span className="meta w-full truncate text-left text-ink-faint">
+											@{user.handle}
+										</span>
+									</span>
+								</Button>
+							</li>
+						))}
+					</ul>
+				)}
+			</section>
+
+			{/* Ruled off rather than merely spaced: the two sections above are things
+			    you do to the group, and this is the one you do to your own membership. */}
+			<div className="mt-6 border-t border-rule-soft pt-5">
+				<Button
+					variant="danger"
+					onClick={() => setIsConfirmingLeave(true)}
+					disabled={isLeaving}
+					className="w-full"
+				>
+					<LogOut className="size-4" />
+					Leave group
+				</Button>
+			</div>
 
 			{memberPendingRemoval && (
 				<ConfirmDialog

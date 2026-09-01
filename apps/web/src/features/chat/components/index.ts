@@ -1,6 +1,7 @@
 export { ConnectionBanner } from "./connection-banner";
 export { ConversationAvatar } from "./conversation-avatar";
 export { ConversationHeader } from "./conversation-header";
+export { ConversationDetailsIdentity } from "./conversation-details-identity";
 export { ConversationVaultPanel } from "./conversation-vault-panel";
 export { ChatConversationPane } from "./chat-conversation-pane";
 export { ForwardMessagePanel } from "./forward-message-panel";

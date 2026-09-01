@@ -90,6 +90,7 @@ export function ChatConversationPane({
 				<ConversationVaultPanel
 					conversation={conversation}
 					currentUserId={currentUserId}
+					onlineUserIds={onlineUserIds}
 					onClose={onToggleDetails}
 					onOpenMessage={onOpenMessage}
 				/>

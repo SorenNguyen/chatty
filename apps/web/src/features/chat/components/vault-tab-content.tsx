@@ -3,10 +3,11 @@ import type { RefObject } from "react";
 import { useMemo, useState } from "react";
 import { api } from "@/api/client";
 import { Button } from "@/components/button";
-import { EMPTY_VAULT_TAB_COPY, type VaultTab } from "../constants/vault";
+import type { VaultTab } from "../constants/vault";
 import { formatLinkSource, formatVaultDate, groupVaultMedia } from "../utils/vault";
 import { AttachmentLightbox } from "./attachment-lightbox";
 import { MessageFileCard } from "./message-file-card";
+import { VaultEmptyState } from "./vault-empty-state";
 import { VoicePlayer } from "./voice-player";
 
 interface VaultTabContentProps {
@@ -62,9 +63,7 @@ export function VaultTabContent({
 					</Button>
 				</div>
 			)}
-			{!isLoading && isEmpty && !hasMore && !error && (
-				<p className="text-sm text-ink-faint">{EMPTY_VAULT_TAB_COPY[activeTab]}</p>
-			)}
+			{!isLoading && isEmpty && !hasMore && !error && <VaultEmptyState tab={activeTab} />}
 
 			{activeTab === "media" && (
 				<div className="flex flex-col gap-5">

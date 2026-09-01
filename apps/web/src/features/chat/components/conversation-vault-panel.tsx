@@ -9,12 +9,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/api/client";
 import { Button } from "@/components/button";
 import { VAULT_TABS, type VaultTab } from "../constants/vault";
+import { ConversationDetailsIdentity } from "./conversation-details-identity";
 import { GroupMembersPanel } from "./group-members-panel";
 import { VaultTabContent } from "./vault-tab-content";
 
 interface ConversationVaultPanelProps {
 	conversation: ConversationDTO;
 	currentUserId: string;
+	/** Presence for the identity block at the top — the same set the header reads. */
+	onlineUserIds: Set<string>;
 	onClose: () => void;
 	onOpenMessage: (messageId: string) => void;
 }
@@ -22,6 +25,7 @@ interface ConversationVaultPanelProps {
 export function ConversationVaultPanel({
 	conversation,
 	currentUserId,
+	onlineUserIds,
 	onClose,
 	onOpenMessage,
 }: ConversationVaultPanelProps) {
@@ -101,33 +105,49 @@ export function ConversationVaultPanel({
 	return (
 		<>
 			<aside className="absolute inset-y-0 right-0 z-20 flex w-full max-w-md flex-col border-l border-rule bg-paper-raised shadow-lift">
-				<div className="flex items-center justify-between border-b border-rule px-4 py-3">
-					<h2 className="text-sm font-semibold text-ink">Conversation details</h2>
+				{/* The close button is the only control up here, so the title takes the
+				    centre and the button keeps the corner — the arrangement every
+				    sheet in a messenger uses, and the one that stops a two-word title
+				    reading as the start of a toolbar. */}
+				<div className="relative flex h-12 shrink-0 items-center justify-center border-b border-rule px-2">
+					<h2 className="eyebrow text-ink-soft">Conversation details</h2>
 					<Button
 						variant="ghost"
 						onClick={onClose}
 						aria-label="Close conversation storage"
-						className="size-8 p-0"
+						className="absolute right-2 size-8 p-0"
 					>
 						<X className="size-4" />
 					</Button>
 				</div>
-				<div className="flex gap-3 overflow-x-auto border-b border-rule px-4">
+
+				<ConversationDetailsIdentity
+					conversation={conversation}
+					currentUserId={currentUserId}
+					onlineUserIds={onlineUserIds}
+				/>
+
+				{/* `flex-1` with `min-w-fit` rather than a fixed width apiece: the tabs
+				    share the panel evenly when it is 448px wide, and the strip scrolls
+				    instead of clipping a label once the panel is a phone. */}
+				<div className="flex shrink-0 overflow-x-auto border-b border-rule px-2">
 					{VAULT_TABS.filter((tab) => tab.id !== "members" || conversation.isGroup).map((tab) => (
 						<Button
 							key={tab.id}
 							variant="ghost"
 							onClick={() => setActiveTab(tab.id)}
+							aria-pressed={activeTab === tab.id}
 							className={
 								activeTab === tab.id
-									? "rounded-none border-b-2 border-ink px-0 py-3 text-ink"
-									: "rounded-none border-b-2 border-transparent px-0 py-3 text-ink-faint hover:bg-transparent hover:text-ink"
+									? "eyebrow min-w-fit flex-1 rounded-none border-b-2 border-ink px-2 py-3 text-ink hover:bg-transparent"
+									: "eyebrow min-w-fit flex-1 rounded-none border-b-2 border-transparent px-2 py-3 text-ink-faint hover:bg-transparent hover:text-ink"
 							}
 						>
 							{tab.label}
 						</Button>
 					))}
 				</div>
+
 				<div className="min-h-0 flex-1 overflow-y-auto p-4">
 					{activeTab === "members" && (
 						<GroupMembersPanel

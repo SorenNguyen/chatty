@@ -40,6 +40,7 @@ function renderPanel(overrides: { isGroup?: boolean } = {}) {
 				participants: [makeParticipant("minh", "Minh"), makeParticipant("an", "An")],
 			})}
 			currentUserId="minh"
+			onlineUserIds={new Set(["an"])}
 			onClose={vi.fn()}
 			onOpenMessage={onOpenMessage}
 		/>,
