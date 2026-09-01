@@ -57,7 +57,7 @@ export function StickerTray({ onPick, onClose }: StickerTrayProps) {
 			ref={panelRef}
 			role="dialog"
 			aria-label="Stickers"
-			className="absolute bottom-full left-0 z-40 mb-2 w-[320px] rounded-bubble border border-rule bg-paper-raised shadow-lg"
+			className="popover-enter absolute bottom-full left-0 z-40 mb-2 w-[min(320px,calc(100vw-24px))] rounded-panel border border-rule bg-paper-raised shadow-lift"
 		>
 			<div className="flex items-center justify-between border-b border-rule-soft px-3.5 py-2.5">
 				<span className="eyebrow text-ink-soft">Stickers</span>

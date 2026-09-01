@@ -78,7 +78,7 @@ export function EmojiPicker({ onPick, onClose, className }: EmojiPickerProps) {
 			role="dialog"
 			aria-label="Choose an emoji"
 			className={cn(
-				"z-40 w-[320px] rounded-bubble border border-rule bg-paper-raised shadow-lift",
+				"popover-enter z-40 w-[min(320px,calc(100vw-24px))] rounded-panel border border-rule bg-paper-raised shadow-lift",
 				// The app declares one shadow and this used to reach for Tailwind's
 				// `shadow-lg`, which is a neutral grey drop on warm paper.
 				className ?? "absolute bottom-full left-0 mb-2",

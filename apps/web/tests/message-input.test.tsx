@@ -14,6 +14,13 @@ const onSend = vi.fn();
 // The typing notifier talks to a socket, which is not what these tests are about.
 vi.mock("@/features/chat/hooks", () => ({
 	useTypingNotifier: () => ({ notifyTyping: vi.fn(), stopTyping: vi.fn() }),
+	useStickers: () => ({
+		stickers: [],
+		isLoading: false,
+		error: "",
+		add: vi.fn(),
+		remove: vi.fn(),
+	}),
 }));
 
 beforeEach(() => {
@@ -72,6 +79,25 @@ describe("MessageInput", () => {
 		expect(screen.getByRole("menuitem", { name: "Photos" })).toBeInTheDocument();
 		expect(screen.getByRole("menuitem", { name: "File" })).toBeInTheDocument();
 		expect(screen.getByRole("menuitem", { name: "Sticker" })).toBeInTheDocument();
+
+		await typist.click(screen.getByRole("menuitem", { name: "Sticker" }));
+		expect(screen.queryByRole("menu", { name: "Choose an attachment" })).not.toBeInTheDocument();
+		expect(screen.getByRole("dialog", { name: "Stickers" })).toBeInTheDocument();
+	});
+
+	it("navigates the attachment menu by keyboard and returns focus on Escape", async () => {
+		const typist = userEvent.setup();
+		renderInput();
+		const trigger = screen.getByRole("button", { name: "Add an attachment" });
+
+		await typist.click(trigger);
+		await waitFor(() => expect(screen.getByRole("menuitem", { name: "Photos" })).toHaveFocus());
+		await typist.keyboard("{ArrowDown}");
+		expect(screen.getByRole("menuitem", { name: "File" })).toHaveFocus();
+
+		await typist.keyboard("{Escape}");
+		expect(screen.queryByRole("menu", { name: "Choose an attachment" })).not.toBeInTheDocument();
+		expect(trigger).toHaveFocus();
 	});
 
 	it("enables sending as soon as a picture is attached, with no text", async () => {

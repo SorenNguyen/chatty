@@ -105,14 +105,14 @@ export function ComposerAttachmentMenu({
 					isOpen && "bg-paper-sunken text-ink",
 				)}
 			>
-				<Paperclip className="size-[18px]" />
+				<Paperclip aria-hidden="true" className="size-[18px]" />
 			</Button>
 
 			{isOpen && (
 				<div
 					role="menu"
 					aria-label="Choose an attachment"
-					className="absolute bottom-full left-0 z-50 mb-2 w-52 overflow-hidden rounded-panel border border-rule bg-paper-raised p-1.5 shadow-lift"
+					className="popover-enter absolute bottom-full left-0 z-50 mb-2 w-48 overflow-hidden rounded-panel border border-rule bg-paper-raised p-1.5 shadow-lift"
 				>
 					<Button
 						variant="ghost"
@@ -122,7 +122,7 @@ export function ComposerAttachmentMenu({
 						aria-label={isFull ? `At most ${MAX_ATTACHMENTS_PER_MESSAGE} images` : "Photos"}
 						className="w-full justify-start px-2.5 py-2.5 text-ink"
 					>
-						<ImagePlus className="size-4 text-ink-faint" />
+						<ImagePlus aria-hidden="true" className="size-4 text-ink-faint" />
 						Photos
 					</Button>
 					<Button
@@ -132,7 +132,7 @@ export function ComposerAttachmentMenu({
 						onClick={() => openPicker(fileInputRef.current)}
 						className="w-full justify-start px-2.5 py-2.5 text-ink"
 					>
-						<FileText className="size-4 text-ink-faint" />
+						<FileText aria-hidden="true" className="size-4 text-ink-faint" />
 						File
 					</Button>
 					<Button
@@ -145,7 +145,7 @@ export function ComposerAttachmentMenu({
 						}}
 						className="w-full justify-start px-2.5 py-2.5 text-ink"
 					>
-						<Sticker className="size-4 text-ink-faint" />
+						<Sticker aria-hidden="true" className="size-4 text-ink-faint" />
 						Sticker
 					</Button>
 				</div>

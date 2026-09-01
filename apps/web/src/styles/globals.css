@@ -363,3 +363,31 @@
 	font-variant-numeric: tabular-nums;
 	line-height: 1.4;
 }
+
+/*
+ * Composer surfaces rise from their trigger instead of appearing a frame later.
+ * Kept as one utility so attachments, emoji and stickers share the same motion;
+ * the motion preference removes it everywhere at once.
+ */
+@keyframes popover-enter {
+	from {
+		opacity: 0;
+		transform: translateY(4px) scale(0.985);
+	}
+
+	to {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+}
+
+@utility popover-enter {
+	transform-origin: bottom left;
+	animation: popover-enter 120ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.popover-enter {
+		animation: none;
+	}
+}
