@@ -33,6 +33,22 @@
 @import "tailwindcss";
 
 /*
+ * `dark:` keys off the attribute this app sets, not off `prefers-color-scheme`.
+ *
+ * Tailwind's built-in dark variant reads the OS directly, which would ignore an
+ * explicit Light or Dark choice — the reader would flip the setting and half the
+ * app would follow while every `dark:` utility stayed with the OS. `public/theme.js`
+ * resolves the preference to one of two values and stamps it on <html>, and this
+ * points the variant at the same fact.
+ *
+ * Almost nothing needs it: the palette below swaps under the same attribute, so a
+ * component written against the tokens is already correct in both themes. It is
+ * here for the handful of cases a colour cannot express — dimming a photograph,
+ * or a border that has to exist in one theme and not the other.
+ */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/*
  * Ink on paper.
  *
  * The palette is a printer's, not a screen's: a sheet, near-black ink at three
@@ -55,6 +71,9 @@
  * `--live` is the one exception to "one colour": presence is a different kind of
  * fact from a notification, and giving them the same red made an online dot read
  * as something demanding attention.
+ *
+ * **This block is the light theme.** Dark redefines the same names further down;
+ * nothing in the app names a colour that is not here.
  */
 @theme {
 	--color-paper: oklch(0.976 0.0045 92);
@@ -78,13 +97,55 @@
 	--color-live: oklch(0.6 0.145 150);
 
 	/*
-	 * Avatar tints, in pairs: a pale ground and an ink dark enough to read on it.
+	 * The app's one solid fill: a message you sent, and a group's avatar.
+	 *
+	 * Its own pair rather than `bg-ink text-paper`, because those two names
+	 * invert together and this must not. In dark, ink *is* near-white, so a
+	 * bubble written as `bg-ink` would come back as a white slab covering half
+	 * the thread — the single loudest thing on a dark screen, and the opposite
+	 * of what every messenger does with the message you just sent.
+	 *
+	 * Light keeps full ink, which is the design. Dark steps *up* off the sheet
+	 * instead of inverting against it: 0.335 against a 0.185 page and a 0.225
+	 * received bubble, so the three surfaces stay in order and none of them
+	 * shouts. A `primary` Button still uses ink/paper directly and should — a
+	 * call to action is allowed to be the brightest thing in the room; a bubble
+	 * you will send forty of is not.
+	 */
+	--color-block: oklch(0.235 0.012 58);
+	--color-block-ink: oklch(0.976 0.0045 92);
+
+	/*
+	 * Behind a dialog, and behind a photograph opened full screen.
+	 *
+	 * Not `bg-ink/30`, for the reason above and one more: a scrim's whole job is
+	 * to darken what is behind it, and in dark mode a 0.235 charcoal at 30% over
+	 * a 0.185 page darkens nothing. It goes blacker rather than lighter.
+	 */
+	--color-scrim: oklch(0.235 0.012 58);
+
+	/*
+	 * Type and chrome drawn *on* a photograph or a scrim — an image count, the
+	 * lightbox controls.
+	 *
+	 * The one token that is the same in both themes, and deliberately: what it
+	 * sits on is a stranger's picture or a near-black wash, neither of which
+	 * knows anything about the reader's theme.
+	 */
+	--color-on-media: oklch(0.985 0.002 92);
+
+	/*
+	 * Avatar tints, in pairs: a ground and an ink dark enough to read on it.
 	 * Pairs rather than "any hue plus white", because a generated hue eventually
 	 * lands on yellow and produces an initial nobody can make out. Consumed
 	 * through `@/constants/avatar-colors`, never named directly by a component.
 	 *
 	 * Desaturated a step against the whiter sheet: the old grounds were mixed to
 	 * sit on cream and turned into colour blocks once the yellow came out.
+	 *
+	 * Dark inverts each pair rather than dimming it — a pale ground carried into
+	 * dark mode is eight bright discs down a sidebar, which is the one place in
+	 * the app that is meant to be scannable rather than looked at.
 	 */
 	--color-tint-azure: oklch(0.885 0.042 220);
 	--color-tint-azure-ink: oklch(0.34 0.09 240);
@@ -102,6 +163,19 @@
 	--color-tint-iris-ink: oklch(0.36 0.1 290);
 	--color-tint-fern: oklch(0.91 0.038 115);
 	--color-tint-fern-ink: oklch(0.38 0.09 120);
+
+	/*
+	 * The two swatches the Appearance setting draws its previews from.
+	 *
+	 * Fixed values rather than the live tokens, because a preview of Dark has to
+	 * look dark while the app around it is light. They are the only place in the
+	 * app where a colour does not follow the theme, and the only place it would
+	 * be wrong for one to.
+	 */
+	--color-swatch-light: oklch(0.976 0.0045 92);
+	--color-swatch-light-ink: oklch(0.235 0.012 58);
+	--color-swatch-dark: oklch(0.185 0.006 60);
+	--color-swatch-dark-ink: oklch(0.945 0.005 85);
 
 	--font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
 	--font-mono: "Geist Mono", ui-monospace, monospace;
@@ -133,13 +207,96 @@
 	 * warm paper from casting a grey that belongs on a different page.
 	 */
 	--shadow-lift: 0 1px 2px rgb(41 36 32 / 0.05), 0 14px 30px -12px rgb(41 36 32 / 0.2);
+	/* Contact shadow for tiny reaction badges that overlap a message edge. */
+	--shadow-reaction: 0 1px 2px rgb(41 36 32 / 0.1), 0 3px 8px rgb(41 36 32 / 0.12);
 	/* The same gesture at the scale a dialog needs, so the two never disagree. */
 	--shadow-modal: 0 1px 3px rgb(41 36 32 / 0.06), 0 40px 72px -24px rgb(41 36 32 / 0.26);
 }
 
+/*
+ * The same sheet, at night.
+ *
+ * One selector, not two. `public/theme.js` runs before the first paint and
+ * always resolves the stored preference — Light, Dark or System — down to one of
+ * two concrete values, so the app never renders without `data-theme` and there
+ * is no `prefers-color-scheme` fallback to keep in sync. That matters more than
+ * it looks: a palette written twice is a palette that drifts, and the drift
+ * shows up as one wrong grey six months later.
+ *
+ * The attribute is matched anywhere rather than on `:root` only, so a subtree
+ * can be given a theme of its own. Nothing does yet; the Appearance previews use
+ * fixed swatch tokens instead, because they must show *both* themes at once.
+ *
+ * What changed, and what did not:
+ *
+ *  - The ladder is preserved, not mirrored. Paper still steps sunken → base →
+ *    raised, ink still steps faint → soft → full. Every component that leaned on
+ *    "raised is lighter than base" keeps being right.
+ *  - `ink-faint` sits at 0.635 rather than the light theme's 0.607. Small text
+ *    needs 4.5:1 in both directions and the curve is not symmetric — the value
+ *    that clears it on white does not clear it on near-black.
+ *  - `signal` goes *up*, not down. A 0.545 vermilion on a 0.185 page is a dark
+ *    red on a dark ground; the badge it draws has to be legible before it can be
+ *    a warning. `signal-soft` stops being a tint of white and becomes a tint of
+ *    the page, which is the only way a "soft" background means anything here.
+ *  - The shadows lose the ink hue and gain depth. A warm brown drop shadow is
+ *    invisible on a dark ground, so elevation is carried by a black drop with
+ *    more of it — the contact edge is what stops a menu looking pasted on.
+ */
+[data-theme="dark"] {
+	color-scheme: dark;
+
+	--color-paper: oklch(0.185 0.006 60);
+	--color-paper-raised: oklch(0.225 0.0065 60);
+	--color-paper-sunken: oklch(0.148 0.005 60);
+
+	--color-ink: oklch(0.945 0.005 85);
+	--color-ink-soft: oklch(0.735 0.008 80);
+	--color-ink-faint: oklch(0.635 0.008 75);
+
+	--color-rule: oklch(0.315 0.007 70);
+	--color-rule-soft: oklch(0.255 0.006 70);
+
+	--color-signal: oklch(0.665 0.175 32);
+	--color-signal-hover: oklch(0.735 0.155 32);
+	--color-signal-soft: oklch(0.285 0.055 32);
+
+	--color-live: oklch(0.7 0.155 150);
+
+	--color-block: oklch(0.335 0.012 60);
+	--color-block-ink: oklch(0.965 0.004 85);
+
+	--color-scrim: oklch(0.06 0.004 60);
+
+	--color-tint-azure: oklch(0.335 0.055 225);
+	--color-tint-azure-ink: oklch(0.87 0.06 225);
+	--color-tint-amber: oklch(0.345 0.05 78);
+	--color-tint-amber-ink: oklch(0.88 0.07 80);
+	--color-tint-moss: oklch(0.335 0.05 152);
+	--color-tint-moss-ink: oklch(0.87 0.07 152);
+	--color-tint-plum: oklch(0.335 0.05 342);
+	--color-tint-plum-ink: oklch(0.87 0.06 342);
+	--color-tint-clay: oklch(0.34 0.045 32);
+	--color-tint-clay-ink: oklch(0.88 0.06 32);
+	--color-tint-teal: oklch(0.332 0.05 192);
+	--color-tint-teal-ink: oklch(0.87 0.06 192);
+	--color-tint-iris: oklch(0.338 0.052 288);
+	--color-tint-iris-ink: oklch(0.87 0.06 288);
+	--color-tint-fern: oklch(0.34 0.05 118);
+	--color-tint-fern-ink: oklch(0.88 0.065 118);
+
+	--shadow-lift: 0 1px 2px rgb(0 0 0 / 0.4), 0 14px 30px -12px rgb(0 0 0 / 0.66);
+	--shadow-reaction: 0 1px 2px rgb(0 0 0 / 0.45), 0 3px 8px rgb(0 0 0 / 0.5);
+	--shadow-modal: 0 1px 3px rgb(0 0 0 / 0.5), 0 40px 72px -24px rgb(0 0 0 / 0.72);
+}
+
 @layer base {
 	html {
-		/* Native scrollbars and form widgets follow the page, not the OS. */
+		/*
+		 * Native scrollbars and form widgets follow the page, not the OS. The
+		 * dark block above flips it; this is the value for a page that has not
+		 * been stamped yet, which is the frame before `theme.js` runs.
+		 */
 		color-scheme: light;
 	}
 

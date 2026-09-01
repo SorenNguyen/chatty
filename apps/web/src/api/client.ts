@@ -1,10 +1,13 @@
 import type {
 	AddParticipantRequest,
+	AttachmentKind,
+	AttachmentPageDTO,
 	AuthResponse,
 	ChangePasswordRequest,
 	ChangePasswordResponse,
 	ConfirmEmailChangeRequest,
 	ConversationDTO,
+	ConversationSelfUpdatedEvent,
 	ConversationReadEvent,
 	CurrentUserDTO,
 	DeleteAccountRequest,
@@ -15,7 +18,9 @@ import type {
 	MessageContextDTO,
 	MessageEditDTO,
 	MessageSearchPageDTO,
-	ReactionKind,
+	MessageLinkPageDTO,
+	PinnedMessageDTO,
+	ReactionEmoji,
 	RefreshTokenResponse,
 	RegisterRequest,
 	RenameConversationRequest,
@@ -23,6 +28,7 @@ import type {
 	RequestPasswordResetRequest,
 	ResetPasswordRequest,
 	StickerDTO,
+	SavedMessagePageDTO,
 	ToggleReactionRequest,
 	TransferOwnershipRequest,
 	UpdateProfileRequest,
@@ -220,7 +226,40 @@ function post<T>(path: string, body: unknown): Promise<T> {
 /** Field names the server reads files from — see server middlewares/upload-image.ts. */
 const AVATAR_FIELD = "avatar";
 const ATTACHMENT_FIELD = "attachment";
+const FILE_FIELD = "file";
+const VOICE_FIELD = "voice";
 const STICKER_FIELD = "sticker";
+
+function uploadMessage(
+	conversationId: string,
+	body: FormData,
+	onProgress: ((percent: number) => void) | undefined,
+	interruptedMessage: string,
+): Promise<MessageDTO> {
+	const path = `/conversations/${conversationId}/messages`;
+
+	return new Promise<MessageDTO>((resolve, reject) => {
+		const upload = new XMLHttpRequest();
+		upload.open("POST", `${API_URL}${path}`);
+		const token = getStoredToken();
+		if (token) upload.setRequestHeader("Authorization", `Bearer ${token}`);
+		upload.upload.addEventListener("progress", (event) => {
+			if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100));
+		});
+		upload.addEventListener("load", () => {
+			if (upload.status >= 200 && upload.status < 300) {
+				resolve(JSON.parse(upload.responseText) as MessageDTO);
+
+				return;
+			}
+			if (upload.status === 401) reportUnauthorized(path, "POST");
+			const errorBody = JSON.parse(upload.responseText || "{}") as { message?: string };
+			reject(new Error(errorBody.message ?? `Request to ${path} failed with ${upload.status}`));
+		});
+		upload.addEventListener("error", () => reject(new Error(interruptedMessage)));
+		upload.send(body);
+	});
+}
 
 /**
  * One named method per endpoint rather than raw get/post at the call site, so
@@ -345,8 +384,29 @@ export const api = {
 		return get<UserDTO[]>(`/users?query=${encodeURIComponent(query)}`);
 	},
 
-	listConversations(): Promise<ConversationDTO[]> {
-		return get<ConversationDTO[]>("/conversations");
+	listConversations(isArchived = false): Promise<ConversationDTO[]> {
+		return get<ConversationDTO[]>(`/conversations${isArchived ? "?archived=true" : ""}`);
+	},
+
+	setConversationArchived(conversationId: string, archived: boolean): Promise<ConversationSelfUpdatedEvent> {
+		return request<ConversationSelfUpdatedEvent>(`/conversations/${conversationId}/archive`, {
+			method: "PUT",
+			body: JSON.stringify({ archived }),
+		});
+	},
+
+	setConversationPinned(conversationId: string, pinned: boolean): Promise<ConversationSelfUpdatedEvent> {
+		return request<ConversationSelfUpdatedEvent>(`/conversations/${conversationId}/pin`, {
+			method: "PUT",
+			body: JSON.stringify({ pinned }),
+		});
+	},
+
+	setConversationMuted(conversationId: string, until: string | null): Promise<ConversationSelfUpdatedEvent> {
+		return request<ConversationSelfUpdatedEvent>(`/conversations/${conversationId}/mute`, {
+			method: "PUT",
+			body: JSON.stringify({ until }),
+		});
 	},
 
 	createConversation(participantIds: string[], name?: string): Promise<ConversationDTO> {
@@ -396,9 +456,16 @@ export const api = {
 		attachments: File[] = [],
 		onProgress?: (percent: number) => void,
 		replyToId?: string,
+		mentionedUserIds: string[] = [],
 	): Promise<MessageDTO> {
 		const path = `/conversations/${conversationId}/messages`;
-		if (attachments.length === 0) return post<MessageDTO>(path, { content, ...(replyToId ? { replyToId } : {}) });
+		if (attachments.length === 0) {
+			return post<MessageDTO>(path, {
+				content,
+				...(replyToId ? { replyToId } : {}),
+				...(mentionedUserIds.length > 0 ? { mentionedUserIds } : {}),
+			});
+		}
 
 		const body = new FormData();
 		// The same field name once per file: that is how multipart carries a list,
@@ -410,6 +477,7 @@ export const api = {
 		// Multer puts non-file fields on `req.body`, so the same Zod schema reads
 		// this whether the message arrived as JSON or as multipart.
 		if (replyToId) body.append("replyToId", replyToId);
+		if (mentionedUserIds.length > 0) body.append("mentionedUserIds", JSON.stringify(mentionedUserIds));
 
 		return new Promise<MessageDTO>((resolve, reject) => {
 			const upload = new XMLHttpRequest();
@@ -436,6 +504,78 @@ export const api = {
 			});
 			upload.addEventListener("error", () => reject(new Error("The image upload was interrupted")));
 			upload.send(body);
+		});
+	},
+
+	sendFile(
+		conversationId: string,
+		file: File,
+		content = "",
+		onProgress?: (percent: number) => void,
+		replyToId?: string,
+	): Promise<MessageDTO> {
+		const body = new FormData();
+		body.append(FILE_FIELD, file);
+		if (content) body.append("content", content);
+		if (replyToId) body.append("replyToId", replyToId);
+
+		return uploadMessage(conversationId, body, onProgress, "The file upload was interrupted");
+	},
+
+	sendVoice(conversationId: string, recording: Blob, onProgress?: (percent: number) => void): Promise<MessageDTO> {
+		const body = new FormData();
+		body.append(VOICE_FIELD, recording, "voice-message");
+
+		return uploadMessage(conversationId, body, onProgress, "The voice upload was interrupted");
+	},
+
+	forwardMessage(conversationId: string, sourceMessageId: string): Promise<MessageDTO> {
+		return post<MessageDTO>(`/conversations/${conversationId}/messages`, { forwardOfMessageId: sourceMessageId });
+	},
+
+	listConversationMedia(
+		conversationId: string,
+		kind: AttachmentKind,
+		limit = 40,
+		before?: string,
+	): Promise<AttachmentPageDTO> {
+		const params = new URLSearchParams({ kind, limit: String(limit) });
+		if (before) params.set("before", before);
+
+		return get<AttachmentPageDTO>(`/conversations/${conversationId}/media?${params.toString()}`);
+	},
+
+	listConversationLinks(conversationId: string, limit = 40, before?: string): Promise<MessageLinkPageDTO> {
+		const params = new URLSearchParams({ limit: String(limit) });
+		if (before) params.set("before", before);
+
+		return get<MessageLinkPageDTO>(`/conversations/${conversationId}/links?${params.toString()}`);
+	},
+
+	listSavedMessages(limit = 40, before?: string): Promise<SavedMessagePageDTO> {
+		const params = new URLSearchParams({ limit: String(limit) });
+		if (before) params.set("before", before);
+
+		return get<SavedMessagePageDTO>(`/me/saved?${params.toString()}`);
+	},
+
+	saveMessage(conversationId: string, messageId: string): Promise<void> {
+		return request<void>(`/conversations/${conversationId}/messages/${messageId}/star`, { method: "PUT" });
+	},
+
+	removeSavedMessage(conversationId: string, messageId: string): Promise<void> {
+		return request<void>(`/conversations/${conversationId}/messages/${messageId}/star`, { method: "DELETE" });
+	},
+
+	pinMessage(conversationId: string, messageId: string): Promise<PinnedMessageDTO[]> {
+		return request<PinnedMessageDTO[]>(`/conversations/${conversationId}/messages/${messageId}/pin`, {
+			method: "PUT",
+		});
+	},
+
+	unpinMessage(conversationId: string, messageId: string): Promise<PinnedMessageDTO[]> {
+		return request<PinnedMessageDTO[]>(`/conversations/${conversationId}/messages/${messageId}/pin`, {
+			method: "DELETE",
 		});
 	},
 
@@ -493,7 +633,7 @@ export const api = {
 	},
 
 	/**
-	 * Adds your reaction of this kind, or takes it off if it is already there.
+	 * Sets your one reaction on this message, or takes it off if it is already this emoji.
 	 *
 	 * One call for both, so the caller never tracks which it is doing — the same
 	 * button does both, and a client that decided for itself would disagree with
@@ -502,8 +642,8 @@ export const api = {
 	 * Like the other message writes, the response is not what renders it: the
 	 * server broadcasts `message:updated` with the whole reaction list.
 	 */
-	toggleReaction(conversationId: string, messageId: string, kind: ReactionKind): Promise<MessageDTO> {
-		const body: ToggleReactionRequest = { kind };
+	toggleReaction(conversationId: string, messageId: string, emoji: ReactionEmoji): Promise<MessageDTO> {
+		const body: ToggleReactionRequest = { emoji };
 
 		return request<MessageDTO>(`/conversations/${conversationId}/messages/${messageId}/reactions`, {
 			method: "PUT",

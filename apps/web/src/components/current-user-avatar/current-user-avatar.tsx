@@ -69,7 +69,7 @@ export function CurrentUserAvatar({ user, size = "lg" }: CurrentUserAvatarProps)
 					<span
 						role="status"
 						aria-label="Saving your profile picture"
-						className="absolute inset-0 flex items-center justify-center rounded-lg bg-paper/70"
+						className="absolute inset-0 flex items-center justify-center rounded-full bg-paper/70"
 					>
 						<Loader2 className="size-4 animate-spin text-ink-soft" />
 					</span>

@@ -19,7 +19,11 @@ describe("getReadReceipt", () => {
 	it("puts the receipt on your newest message the other person has reached", () => {
 		const participants = [makeParticipant("minh", "Minh"), makeParticipant("an", "An", "m3")];
 
-		expect(getReadReceipt(messages, participants, "minh", true)).toEqual({ messageId: "m3", readerCount: 1 });
+		expect(getReadReceipt(messages, participants, "minh", true)).toEqual({
+			messageId: "m3",
+			readerCount: 1,
+			readerIds: ["an"],
+		});
 	});
 
 	it("walks back to your message when the marker sits on someone else's", () => {
@@ -27,7 +31,11 @@ describe("getReadReceipt", () => {
 		// seen is the one before it.
 		const participants = [makeParticipant("minh", "Minh"), makeParticipant("an", "An", "m2")];
 
-		expect(getReadReceipt(messages, participants, "minh", true)).toEqual({ messageId: "m1", readerCount: 1 });
+		expect(getReadReceipt(messages, participants, "minh", true)).toEqual({
+			messageId: "m1",
+			readerCount: 1,
+			readerIds: ["an"],
+		});
 	});
 
 	it("ignores your own marker, so reading your own messages is not a receipt", () => {
@@ -44,7 +52,11 @@ describe("getReadReceipt", () => {
 		];
 
 		// Binh stopped at m1, so they are not among the readers of m4.
-		expect(getReadReceipt(messages, participants, "minh", true)).toEqual({ messageId: "m4", readerCount: 1 });
+		expect(getReadReceipt(messages, participants, "minh", true)).toEqual({
+			messageId: "m4",
+			readerCount: 1,
+			readerIds: ["an"],
+		});
 	});
 
 	it("counts everyone who has reached the same message", () => {
@@ -54,7 +66,11 @@ describe("getReadReceipt", () => {
 			makeParticipant("binh", "Binh", "m4"),
 		];
 
-		expect(getReadReceipt(messages, participants, "minh", true)).toEqual({ messageId: "m4", readerCount: 2 });
+		expect(getReadReceipt(messages, participants, "minh", true)).toEqual({
+			messageId: "m4",
+			readerCount: 2,
+			readerIds: ["an", "binh"],
+		});
 	});
 
 	it("shows nothing to a viewer who has turned their own receipts off", () => {

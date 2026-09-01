@@ -2,7 +2,10 @@ import type {
 	ConversationDTO,
 	ConversationLeftEvent,
 	ConversationReadEvent,
+	ConversationSelfUpdatedEvent,
 	ConversationUpdatedEvent,
+	MessageDTO,
+	PinnedMessageDTO,
 } from "@chatty/shared-types";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/api/client";
@@ -13,6 +16,20 @@ interface ConversationList {
 	conversations: ConversationDTO[];
 	/** Re-fetches the whole list. The sidebar's ordering and previews come from it. */
 	refresh: () => void;
+	isShowingArchived: boolean;
+	setIsShowingArchived: (isShowing: boolean) => void;
+}
+
+function orderConversationRows(rows: ConversationDTO[], newlyPinnedId?: string): ConversationDTO[] {
+	const pinned = rows.filter((conversation) => conversation.isPinned);
+	if (newlyPinnedId) {
+		pinned.sort((left, right) => Number(right.id === newlyPinnedId) - Number(left.id === newlyPinnedId));
+	}
+	const unpinned = rows
+		.filter((conversation) => !conversation.isPinned)
+		.sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+
+	return [...pinned, ...unpinned];
 }
 
 /**
@@ -33,25 +50,112 @@ export function useConversationList(
 	onConversationLeft: (conversationId: string) => void,
 ) {
 	const [conversations, setConversations] = useState<ConversationDTO[]>([]);
+	const [isShowingArchived, setIsShowingArchived] = useState(false);
 
 	usePresenceLastSeenSync(setConversations);
 
 	const refresh = useCallback(() => {
-		void api.listConversations().then(setConversations);
-	}, []);
+		void api.listConversations(isShowingArchived).then(setConversations);
+	}, [isShowingArchived]);
 
 	useEffect(refresh, [refresh]);
 
 	useSocketEvent(
-		"conversation:new",
-		useCallback((conversation: ConversationDTO) => {
-			// Appears immediately even though it has no messages yet — that is the
-			// whole point of the event. De-duplicated by id because the creator
-			// also receives it, and they already added it from the HTTP response.
+		"message:new",
+		useCallback(
+			(message: MessageDTO) => {
+				setConversations((current) => {
+					const next = current.map((conversation) => {
+						if (conversation.id !== message.conversationId) return conversation;
+						const shouldRaiseUnread = message.kind === "user" && message.author?.id !== currentUserId;
+
+						return {
+							...conversation,
+							lastMessage: message,
+							updatedAt: message.createdAt,
+							unreadCount: conversation.unreadCount + (shouldRaiseUnread ? 1 : 0),
+						};
+					});
+
+					return orderConversationRows(next);
+				});
+			},
+			[currentUserId],
+		),
+	);
+
+	useSocketEvent(
+		"message:updated",
+		useCallback((message: MessageDTO) => {
 			setConversations((current) =>
-				current.some((existing) => existing.id === conversation.id) ? current : [conversation, ...current],
+				current.map((conversation) =>
+					conversation.id === message.conversationId && conversation.lastMessage?.id === message.id
+						? { ...conversation, lastMessage: message }
+						: conversation,
+				),
 			);
 		}, []),
+	);
+
+	useSocketEvent(
+		"message:pins-updated",
+		useCallback((event: { conversationId: string; pinnedMessages: PinnedMessageDTO[] }) => {
+			setConversations((current) =>
+				current.map((conversation) =>
+					conversation.id === event.conversationId
+						? { ...conversation, pinnedMessages: event.pinnedMessages }
+						: conversation,
+				),
+			);
+		}, []),
+	);
+
+	useSocketEvent(
+		"conversation:self-updated",
+		useCallback(
+			(event: ConversationSelfUpdatedEvent) => {
+				setConversations((current) => {
+					const target = current.find((conversation) => conversation.id === event.conversationId);
+					if (!target) {
+						refresh();
+
+						return current;
+					}
+					if (event.isArchived !== isShowingArchived) {
+						return current.filter((conversation) => conversation.id !== event.conversationId);
+					}
+					const next = current.map((conversation) =>
+						conversation.id === event.conversationId
+							? {
+									...conversation,
+									isPinned: event.isPinned,
+									isArchived: event.isArchived,
+									mutedUntil: event.mutedUntil,
+								}
+							: conversation,
+					);
+
+					return orderConversationRows(next, event.isPinned ? event.conversationId : undefined);
+				});
+			},
+			[isShowingArchived, refresh],
+		),
+	);
+
+	useSocketEvent(
+		"conversation:new",
+		useCallback(
+			(conversation: ConversationDTO) => {
+				// Appears immediately even though it has no messages yet — that is the
+				// whole point of the event. De-duplicated by id because the creator
+				// also receives it, and they already added it from the HTTP response.
+				if (conversation.isArchived !== isShowingArchived) return;
+				setConversations((current) =>
+					current.some((existing) => existing.id === conversation.id) ? current : [conversation, ...current],
+				);
+			},
+			[isShowingArchived],
+		),
 	);
 
 	useSocketEvent(
@@ -119,5 +223,5 @@ export function useConversationList(
 		),
 	);
 
-	return { conversations, refresh } satisfies ConversationList;
+	return { conversations, refresh, isShowingArchived, setIsShowingArchived } satisfies ConversationList;
 }

@@ -4,6 +4,13 @@
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>Chatty</title>
+		<!--
+			Blocking, and in the head on purpose: it stamps the resolved theme on
+			<html> before the body paints. Deferred, or moved below the root div,
+			and every dark-theme reader gets a white flash on every navigation.
+			See the comment in the file for why it is not inline.
+		-->
+		<script src="/theme.js"></script>
 	</head>
 	<body>
 		<div id="root"></div>

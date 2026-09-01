@@ -3,13 +3,106 @@ import { NotFoundError, ValidationError } from "../src/lib/errors.js";
 import { prisma } from "../src/lib/prisma.js";
 import { userRoom } from "../src/lib/socket-bus.js";
 import { register } from "../src/modules/auth/auth.service.js";
-import { createConversation, listConversationsForUser } from "../src/modules/conversations/conversations.service.js";
+import {
+	createConversation,
+	listConversationsForUser,
+	setConversationArchived,
+	setConversationMuted,
+	setConversationPinned,
+} from "../src/modules/conversations/conversations.service.js";
 import { installFakeIO, type FakeIO } from "./fake-io.js";
 
 let fakeIO: FakeIO;
 
 beforeEach(() => {
 	fakeIO = installFakeIO();
+});
+
+describe("per-participant conversation organisation", () => {
+	it("archives only the caller's row and announces it only to that user's room", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const conversation = await createConversation(minhId, { participantIds: [anId] });
+		fakeIO.emits.length = 0;
+
+		await setConversationArchived(minhId, conversation.id, { archived: true });
+
+		await expect(listConversationsForUser(minhId)).resolves.toEqual([]);
+		expect((await listConversationsForUser(minhId, true))[0]?.id).toBe(conversation.id);
+		expect((await listConversationsForUser(anId))[0]?.isArchived).toBe(false);
+		expect(fakeIO.emits).toContainEqual({
+			room: userRoom(minhId),
+			event: "conversation:self-updated",
+			payload: expect.objectContaining({ conversationId: conversation.id, isArchived: true }),
+		});
+		expect(fakeIO.emits.some((emit) => emit.room === userRoom(anId))).toBe(false);
+	});
+
+	it("pinning an archived conversation restores it to the main list", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const conversation = await createConversation(minhId, { participantIds: [anId] });
+		await setConversationArchived(minhId, conversation.id, { archived: true });
+
+		const event = await setConversationPinned(minhId, conversation.id, { pinned: true });
+
+		expect(event).toMatchObject({ isPinned: true, isArchived: false });
+		expect((await listConversationsForUser(minhId))[0]?.id).toBe(conversation.id);
+	});
+
+	it("refuses a sixth pinned conversation", async () => {
+		const minhId = await createUser("minh");
+		for (let index = 0; index < 5; index += 1) {
+			const peerId = await createUser(`peer${String(index)}`);
+			const conversation = await createConversation(minhId, { participantIds: [peerId] });
+			await setConversationPinned(minhId, conversation.id, { pinned: true });
+		}
+		const lastPeerId = await createUser("lastpeer");
+		const sixth = await createConversation(minhId, { participantIds: [lastPeerId] });
+
+		await expect(setConversationPinned(minhId, sixth.id, { pinned: true })).rejects.toThrow(
+			"You can pin up to 5 conversations",
+		);
+	});
+
+	it("stores mute expiry on the caller without changing the other participant", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const conversation = await createConversation(minhId, { participantIds: [anId] });
+		const until = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString();
+
+		await setConversationMuted(minhId, conversation.id, { until });
+
+		expect((await listConversationsForUser(minhId))[0]?.mutedUntil).toBe(until);
+		expect((await listConversationsForUser(anId))[0]?.mutedUntil).toBeNull();
+	});
+
+	it("orders pinned rows first, then leaves ordinary rows in activity order", async () => {
+		const minhId = await createUser("minh");
+		const firstPeerId = await createUser("firstpeer");
+		const secondPeerId = await createUser("secondpeer");
+		const oldConversation = await createConversation(minhId, { participantIds: [firstPeerId] });
+		const activeConversation = await createConversation(minhId, { participantIds: [secondPeerId] });
+		await prisma.conversation.update({
+			where: { id: oldConversation.id },
+			data: { updatedAt: new Date("2026-01-01T00:00:00.000Z") },
+		});
+		await prisma.conversation.update({
+			where: { id: activeConversation.id },
+			data: { updatedAt: new Date("2026-02-01T00:00:00.000Z") },
+		});
+
+		expect((await listConversationsForUser(minhId)).map((item) => item.id)).toEqual([
+			activeConversation.id,
+			oldConversation.id,
+		]);
+
+		await setConversationPinned(minhId, oldConversation.id, { pinned: true });
+		expect((await listConversationsForUser(minhId)).map((item) => item.id)).toEqual([
+			oldConversation.id,
+			activeConversation.id,
+		]);
+	});
 });
 
 /** Creates a user and returns their id, so tests read as intent rather than setup. */

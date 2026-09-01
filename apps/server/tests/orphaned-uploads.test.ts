@@ -47,8 +47,8 @@ async function writeAvatarFile(userId: string, ageMs = 0): Promise<string> {
  * Not a real image: nothing in the sweep decodes one, and generating WebP through
  * sharp for every fixture would be a second of CPU spent proving nothing.
  */
-async function writeAttachmentFile(id: string, ageMs = 0): Promise<string> {
-	const filePath = path.join(attachmentsDirectory, `${id}.webp`);
+async function writeAttachmentFile(id: string, ageMs = 0, suffix = ".webp"): Promise<string> {
+	const filePath = path.join(attachmentsDirectory, `${id}${suffix}`);
 	await writeFile(filePath, "not really an image");
 
 	if (ageMs > 0) {
@@ -87,7 +87,16 @@ async function createReferencedAttachment(id: string): Promise<void> {
 		select: { id: true },
 	});
 	await prisma.attachment.create({
-		data: { id, messageId: message.id, position: 0, width: 10, height: 10, byteSize: 19 },
+		data: {
+			id,
+			messageId: message.id,
+			conversationId: conversation.id,
+			position: 0,
+			mediaType: "image/webp",
+			width: 10,
+			height: 10,
+			byteSize: 19,
+		},
 		select: { id: true },
 	});
 }
@@ -128,14 +137,18 @@ describe("sweepOrphanedAttachments", () => {
 		await expect(sweepOrphanedAttachments()).resolves.toBe(0);
 	});
 
-	it("sorts a directory holding both kinds", async () => {
-		const orphan = await writeAttachmentFile("orphan3", WELL_PAST_GRACE_MS);
-		const kept = await writeAttachmentFile("kept3", WELL_PAST_GRACE_MS);
+	it("keeps every derivative of a live id and removes every file of an orphan", async () => {
+		const orphanImage = await writeAttachmentFile("orphan3", WELL_PAST_GRACE_MS);
+		const orphanFile = await writeAttachmentFile("orphan3", WELL_PAST_GRACE_MS, ".bin");
+		const orphanThumb = await writeAttachmentFile("orphan3", WELL_PAST_GRACE_MS, "_t.webp");
+		const keptImage = await writeAttachmentFile("kept3", WELL_PAST_GRACE_MS);
+		const keptFile = await writeAttachmentFile("kept3", WELL_PAST_GRACE_MS, ".bin");
+		const keptThumb = await writeAttachmentFile("kept3", WELL_PAST_GRACE_MS, "_t.webp");
 		await createReferencedAttachment("kept3");
 
 		await expect(sweepOrphanedAttachments()).resolves.toBe(1);
-		await expect(exists(orphan)).resolves.toBe(false);
-		await expect(exists(kept)).resolves.toBe(true);
+		for (const orphan of [orphanImage, orphanFile, orphanThumb]) await expect(exists(orphan)).resolves.toBe(false);
+		for (const kept of [keptImage, keptFile, keptThumb]) await expect(exists(kept)).resolves.toBe(true);
 	});
 });
 

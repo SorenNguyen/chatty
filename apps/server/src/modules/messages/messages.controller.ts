@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { ValidationError } from "../../lib/errors.js";
+import { MAX_FILE_BYTES, MAX_VOICE_UPLOAD_BYTES } from "../../middlewares/upload-image.js";
 import {
 	editMessageSchema,
 	listMessagesQuerySchema,
@@ -20,27 +21,48 @@ export async function sendMessageController(req: Request, res: Response): Promis
 
 	// `upload.array` puts the files here. Narrowed rather than trusted: the typing
 	// allows multer's field-map form, which this route never uses.
-	const files = Array.isArray(req.files) ? req.files : [];
+	const uploaded = !Array.isArray(req.files) && req.files ? req.files : {};
+	const images = uploaded.attachment ?? [];
+	const file = uploaded.file?.[0];
+	const voice = uploaded.voice?.[0];
+	if (images.some((image) => image.size > 10 * 1024 * 1024)) {
+		throw new ValidationError("Image must be smaller than 10MB");
+	}
+	if (file && file.size > MAX_FILE_BYTES) throw new ValidationError("File must be smaller than 25MB");
+	if (voice && voice.size > MAX_VOICE_UPLOAD_BYTES) {
+		throw new ValidationError("Voice message must be smaller than 16MB");
+	}
 
 	// The one rule that spans body and files, so it cannot live in either schema:
 	// a message has to be something. Without it, posting `{}` stores a row with
 	// no text and no image that renders as an empty bubble nobody can delete.
-	if (!content && files.length === 0 && !input.stickerId) {
-		throw new ValidationError("A message needs text, an image, or both");
+	if (!content && images.length === 0 && !file && !voice && !input.stickerId && !input.forwardOfMessageId) {
+		throw new ValidationError("A message needs text or an attachment");
 	}
 
 	// A sticker is the whole message. Letting it arrive alongside a caption or
 	// files would mean deciding how a bare, oversized image composes with a
 	// bubble, and there is no answer to that worth having.
-	if (input.stickerId && (content || files.length > 0)) {
+	if (input.stickerId && (content || images.length > 0 || file || voice || input.forwardOfMessageId)) {
 		throw new ValidationError("A sticker is sent on its own");
+	}
+	if (images.length > 0 && file) throw new ValidationError("Send images or one file, not both");
+	if (voice && (content || images.length > 0 || file || input.stickerId || input.forwardOfMessageId)) {
+		throw new ValidationError("A voice message is sent on its own");
+	}
+	if (input.forwardOfMessageId && (content || images.length > 0 || file || voice || input.stickerId)) {
+		throw new ValidationError("A forwarded message is sent on its own");
 	}
 
 	const message = await messagesService.sendMessage(req.userId!, conversationId, {
 		content,
 		...(input.replyToId ? { replyToId: input.replyToId } : {}),
 		...(input.stickerId ? { stickerId: input.stickerId } : {}),
-		...(files.length > 0 ? { attachments: files.map((file) => file.buffer) } : {}),
+		...(input.forwardOfMessageId ? { forwardOfMessageId: input.forwardOfMessageId } : {}),
+		...(input.mentionedUserIds ? { mentionedUserIds: input.mentionedUserIds } : {}),
+		...(images.length > 0 ? { attachments: images.map((image) => image.buffer) } : {}),
+		...(file ? { file: { buffer: file.buffer, fileName: file.originalname } } : {}),
+		...(voice ? { voice: voice.buffer } : {}),
 	});
 	res.status(201).json(message);
 }
@@ -121,4 +143,42 @@ export async function toggleReactionController(req: Request, res: Response): Pro
 		input,
 	);
 	res.status(200).json(message);
+}
+
+export async function saveMessageController(req: Request, res: Response): Promise<void> {
+	await messagesService.saveMessageForUser(
+		req.userId!,
+		req.params.conversationId as string,
+		req.params.messageId as string,
+	);
+	res.status(204).send();
+}
+
+export async function removeSavedMessageController(req: Request, res: Response): Promise<void> {
+	await messagesService.removeSavedMessage(
+		req.userId!,
+		req.params.conversationId as string,
+		req.params.messageId as string,
+	);
+	res.status(204).send();
+}
+
+export async function pinMessageController(req: Request, res: Response): Promise<void> {
+	const pinnedMessages = await messagesService.setMessagePinned(
+		req.userId!,
+		req.params.conversationId as string,
+		req.params.messageId as string,
+		true,
+	);
+	res.status(200).json(pinnedMessages);
+}
+
+export async function unpinMessageController(req: Request, res: Response): Promise<void> {
+	const pinnedMessages = await messagesService.setMessagePinned(
+		req.userId!,
+		req.params.conversationId as string,
+		req.params.messageId as string,
+		false,
+	);
+	res.status(200).json(pinnedMessages);
 }

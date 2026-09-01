@@ -29,13 +29,37 @@ test.describe("reactions", () => {
 		await sendMessage(alicePage, "shipped it");
 		await expect(messages(bobPage).getByText("shipped it")).toBeVisible({ timeout: 15_000 });
 
-		await bobPage.getByLabel("Message actions").click();
-		await bobPage.getByRole("menuitem", { name: "Heart" }).click();
+		await bobPage.getByLabel("React to message").click();
+		await bobPage.getByRole("menuitem", { name: "React with ❤️" }).click();
+
+		const receivedText = messages(bobPage).getByText("shipped it");
+		const receivedReaction = bobPage.getByRole("button", { name: "❤️, 1" });
+		await expect(receivedReaction).toBeVisible({ timeout: 15_000 });
+		const textBox = await receivedText.boundingBox();
+		const reactionBox = await receivedReaction.boundingBox();
+		expect(textBox).not.toBeNull();
+		expect(reactionBox).not.toBeNull();
+		if (!textBox || !reactionBox) throw new Error("Message and reaction must have browser geometry");
+
+		// The chip straddles the bubble's bottom edge — half on the message, half
+		// on the page — which is how Messenger and Instagram both draw it, and it
+		// necessarily reaches into the bubble's 8px of bottom padding. What it must
+		// never reach is the type. This was `>= textBox.y + textBox.height` when
+		// the chip hung clear of the bubble entirely; the tolerance is the padding
+		// it is now allowed to sit in, and a chip covering the descenders it
+		// originally guarded would still be many pixels above this line.
+		expect(reactionBox.y).toBeGreaterThan(textBox.y + textBox.height - 6);
+		expect(reactionBox.x).toBeGreaterThan(textBox.x + textBox.width / 2);
+		// And it really is straddling rather than resting under: its top edge is
+		// inside the bubble the reaction belongs to.
+		const bubbleBox = await messages(bobPage).getByText("shipped it").boundingBox();
+		if (!bubbleBox) throw new Error("The bubble must have browser geometry");
+		expect(reactionBox.y).toBeLessThan(bubbleBox.y + bubbleBox.height + reactionBox.height / 2);
 
 		// Alice is looking at her own message and did nothing, so a chip appearing
 		// on her screen can only be the broadcast.
-		await expect(alicePage.getByRole("button", { name: "Heart, 1" })).toBeVisible({ timeout: 15_000 });
-		await expect(bobPage.getByRole("button", { name: "Heart, 1" })).toBeVisible();
+		await expect(alicePage.getByRole("button", { name: "❤️, 1" })).toBeVisible({ timeout: 15_000 });
+		await expect(bobPage.getByRole("button", { name: "❤️, 1" })).toBeVisible();
 	});
 
 	test("pressing the same reaction again takes it off", async ({ browser }) => {
@@ -55,16 +79,83 @@ test.describe("reactions", () => {
 		await sendMessage(alicePage, "shipped it");
 		await expect(messages(bobPage).getByText("shipped it")).toBeVisible({ timeout: 15_000 });
 
-		await bobPage.getByLabel("Message actions").click();
-		await bobPage.getByRole("menuitem", { name: "Heart" }).click();
-		const chip = bobPage.getByRole("button", { name: "Heart, 1" });
+		await bobPage.getByLabel("React to message").click();
+		await bobPage.getByRole("menuitem", { name: "React with ❤️" }).click();
+		const chip = bobPage.getByRole("button", { name: "❤️, 1" });
 		await expect(chip).toBeVisible({ timeout: 15_000 });
 
-		// The chip is the same toggle as the menu entry: pressing it clears it.
+		// The chip is the same toggle as the bar entry: pressing it clears it.
 		await chip.click();
 
-		await expect(bobPage.getByRole("button", { name: /^Heart,/ })).toHaveCount(0, { timeout: 15_000 });
-		await expect(alicePage.getByRole("button", { name: /^Heart,/ })).toHaveCount(0, { timeout: 15_000 });
+		await expect(bobPage.getByRole("button", { name: /^❤️,/ })).toHaveCount(0, { timeout: 15_000 });
+		await expect(alicePage.getByRole("button", { name: /^❤️,/ })).toHaveCount(0, { timeout: 15_000 });
+	});
+
+	test("a second emoji replaces the first rather than adding one", async ({ browser }) => {
+		// One reaction per person is the rule Messenger, Instagram and Telegram all
+		// implement, and it is enforced by the primary key rather than by the UI —
+		// so the only way to prove the two agree is to press two emoji in a real
+		// browser and count the chips that come back over the socket.
+		const aliceUser = makeUser("Ada");
+		const bobUser = makeUser("Bram");
+
+		const alice = await browser.newContext();
+		const bob = await browser.newContext();
+		const alicePage = await alice.newPage();
+		const bobPage = await bob.newPage();
+
+		await register(bobPage, bobUser);
+		await register(alicePage, aliceUser);
+		await startDirectChat(alicePage, bobUser);
+		await openConversationWith(bobPage, aliceUser);
+
+		await sendMessage(alicePage, "shipped it");
+		await expect(messages(bobPage).getByText("shipped it")).toBeVisible({ timeout: 15_000 });
+
+		await bobPage.getByLabel("React to message").click();
+		await bobPage.getByRole("menuitem", { name: "React with ❤️" }).click();
+		await expect(bobPage.getByRole("button", { name: "❤️, 1" })).toBeVisible({ timeout: 15_000 });
+
+		await bobPage.getByLabel("React to message").click();
+		await bobPage.getByRole("menuitem", { name: "React with 😂" }).click();
+
+		await expect(alicePage.getByRole("button", { name: "😂, 1" })).toBeVisible({ timeout: 15_000 });
+		await expect(alicePage.getByRole("button", { name: /^❤️,/ })).toHaveCount(0);
+		await expect(bobPage.getByRole("button", { name: /^❤️,/ })).toHaveCount(0);
+	});
+
+	test("names the people behind a reaction, which no tooltip can do on a phone", async ({ browser }) => {
+		const aliceUser = makeUser("Ada");
+		const bobUser = makeUser("Bram");
+
+		const alice = await browser.newContext();
+		const bob = await browser.newContext();
+		const alicePage = await alice.newPage();
+		const bobPage = await bob.newPage();
+
+		await register(bobPage, bobUser);
+		await register(alicePage, aliceUser);
+		await startDirectChat(alicePage, bobUser);
+		await openConversationWith(bobPage, aliceUser);
+
+		await sendMessage(alicePage, "shipped it");
+		await expect(messages(bobPage).getByText("shipped it")).toBeVisible({ timeout: 15_000 });
+
+		await bobPage.getByLabel("React to message").click();
+		await bobPage.getByRole("menuitem", { name: "React with 👍" }).click();
+		await expect(alicePage.getByRole("button", { name: "👍, 1" })).toBeVisible({ timeout: 15_000 });
+
+		// Alice opens the list from her own side, so what it names came over the
+		// socket rather than out of the click that made it.
+		await alicePage.getByLabel("Message actions").first().click();
+		await alicePage.getByRole("menuitem", { name: "Who reacted" }).click();
+
+		const panel = alicePage.getByRole("dialog", { name: "Reactions" });
+		await expect(panel).toBeVisible();
+		// Exact, because the row prints the handle under the name and the handle
+		// is built from it — a loose match resolves to both.
+		await expect(panel.getByText(bobUser.displayName, { exact: true })).toBeVisible();
+		await expect(panel.getByText(`@${bobUser.handle}`)).toBeVisible();
 	});
 });
 

@@ -112,6 +112,11 @@ export interface ConversationDTO {
 	 * response to the person who asked.
 	 */
 	unreadCount: number;
+	/** Per-viewer list state; never broadcast to the conversation room. */
+	isPinned: boolean;
+	isArchived: boolean;
+	mutedUntil: string | null;
+	pinnedMessages: PinnedMessageDTO[];
 	updatedAt: string;
 }
 
@@ -123,8 +128,11 @@ export interface ConversationDTO {
  * space before the picture has loaded; without them every arriving image shoves
  * the conversation around as it decodes.
  */
+export type AttachmentKind = "image" | "file" | "audio";
+
 export interface AttachmentDTO {
 	id: string;
+	kind: AttachmentKind;
 	/**
 	 * Absolute, and **signed and short-lived** — unlike `UserDTO.avatarUrl`,
 	 * which is public and cached forever.
@@ -144,9 +152,45 @@ export interface AttachmentDTO {
 	 *   `id`.
 	 */
 	url: string;
-	width: number;
-	height: number;
+	thumbUrl: string | null;
+	width: number | null;
+	height: number | null;
 	byteSize: number;
+	fileName: string | null;
+	mediaType: string;
+	durationMs: number | null;
+	waveform: number[];
+}
+
+export interface AttachmentWithMessageDTO extends AttachmentDTO {
+	messageId: string;
+	messageCreatedAt: string;
+	authorName: string | null;
+}
+
+export interface AttachmentPageDTO {
+	items: AttachmentWithMessageDTO[];
+	hasMore: boolean;
+}
+
+export interface MessageLinkDTO {
+	id: string;
+	messageId: string;
+	url: string;
+	createdAt: string;
+	authorName: string | null;
+}
+
+export interface MessageLinkPageDTO {
+	items: MessageLinkDTO[];
+	hasMore: boolean;
+}
+
+export interface PinnedMessageDTO {
+	messageId: string;
+	content: string;
+	pinnedAt: string;
+	pinnedById: string;
 }
 
 /**
@@ -160,27 +204,33 @@ export interface AttachmentDTO {
 export type MessageKind = "user" | "system";
 
 /**
- * The closed set of marks a message can carry.
+ * One emoji, as a reaction.
  *
- * Deliberately not "any emoji". The client draws each of these from the same
- * icon set as the rest of the app, in ink, so a reaction stays part of the page
- * instead of being the one full-colour object on it — and a closed set makes
- * "the same reaction" decidable, which a free string does not: U+2764 and
- * U+2764 U+FE0F are two strings and one heart.
+ * An alias over `string`, so it carries no guarantee the type system can check —
+ * which is exactly why the rule lives somewhere that can. The server accepts a
+ * single fully-qualified RGI emoji and rejects everything else at the request
+ * boundary, and that is what makes "the same reaction" decidable: U+2764 and
+ * U+2764 U+FE0F are two strings and one heart, and only the qualified one gets
+ * through. Named rather than inlined so every signature that carries one says so.
+ *
+ * This was a closed union of five names until phase 29. The set is open now for
+ * the reason every other messenger's is: a reaction is a reply that costs one
+ * tap, and five words is not a vocabulary.
  */
-export type ReactionKind = "heart" | "thumbs-up" | "laugh" | "frown" | "angry";
+export type ReactionEmoji = string;
 
 /**
- * One kind of reaction on a message, and everyone who left it.
+ * One emoji left on a message, and everyone who left it.
  *
  * `userIds` rather than a count plus an `isMine` flag, because this DTO is
  * broadcast: the server sends one payload to every socket in the conversation,
  * so anything answering "is this me?" would be answering it for whoever
  * happened to trigger the write. The viewer holds their own id and decides.
- * It also means a client can name the people without another request.
+ * It also means a client can name the people without another request — which is
+ * the whole of what the reactor list is built from.
  */
 export interface ReactionDTO {
-	kind: ReactionKind;
+	emoji: ReactionEmoji;
 	userIds: string[];
 }
 
@@ -265,6 +315,9 @@ export interface MessageDTO {
 	 * also a picture sent without a caption, and the two render nothing alike.
 	 */
 	isSticker: boolean;
+	isForwarded: boolean;
+	/** Stable ids; display names are resolved from current participants. */
+	mentionedUserIds: string[];
 	createdAt: string;
 	/**
 	 * When author-only edit and “delete for everyone” actions expire.
@@ -293,8 +346,8 @@ export interface MessageDTO {
 	 */
 	deletedAt: string | null;
 	/**
-	 * Every reaction on this message, one entry per kind, empty when there are
-	 * none. Order is the server's and is stable: the kind that was first used on
+	 * Every reaction on this message, one entry per emoji, empty when there are
+	 * none. Order is the server's and is stable: the emoji that was first used on
 	 * this message comes first, so a chip does not jump position as counts change.
 	 */
 	reactions: ReactionDTO[];
@@ -341,6 +394,11 @@ export interface MessageSearchResultDTO {
 }
 
 export interface MessageSearchPageDTO {
+	results: MessageSearchResultDTO[];
+	hasMore: boolean;
+}
+
+export interface SavedMessagePageDTO {
 	results: MessageSearchResultDTO[];
 	hasMore: boolean;
 }
@@ -559,17 +617,31 @@ export interface SendMessageRequest {
 	 * conversation the sender was never in and leak its text.
 	 */
 	replyToId?: string | undefined;
+	forwardOfMessageId?: string | undefined;
+	mentionedUserIds?: string[] | undefined;
+}
+
+export interface ConversationArchiveRequest {
+	archived: boolean;
+}
+
+export interface ConversationPinRequest {
+	pinned: boolean;
+}
+
+export interface ConversationMuteRequest {
+	until: string | null;
 }
 
 /**
  * Body of `PUT /conversations/:conversationId/messages/:messageId/reactions`.
  *
- * A toggle, not an add: sending the kind you already left removes it. One
+ * A toggle, not an add: sending the emoji you already left removes it. One
  * endpoint rather than a POST and a DELETE, because the client never needs to
  * know which of the two it is doing — the button is the same button.
  */
 export interface ToggleReactionRequest {
-	kind: ReactionKind;
+	emoji: ReactionEmoji;
 }
 
 /**
@@ -668,6 +740,13 @@ export interface ConversationLeftEvent {
 	conversationId: string;
 }
 
+export interface ConversationSelfUpdatedEvent {
+	conversationId: string;
+	isPinned: boolean;
+	isArchived: boolean;
+	mutedUntil: string | null;
+}
+
 /** Events the server pushes down. The client only listens to these. */
 export interface ServerToClientEvents {
 	"message:new": (message: MessageDTO) => void;
@@ -703,6 +782,8 @@ export interface ServerToClientEvents {
 	"conversation:read": (event: ConversationReadEvent) => void;
 	"conversation:updated": (event: ConversationUpdatedEvent) => void;
 	"conversation:left": (event: ConversationLeftEvent) => void;
+	"conversation:self-updated": (event: ConversationSelfUpdatedEvent) => void;
+	"message:pins-updated": (event: { conversationId: string; pinnedMessages: PinnedMessageDTO[] }) => void;
 	"typing:update": (event: TypingEvent) => void;
 	"presence:update": (event: PresenceEvent) => void;
 	"presence:snapshot": (event: PresenceSnapshotEvent) => void;

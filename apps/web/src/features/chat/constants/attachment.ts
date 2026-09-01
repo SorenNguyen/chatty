@@ -21,6 +21,30 @@ export const ACCEPTED_IMAGE_TYPES = "image/*";
  * than after ten megabytes have crossed the wire.
  */
 export const MAX_ATTACHMENTS_PER_MESSAGE = 10;
+export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+export const MAX_FILE_BYTES = 25 * 1024 * 1024;
+export const MAX_FILES_PER_MESSAGE = 1;
+export const REFUSED_FILE_EXTENSIONS = [
+	"exe",
+	"msi",
+	"bat",
+	"cmd",
+	"com",
+	"scr",
+	"pif",
+	"jar",
+	"apk",
+	"dmg",
+	"app",
+	"sh",
+	"ps1",
+	"vbs",
+	"js",
+	"jse",
+	"wsf",
+	"lnk",
+	"reg",
+] as const;
 
 /**
  * The side of the album's top photograph, in pixels.
@@ -80,3 +104,16 @@ export const ALBUM_CARDS_BEHIND = 2;
  * proportions of the picture itself.
  */
 export const STICKER_DISPLAY_SIZE = 128;
+
+/**
+ * How long the composer waits for the browser to decode a picked image before
+ * giving up on knowing its size.
+ *
+ * A local decode is a few milliseconds; this is not a budget, it is a guard
+ * against never finishing. A corrupt file fires neither `load` nor `error` on
+ * some browsers, and jsdom fires neither on any file at all — without a
+ * deadline the first optimistic image send would hang instead of appearing.
+ * Missing the deadline is not a failure: the bubble goes up without dimensions,
+ * exactly as it does for a stored image the server could not measure.
+ */
+export const IMAGE_MEASURE_TIMEOUT_MS = 1_500;

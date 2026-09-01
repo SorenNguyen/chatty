@@ -17,6 +17,18 @@ export const sendMessageSchema = z.object({
 	// service: whether this id is in the caller's tray is not something a body
 	// schema can see, and it is the half that matters.
 	stickerId: z.string().min(1).max(64).optional(),
+	forwardOfMessageId: z.string().min(1).max(64).optional(),
+	mentionedUserIds: z.preprocess(
+		(value) => {
+			if (typeof value !== "string") return value;
+			try {
+				return JSON.parse(value) as unknown;
+			} catch {
+				return value;
+			}
+		},
+		z.array(z.string().min(1).max(64)).max(50).optional(),
+	),
 });
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;
 
@@ -39,12 +51,31 @@ export type EditMessageInput = z.infer<typeof editMessageSchema>;
 export type EditMessageContract = AssertAssignable<EditMessageInput, EditMessageRequest>;
 
 /**
- * The wire spelling of the reaction set, mirrored from `ReactionKind` in
- * shared-types. A `z.enum` rather than a plain string is what makes an unknown
- * kind a 400 at the boundary instead of a Prisma error four layers down.
+ * Exactly one fully-qualified RGI emoji, and nothing else.
+ *
+ * This one regex is what lets the column be a free string without "the same
+ * reaction" becoming undecidable. `\p{RGI_Emoji}` matches the emoji the Unicode
+ * standard says are actually recommended for interchange, in their qualified
+ * spelling only — so `❤️` (U+2764 U+FE0F) is a reaction and the bare `❤`
+ * (U+2764) is a 400. Without that, two clients could store two rows for one
+ * heart and every count on the message would be wrong.
+ *
+ * Anchored, so a message-length string of emoji is refused too: a reaction is
+ * one mark. `👍🏽` and the family sequences pass, which is the point of using the
+ * property of *strings* rather than a code-point class.
+ *
+ * Built with `new RegExp` rather than a literal because the `v` flag needs an
+ * ES2024 target and `tsconfig.base.json` sets ES2022 for both apps. Node 22 —
+ * which `engines` already requires — has supported it since 20, so this is a
+ * compiler limit rather than a runtime one, and bumping the shared target to
+ * work around one regex would change the emit for the web bundle too.
  */
+const SINGLE_RGI_EMOJI = new RegExp("^\\p{RGI_Emoji}$", "v");
+
 export const toggleReactionSchema = z.object({
-	kind: z.enum(["heart", "thumbs-up", "laugh", "frown", "angry"]),
+	// `max` before the regex so a hostile megabyte is rejected on its length
+	// rather than run through a Unicode property match.
+	emoji: z.string().max(64).regex(SINGLE_RGI_EMOJI, "Must be a single emoji"),
 });
 export type ToggleReactionInput = z.infer<typeof toggleReactionSchema>;
 

@@ -12,3 +12,16 @@ import { afterEach } from "vitest";
 afterEach(() => {
 	cleanup();
 });
+
+/**
+ * jsdom implements no layout, so it ships no `scrollIntoView` at all — the
+ * method is simply absent from `Element.prototype` and calling it is a
+ * TypeError rather than a no-op.
+ *
+ * Three places in the thread call it (the search jump, the reply-quote jump and
+ * the unread divider), so a component test that renders any of them crashes on
+ * a browser API that has nothing to do with what it is testing. Stubbed once
+ * here rather than in each file; a test that wants to assert on the *call* can
+ * still spy on it.
+ */
+Element.prototype.scrollIntoView ??= function scrollIntoView() {};

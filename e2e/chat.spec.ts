@@ -82,9 +82,13 @@ test.describe("two people, one conversation", () => {
 			"iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAFUlEQVR42mP8z8BQz0AEYBxVSF+FABJADveWkH6oAAAAAElFTkSuQmCC",
 			"base64",
 		);
-		// Scoped to the conversation: the sidebar has a file input too, for the
-		// avatar, and an unscoped locator matches both.
-		await senderPage.getByRole("main").locator('input[type="file"]').setInputFiles({
+		await senderPage.getByRole("main").getByRole("button", { name: "Add an attachment" }).click();
+		await expect(senderPage.getByRole("menu", { name: "Choose an attachment" })).toBeVisible();
+		const fileChooser = senderPage.waitForEvent("filechooser");
+		await senderPage.getByRole("menuitem", { name: "Photos" }).click();
+		await (
+			await fileChooser
+		).setFiles({
 			name: "photo.png",
 			mimeType: "image/png",
 			buffer: png,

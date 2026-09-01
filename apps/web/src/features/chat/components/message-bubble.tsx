@@ -4,7 +4,11 @@ import { INCOMING_BUBBLE_RADIUS, OUTGOING_BUBBLE_RADIUS } from "../constants/mes
 import type { ClusterPosition } from "../types/message-cluster";
 import type { ThreadMessage } from "../types/thread-message";
 import { MessageGallery } from "./message-gallery";
+import { MessageFileCard } from "./message-file-card";
 import { MessageReplyQuote } from "./message-reply-quote";
+import { MessageText } from "./message-text";
+import { VoicePlayer } from "./voice-player";
+import type { ParticipantDTO } from "@chatty/shared-types";
 
 interface MessageBubbleProps {
 	message: ThreadMessage;
@@ -17,6 +21,7 @@ interface MessageBubbleProps {
 	 */
 	jumboCount: number;
 	onJumpToReplyOriginal: () => void;
+	participants: ParticipantDTO[];
 }
 
 /**
@@ -41,9 +46,13 @@ export function MessageBubble({
 	clusterPosition,
 	jumboCount,
 	onJumpToReplyOriginal,
+	participants,
 }: MessageBubbleProps) {
-	const hasImages = message.attachments.length > 0;
-	const sticker = message.isSticker ? message.attachments[0] : undefined;
+	const images = message.attachments.filter((attachment) => attachment.kind === "image");
+	const file = message.attachments.find((attachment) => attachment.kind === "file");
+	const voice = message.attachments.find((attachment) => attachment.kind === "audio");
+	const hasImages = images.length > 0;
+	const sticker = message.isSticker ? images[0] : undefined;
 
 	// A sticker gets no bubble, for the same reason a message of pure emoji does
 	// not: the picture *is* the message, and a fill around it is chrome around
@@ -75,6 +84,7 @@ export function MessageBubble({
 	if (hasImages) {
 		return (
 			<div className={cn("flex min-w-0 flex-col gap-1.5", isMine ? "items-end" : "items-start")}>
+				{message.isForwarded && <span className="eyebrow text-ink-faint">Forwarded</span>}
 				{message.replyTo && (
 					<MessageReplyQuote
 						replyTo={message.replyTo}
@@ -84,22 +94,47 @@ export function MessageBubble({
 				)}
 
 				<MessageGallery
-					attachments={message.attachments}
+					attachments={images}
 					caption={message.content}
 					isMine={isMine}
 					clusterPosition={clusterPosition}
 				/>
 
 				{message.content && (
-					<p
+					<MessageText
+						content={message.content}
+						mentionedUserIds={message.mentionedUserIds}
+						participants={participants}
 						className={cn(
 							"min-w-0 whitespace-pre-wrap px-3.5 py-2 text-sm/[1.55] wrap-break-word",
-							isMine ? "bg-ink text-paper" : "border border-rule bg-paper-raised text-ink",
+							isMine ? "bg-block text-block-ink" : "border border-rule bg-paper-raised text-ink",
 							(isMine ? OUTGOING_BUBBLE_RADIUS : INCOMING_BUBBLE_RADIUS)[clusterPosition],
 						)}
-					>
-						{message.content}
-					</p>
+					/>
+				)}
+			</div>
+		);
+	}
+
+	if (file || voice) {
+		return (
+			<div className={cn("flex min-w-0 flex-col gap-1.5", isMine ? "items-end" : "items-start")}>
+				{message.isForwarded && <span className="eyebrow text-ink-faint">Forwarded</span>}
+				{message.replyTo && (
+					<MessageReplyQuote
+						replyTo={message.replyTo}
+						isMine={isMine}
+						onJumpToOriginal={onJumpToReplyOriginal}
+					/>
+				)}
+				{file ? <MessageFileCard attachment={file} /> : voice ? <VoicePlayer attachment={voice} /> : null}
+				{message.content && (
+					<MessageText
+						content={message.content}
+						mentionedUserIds={message.mentionedUserIds}
+						participants={participants}
+						className="max-w-80 whitespace-pre-wrap text-sm/[1.55] wrap-break-word"
+					/>
 				)}
 			</div>
 		);
@@ -112,18 +147,22 @@ export function MessageBubble({
 				jumboCount > 0
 					? "bg-transparent px-1 py-0.5"
 					: cn(
-							isMine ? "bg-ink text-paper" : "border border-rule bg-paper-raised text-ink",
+							isMine ? "bg-block text-block-ink" : "border border-rule bg-paper-raised text-ink",
 							(isMine ? OUTGOING_BUBBLE_RADIUS : INCOMING_BUBBLE_RADIUS)[clusterPosition],
 							"px-3.5 py-2",
 						),
 			)}
 		>
+			{message.isForwarded && <span className="eyebrow mb-1 block opacity-65">Forwarded</span>}
 			{message.replyTo && (
 				<MessageReplyQuote replyTo={message.replyTo} isMine={isMine} onJumpToOriginal={onJumpToReplyOriginal} />
 			)}
 
 			{message.content && (
-				<p
+				<MessageText
+					content={message.content}
+					mentionedUserIds={message.mentionedUserIds}
+					participants={participants}
 					className={cn(
 						"whitespace-pre-wrap wrap-break-word",
 						// Smaller as the count grows, so three still fit the column a
@@ -132,9 +171,7 @@ export function MessageBubble({
 						jumboCount === 2 && "text-[38px] leading-[1.15]",
 						jumboCount === 3 && "text-[32px] leading-[1.15]",
 					)}
-				>
-					{message.content}
-				</p>
+				/>
 			)}
 		</div>
 	);

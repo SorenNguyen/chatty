@@ -1,6 +1,6 @@
 import type { ConversationDTO, CurrentUserDTO } from "@chatty/shared-types";
 import { Link } from "react-router-dom";
-import { LogOut, Settings } from "lucide-react";
+import { Archive, ArrowLeft, LogOut, Settings } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { Button } from "@/components/button";
 import { cn } from "@/utils/cn";
@@ -15,6 +15,9 @@ interface ConversationSidebarProps {
 	onSelect: (conversationId: string) => void;
 	onConversationStarted: (conversationId: string) => void;
 	onSignOut: () => void;
+	isShowingArchived: boolean;
+	onToggleArchived: () => void;
+	typingByConversation: Record<string, string[]>;
 	className?: string;
 }
 
@@ -34,27 +37,31 @@ export function ConversationSidebar({
 	onSelect,
 	onConversationStarted,
 	onSignOut,
+	isShowingArchived,
+	onToggleArchived,
+	typingByConversation,
 	className,
 }: ConversationSidebarProps) {
 	return (
 		<aside
-			className={cn("flex w-full shrink-0 flex-col border-r border-rule bg-paper-raised md:w-[332px]", className)}
+			className={cn("flex w-full shrink-0 flex-col border-r border-rule bg-paper-raised md:w-[360px]", className)}
 		>
-			<div className="flex items-baseline justify-between px-5 pb-4 pt-5">
-				{/* The one serif on the screen, and the one place the signal colour
-				    is used decoratively rather than to mark something. */}
-				<h1 className="flex items-baseline gap-2 font-display text-[26px] leading-none tracking-tight">
-					Chatty
-					<span aria-hidden="true" className="size-[5px] bg-signal" />
-				</h1>
+			<div className="flex items-center justify-between px-4 pb-3 pt-4">
+				<h1 className="text-[25px] font-bold leading-none tracking-[-0.035em] text-ink">Chats</h1>
+				<Button
+					variant="ghost"
+					onClick={onToggleArchived}
+					aria-label={isShowingArchived ? "Back to conversations" : "Archived"}
+					title={isShowingArchived ? "Back to conversations" : "Archived conversations"}
+					className="size-9 rounded-full bg-paper-sunken p-0 text-ink-soft hover:text-ink"
+				>
+					{isShowingArchived ? <ArrowLeft className="size-4" /> : <Archive className="size-4" />}
+				</Button>
 			</div>
 
 			<NewConversationPanel onConversationStarted={onConversationStarted} />
 
-			<div className="flex items-baseline justify-between px-5 pb-2.5 pt-1">
-				<span className="eyebrow text-ink-faint">Conversations</span>
-				<span className="meta text-ink-faint">{String(conversations.length).padStart(2, "0")}</span>
-			</div>
+			{isShowingArchived && <p className="eyebrow px-5 pb-2 text-ink-faint">Archived conversations</p>}
 
 			<div className="min-h-0 flex-1 overflow-y-auto">
 				<ConversationList
@@ -63,13 +70,14 @@ export function ConversationSidebar({
 					selectedConversationId={selectedConversationId}
 					onlineUserIds={onlineUserIds}
 					onSelect={onSelect}
+					typingByConversation={typingByConversation}
 				/>
 			</div>
 
 			{/* Pinned to the bottom, where an account lives in every application
 			    shell people already use. It sat in the header before, which put the
 			    thing you touch least at the top of the thing you scan most. */}
-			<div className="flex shrink-0 items-center gap-3 border-t border-rule px-5 py-3.5">
+			<div className="flex shrink-0 items-center gap-3 border-t border-rule-soft px-4 py-3">
 				<Avatar user={currentUser} size="sm" />
 
 				<div className="min-w-0 flex-1">

@@ -21,16 +21,39 @@ import { prisma } from "../../lib/prisma.js";
  * membership was already verified. See lib/attachment-token.ts for what that
  * costs.
  */
-export async function getAttachmentFilePath(attachmentId: string, token: string): Promise<string> {
+export interface AttachmentFile {
+	filePath: string;
+	kind: "IMAGE" | "FILE" | "AUDIO";
+	mediaType: string;
+	fileName: string | null;
+}
+
+export async function getAttachmentFile(attachmentId: string, token: string, size?: "thumb"): Promise<AttachmentFile> {
 	if (!isValidAttachmentToken(token, attachmentId)) throw new NotFoundError("Attachment not found");
 
 	// Checked before the disk, so a file left behind by a failed write is not
 	// served as though it were a real attachment.
-	const attachment = await prisma.attachment.findUnique({ where: { id: attachmentId }, select: { id: true } });
+	const attachment = await prisma.attachment.findUnique({
+		where: { id: attachmentId },
+		select: { id: true, kind: true, mediaType: true, fileName: true, hasThumbnail: true },
+	});
 	if (!attachment) throw new NotFoundError("Attachment not found");
+	if (size && (attachment.kind !== "IMAGE" || !attachment.hasThumbnail)) {
+		throw new NotFoundError("Attachment not found");
+	}
 
-	const filePath = await findAttachmentPath(attachmentId);
+	const filePath = await findAttachmentPath(attachmentId, attachment.kind, size === "thumb");
 	if (!filePath) throw new NotFoundError("Attachment not found");
 
-	return filePath;
+	return {
+		filePath,
+		kind: attachment.kind,
+		mediaType: size === "thumb" ? "image/webp" : attachment.mediaType,
+		fileName: attachment.fileName,
+	};
+}
+
+/** Kept as the small service seam used by existing storage tests. */
+export async function getAttachmentFilePath(attachmentId: string, token: string): Promise<string> {
+	return (await getAttachmentFile(attachmentId, token)).filePath;
 }

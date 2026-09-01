@@ -1,33 +1,34 @@
-import { Angry, Frown, Heart, Laugh, ThumbsUp } from "lucide-react";
-import type { ReactionKind } from "@chatty/shared-types";
-import type { ReactionOption } from "../types/reaction";
+import type { ReactionEmoji } from "@chatty/shared-types";
 
 /**
- * The five marks, in the order the picker offers them.
+ * The six the quick row offers, in the order it offers them.
  *
- * Icons rather than emoji, and that is the design rather than a limitation: a
- * full-colour 😂 beside an ink bubble on warm paper is the most saturated thing
- * on the page, and this app spends its one colour on unread counts and things
- * you cannot undo. Drawn from the same set as every other icon, they inherit the
- * square caps and mitred joins the stylesheet imposes and read as part of the
- * page. The set is closed on the server too — see the `ReactionKind` enum.
+ * These six rather than any six: they are what Messenger, Instagram and Telegram
+ * all put in the same bar, so the row is recognised before it is read. The heart
+ * is first because it is what the overwhelming majority of reactions are, and
+ * because it is the one a double-click leaves without opening anything.
  *
- * `label` is not decoration: the chip is a button whose only visible content is
- * a glyph and a number, so this is what a screen reader announces.
+ * It is a *shortcut*, not the set — `+` opens the full picker and any emoji the
+ * server accepts is a reaction. That is the difference from the five-name enum
+ * this replaced, and the reason the row can be this short.
  */
-export const REACTION_OPTIONS: ReactionOption[] = [
-	{ kind: "heart", label: "Heart", Icon: Heart },
-	{ kind: "thumbs-up", label: "Thumbs up", Icon: ThumbsUp },
-	{ kind: "laugh", label: "Laugh", Icon: Laugh },
-	{ kind: "frown", label: "Frown", Icon: Frown },
-	{ kind: "angry", label: "Angry", Icon: Angry },
-];
+export const QUICK_REACTIONS: ReactionEmoji[] = ["❤️", "😂", "😮", "😢", "😡", "👍"];
 
-/** Lookup for rendering a chip, whose kind arrives from the server, not the list above. */
-export const REACTION_BY_KIND: Record<ReactionKind, ReactionOption> = {
-	heart: REACTION_OPTIONS[0]!,
-	"thumbs-up": REACTION_OPTIONS[1]!,
-	laugh: REACTION_OPTIONS[2]!,
-	frown: REACTION_OPTIONS[3]!,
-	angry: REACTION_OPTIONS[4]!,
-};
+/**
+ * What a double-click on a bubble leaves.
+ *
+ * One gesture, no menu, no aim — the fastest thing in the feature, and the same
+ * emoji every other messenger binds to a double-tap.
+ */
+export const DEFAULT_REACTION: ReactionEmoji = "❤️";
+
+/**
+ * How many distinct emoji a message shows before the rest collapse into one
+ * chip.
+ *
+ * Three, and the number is doing real work now that the set is open: a group of
+ * thirty can put thirty different emoji on one sentence, and thirty chips would
+ * be wider than the bubble they hang off. The overflow chip opens the list,
+ * which is where a reaction that did not fit is still readable.
+ */
+export const REACTION_CHIP_LIMIT = 3;

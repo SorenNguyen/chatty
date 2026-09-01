@@ -18,7 +18,7 @@ interface ConversationAvatarProps {
  * The picture for a conversation row.
  *
  * A 1-1 is the other person's avatar, with their presence mark. A group is an
- * ink-filled square carrying the group's own initials — not one member's face,
+ * ink-filled circle carrying the group's own initials — not one member's face,
  * because picking a member would be arbitrary and their presence would read as
  * the group's, and not a generic icon either, which made every group in a
  * sidebar look like the same conversation.
@@ -40,7 +40,7 @@ export function ConversationAvatar({
 			<span
 				aria-hidden="true"
 				className={cn(
-					"flex shrink-0 items-center justify-center bg-ink font-mono font-semibold tracking-tight text-paper",
+					"flex shrink-0 items-center justify-center bg-block font-mono font-semibold tracking-tight text-block-ink",
 					AVATAR_SIZE_CLASSES[size],
 				)}
 			>

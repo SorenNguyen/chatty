@@ -1096,12 +1096,11 @@ IBM Plex Mono and Instrument Serif come from `@fontsource/*` and Vite fingerprin
 bundle. Only the four weights the design uses: Archivo alone ships nine, and each one is a file
 somebody downloads.
 
-**The avatar is a rounded square with a tinted ground and a dark initial**, not a circle with white
-text on a saturated fill. The tints are stored as *pairs* — a ground and an ink that is legible on it
-— because the failure mode of hashing a name into a generated hue is that it eventually lands on
-yellow. A group is ink-filled and carries the group's own initials rather than a generic icon, which
-had made every group in a sidebar look like the same conversation. The presence mark is a square too,
-so it never reads as a notification dot.
+**The avatar is circular everywhere, with a tinted ground and a dark initial.** The tints are stored
+as *pairs* — a ground and an ink that is legible on it — because the failure mode of hashing a name
+into a generated hue is that it eventually lands on yellow. A group is ink-filled and carries the
+group's own initials rather than a generic icon, which had made every group in a sidebar look like the
+same conversation. The presence mark follows the same circular silhouette.
 
 **The destructive button is outlined, not filled.** A solid red block invites the click it exists to
 slow down.
@@ -1219,21 +1218,10 @@ under-describes what works is the same class of lie as one that over-describes i
   answer to what deletion means.
 - **A read marker pointing outside the loaded page shows no "Seen".** Correct rather than wrong (the
   alternative is guessing), but it means a receipt can disappear when you scroll far enough back.
-- **A failed draft is lost when you switch conversations.** The thread's message array is replaced on
-  every conversation change, so a message marked "Not sent" goes with it and takes its text along.
-  Retry and Discard are both right there while the conversation is open, which is the common case; a
-  draft that survives navigation needs somewhere to live outside the open thread.
 - **Notifications need the tab to exist.** They are raised from the socket in the page, so closing
   the tab ends them. Anything more needs a service worker and Web Push — a different piece of
   machinery, and one that needs VAPID keys, which is the same class of blocked-on-a-purchase as the
   mail provider.
-- **An image send is not optimistic.** It keeps the awaited path and its upload progress bar, because
-  an optimistic image bubble has to reserve the picture's space and the client does not know its
-  dimensions until it has decoded the file. See phase 19, item 73.
-- **Typing is only shown for the conversation you have open.** The event arrives for every
-  conversation you are in — `use-typing-participants` drops the rest on purpose, because a sidebar
-  badge for something that expires in seconds is mostly flicker. Real messengers do show it there,
-  so this is a judgement call rather than a settled answer.
 - **The test suite still shares one upload directory across tests.** The database is truncated before
   each test and the filesystem is not, so a file written by one test survives into the next as a
   genuine orphan. Harmless for every suite except the sweep's own, which empties the directory
@@ -1322,6 +1310,11 @@ The `⋯` lost its plate in the same pass. A white rounded chip beside a bubble 
 smaller message; the affordance is now carried by the glyph lifting from faint to full ink.
 
 ### Item 66: reactions
+
+> **Superseded by phase 29, item 91.** The set is open, the chips render emoji, and one person gets
+> one reaction per message. The Unicode half of the argument below is the half that survived: it is
+> now enforced by a regex at the request boundary rather than by an enum column. Everything else
+> here is the reasoning as it stood, kept because the reversal is only legible against it.
 
 A closed set of five, stored as a Postgres enum and drawn from the icon set in ink. Not "any emoji",
 for two reasons: a full-colour 😂 beside an ink bubble is the most saturated thing on a page that
@@ -1458,7 +1451,7 @@ The perceived-quality gap against Telegram/Messenger, in order of how often a us
 | 73 | Optimistic send — a pending bubble immediately, a failed state with retry | Done |
 | 74 | Unread count in the tab title, browser notifications behind a settings toggle | Done |
 | 75 | Confirmation dialogs for a kick and a leave | Done |
-| 76 | Virtualise the message list once histories get long | `planned` — see below |
+| 76 | Virtualise the message list once histories get long | Done in phase 29 — see the note below, then that phase |
 
 ### Item 73: the message is on screen before the server has it
 
@@ -1528,7 +1521,7 @@ failure path aborts the first POST and lets the retry through, then asserts the 
 the recipient's screen **exactly once** — which is the check that would catch the duplicate the whole
 draft-dropping design exists to avoid.
 
-### Item 76, and why it is still `planned`
+### Item 76, and why it stayed `planned` until phase 29
 
 Not deferred for effort. Messages accumulate only through explicit paging, 50 at a time, so reaching
 a DOM large enough to matter takes forty deliberate scroll-ups — the problem is real in principle and
@@ -1543,6 +1536,10 @@ work that is already correct:
   three of those depend on the message before it.
 
 The honest version of this item is a measurement first. Recorded here rather than half-shipped.
+
+**Phase 29 closed it, and both objections above survived intact** — which is why the answer is
+neither of the two things this note refused. Windowing was not adopted and `content-visibility` was
+not adopted; the array is bounded instead. See phase 29, item 94.
 
 ## Phase 20 — Vietnamese-first search — `done`
 
@@ -1710,7 +1707,11 @@ megabyte of table nobody scrolls past the first screen of.
 Keywords carry unaccented Vietnamese alongside English — `cuoi` finds 😂, `tim` finds ❤️ — on the
 same reasoning phase 20's search rests on: unaccented is what actually gets typed.
 
-**Reactions deliberately stayed the closed set of five ink marks**, reversing nothing. The phase 17
+**Reactions deliberately stayed the closed set of five ink marks**, reversing nothing — until phase 29
+reversed exactly this, for a reason this paragraph could not see: the argument was never actually
+implemented. The chips had rendered colour emoji since phase 17 while only the picker stayed in ink,
+so the app was already paying the full-colour cost and getting none of the consistency it was paying
+for. The phase 17
 argument still holds and is still the right one: a full-colour glyph sitting *permanently* beside a
 bubble is the loudest thing on a page that spends its one colour on unread counts and things you
 cannot undo. A picker is transient and dismissed; a reaction is furniture. The Unicode half of that
@@ -1827,6 +1828,237 @@ which produces `/attachments/:id` — a path that looks the id up in a table sti
 every thumbnail in the tray was a 404 and a broken image. The unit test asserted the URL carried a
 token and never asserted its *path*, which is precisely the gap. Found by opening the app;
 `buildStickerUrl` now exists as its own function and the test checks the pathname.
+
+## Phases 24-28 — `done`
+
+Asked for directly, after phase 23: there is no way to *see* what a conversation has accumulated, no
+way to send anything that is not a picture, no voice, and a list of small things every other messenger
+has. Each phase below is specified in full under **[docs/plans/](plans/README.md)** — schema, wire
+types, the decisions and what they cost — so the argument happens before the migration rather than
+halfway through it.
+
+| Phase | Item | Status |
+| --- | --- | --- |
+| 24 | [An attachment that is not a picture](plans/phase-24-any-file-attachments.md) — kind, media type, filename, a download that cannot execute (ADR 0013) | `done` |
+| 25 | [Voice messages](plans/phase-25-voice-messages.md) — recorded anywhere, playable everywhere (ADR 0014) | `done` |
+| 26 | [The vault](plans/phase-26-conversation-vault.md) — media, files, voice, links and saved messages of one conversation, plus thumbnails | `done` |
+| 27 | [A sidebar you can organise](plans/phase-27-sidebar-organisation.md) — archive, pin, mute, and the incremental list item 80 has been waiting for | `done` |
+| 28 | [The small ones](plans/phase-28-small-things.md) — eleven items, two of them closing Known gaps above | `done` |
+
+Order matters for 24 → 25 → 26 only; 27 touches no attachment code and 28's items are independent of
+everything, including each other.
+
+The delivered shape follows the plans: one ordinary file per message, voice normalized to AAC/MP4,
+a cursor-paged vault backed by the denormalized attachment index, per-participant sidebar state sent
+only to personal socket rooms, and incremental row patches rather than a full list request on every
+message. Phase 28 adds local device drafts, unread-position controls, drag/paste, safe linkification,
+forwarding by copy, durable mentions, three message pins, reply context jumps, one keyboard map,
+sidebar typing and group reader avatars.
+
+**Two decisions in there are worth knowing about before reading the rest**, because they reverse
+assumptions this file has repeated since phase 4:
+
+- **The re-encode stops being the security control for every upload.** It cannot be one for a PDF. It
+  is replaced by a set of rules about the *response* — a sniffed media type, an interpretable type
+  stored as `application/octet-stream`, `Content-Disposition: attachment`, and a sandbox CSP — so that
+  nothing uploaded here can execute in a browser on this origin. Audio keeps a re-encode (it has to
+  transcode anyway) and is the only new kind allowed to be served inline. ADR 0013.
+- **`Attachment` gains a denormalised `conversationId`**, which this schema otherwise refuses to do.
+  The vault's query is "one kind, one conversation, newest first" and the column turns it into a single
+  index scan; the fact it duplicates never changes, because a message never moves conversation.
+
+## Phase 29 — a reaction people recognise, and a sheet that turns off — `done`
+
+Five items. Four of them come out of the same observation: the app was correct and looked slightly
+homemade next to the three messengers it is measured against, and in every case the gap was a
+decision that had been made once and never re-examined against what the code actually did.
+
+| # | Item | Status |
+| --- | --- | --- |
+| 91 | Reactions: an open emoji set, one per person, chips that straddle the bubble | Done |
+| 92 | The reactor list — who reacted, and with what | Done |
+| 93 | Light / Dark / System, resolved before the first paint | Done |
+| 94 | Bound the retained thread, closing item 76 | Done |
+| 95 | Optimistic image send, closing a Known gap | Done |
+
+### Item 91: the reactions were arguing with themselves
+
+The closed set of five was defended twice in this file, in phase 17 and again in phase 22, on the
+grounds that a full-colour glyph parked permanently beside a bubble is the loudest thing on a page
+that spends its one colour very deliberately. That is a good argument and the app was not making it.
+`REACTION_OPTIONS` carried both a lucide icon *and* an emoji glyph: the picker drew the icon, the
+chip drew the emoji, and the gutter's quick action drew a third version in `text-signal`. So the page
+was already paying the full-colour cost, on the surface that is permanent, while the ink discipline
+survived only on the surface that is transient and dismissed — precisely backwards from the stated
+rule. One reaction, three appearances, and nothing you clicked looked like what you got.
+
+Given that, the closed set was buying nothing, and it was costing the thing every messenger has: the
+emoji you actually wanted. It is open now.
+
+**What replaced the enum is a regex, not nothing.** The Unicode half of the old argument was always
+the sound half — `❤` and `❤️` are two strings and one heart, and a free column makes "the same
+reaction" undecidable. `toggleReactionSchema` admits `^\p{RGI_Emoji}$` under the `v` flag, which
+matches exactly one emoji in its fully-qualified spelling: `👍🏽` and `🏳️‍🌈` pass, `❤` is a 400, `👍👍`
+is a 400, and one spelling of each reaction reaches the column. It is built with `new RegExp` because
+the `v` flag needs an ES2024 target and `tsconfig.base.json` sets ES2022 for both apps; Node 22 has
+supported it since 20, so bumping the shared target to accommodate one regex would change the web
+bundle's emit for nothing.
+
+**One reaction per person**, which is the rule Messenger, Instagram and Telegram all implement and
+the one the old key did not. `(messageId, userId)` is now the whole primary key, so picking a second
+emoji is an `UPDATE`; the database enforces it rather than the service. With an open set this stops
+being a preference and starts being necessary — the old key let one person put forty distinct chips
+under one sentence.
+
+Three things about how they are drawn, each of which was measured against the same three apps:
+
+- **The chips straddle the bubble's bottom edge.** They used to hang 18px clear of it, which reads as
+  something that fell off the message rather than a sticker put on it. `top-full` with
+  `-translate-y-1/2` makes the overlap exactly half at any chip size, and the row reserves only the
+  half that hangs.
+- **`ring-2 ring-paper` on every chip.** With a slight overlap between them, the ring cuts a
+  page-coloured gap out of the chip behind so two chips read as two objects; against the bubble's own
+  fill the same ring reads as the halo these have in Messenger. The previous `border-rule-soft` was
+  too faint to separate anything and overlapping chips fused into one blur.
+- **Three chips, then `+N`.** An open set has no ceiling on how many distinct emoji a group produces
+  and the bubble has one. The overflow chip opens the reactor list rather than toggling anything.
+
+The quick bar is six emoji and a `+`, floating over the message on hover — the distribution, not a
+compromise: reactions have a very short head, so six covers nearly everything at one click and the
+full picker covers the rest at two. It replaced a row of five line icons buried at the top of the
+overflow menu, which cost two clicks for the most frequent action in the feature. `+` swaps in the
+composer's own `EmojiPicker` rather than opening a second one, so there is one search field and one
+recent list, and an emoji used in a message is one click away as a reaction. A double-click on a
+bubble leaves ❤️ with no menu at all, and drops the word selection the double-click just made.
+
+### Item 92: the answer was in a `title` attribute
+
+Who reacted was a native tooltip, which means it was a hover away on a desktop and **unreachable on
+every touch screen** — on the device most reactions are left from, the app could tell you eleven
+people had reacted and offer no way at all to find out who. `ReactionDetailsPanel` is tabbed by emoji
+with an "All" tab in front, because in a group the interesting question is usually "who disagreed"
+and that should be one tap rather than a scan down a mixed list. The tabs sort by count; the chips
+under the bubble deliberately do not, because nobody is aiming at a tab strip and everybody is aiming
+at a chip.
+
+The tooltip stays. It is still the cheapest possible answer when there is one name in it.
+
+A reactor who has since left the group is counted but not listed: the id is real, the person is not
+in `participants`, and inventing a row for them would be the client making up a name. The count comes
+from the DTO, so the number and the list can disagree — and when they do, the difference is the truth.
+
+### Item 93: the theme is resolved before the first paint, not after it
+
+The palette was already the whole of the work. `scripts/audit-rules.sh` section 29 has kept every
+colour in this app going through a token since phase 16, so a grep of `apps/web/src` finds zero
+numbered swatches and dark mode is a second definition of the same names rather than a sweep through
+fifty files. What it was not was free, and four things had to be pulled out of `ink`/`paper` first:
+
+- **`block` / `block-ink`** — the app's one solid fill, on a message you sent and a group's avatar.
+  `bg-ink text-paper` inverts *together*, so a dark theme would have answered with a white slab
+  covering half the thread: the loudest possible object on a dark screen, and the opposite of what
+  every messenger does with the message you just sent. Dark steps up off the sheet (0.335) rather
+  than inverting against it, so page, received bubble and sent bubble stay in order. A `primary`
+  Button still uses ink/paper directly and should — a call to action is allowed to be the brightest
+  thing in the room; a bubble you will send forty of is not.
+- **`scrim`** — behind a dialog and behind the lightbox. It goes *blacker* in dark rather than
+  lighter, because a 0.235 charcoal at 30% over a 0.185 page darkens nothing at all.
+- **`on-media`** — the lightbox controls and the album's image count. The one token that is the same
+  in both themes, because what it sits on is a stranger's photograph.
+- **The avatar tints invert as pairs**, rather than dimming. A pale ground carried into dark mode is
+  eight bright discs down the one surface in the app meant to be scanned rather than looked at.
+
+`ink-faint` also sits two steps lighter in dark than the light theme's value: the `meta` utility sets
+10.5px, small text needs 4.5:1 in both directions, and the curve is not symmetric — the value that
+clears it on white does not clear it on near-black.
+
+**The bootstrap is a file, not an inline script, and that is a CSP decision.** `nginx.conf.template`
+sets `script-src 'self'` with no `'unsafe-inline'`, and the comment above that policy is explicit
+that adding it would make the rest of the policy decorative. `public/theme.js` is served from this
+origin, blocks in the `<head>`, and stamps the *resolved* theme on `<html>` before the body paints —
+without which every dark-theme reader gets a white flash on every navigation. Resolving in JS rather
+than in CSS is also why `globals.css` needs a single `[data-theme="dark"]` block instead of that
+block plus a `prefers-color-scheme` copy of it kept in sync by hand: a palette written twice is a
+palette that drifts, and the drift shows up as one wrong grey six months later.
+
+The preference is `localStorage`, not the account, on the same reasoning as the notification toggle:
+a laptop at a desk and a phone at night are not asking for the same answer. The OS moving at dusk
+moves the app with it, but only for somebody who chose System — a decision the operating system can
+overrule is not one.
+
+### Item 94: bounding the array, which is what item 76 was actually about
+
+Both objections in the phase 19 note are still correct, so neither of the things it refused was
+adopted. `content-visibility: auto` is worse than that note knew: it applies paint containment while
+the element is *visible* too, so the reaction chips that straddle a bubble and every popover anchored
+`bottom-full` inside a row would be clipped to that row. Windowing still needs heights the cluster
+grammar makes depend on neighbours.
+
+What actually grows without bound is the array React reconciles, and windowing does not shrink it —
+it only stops drawing part of it, at the price of rewriting scroll anchoring, jump-to-message and the
+unread divider, all three of which currently work and are tested. So the array is bounded instead:
+past `MAX_RETAINED_MESSAGES` (four pages) the thread drops its oldest page and sets `hasMoreOlder`
+back to true, which hands re-fetching to the path that fetched it the first time. It is the exact
+inverse of `loadOlder` and needs no machinery of its own.
+
+It only ever happens under three conditions, and each one is a way the reader would otherwise notice:
+they are sitting at the bottom, they are not looking at a jumped-to message, and there is nothing
+newer left to load. The second and third are the same situation from either side — a search result
+opens the thread around an old message with newer ones unloaded, so "scrolled to the bottom" does not
+mean "at the latest".
+
+One trap, and it is the reason `useMessageScroll` now carries a length in its snapshot: a trim looks
+exactly like a prepend. Both change the first id and leave the last id alone. The prepend correction
+adds the height difference to `scrollTop`, and on a trim that difference is *negative* — it would
+throw a reader sitting at the bottom of a thread to the top of it.
+
+### Item 95: the picture goes up before the upload does
+
+The Known gap this closes recorded the right objection: an optimistic gallery has to reserve each
+picture's space, and a gallery that resizes when the upload lands is worse than the progress bar it
+replaced. The objection was about *dimensions*, not about uploads. `toDraftAttachments` decodes the
+picked files first — the browser already has the bytes and it costs milliseconds — so the bubble goes
+up at the size the stored one will be and nothing moves when the real message arrives. A file that
+will not decode still gets a bubble, with null dimensions, which is the same thing the server stores
+for a picture it could not measure and the gallery has always handled.
+
+The composer now empties on a picture send exactly as it does on text, and the progress bar goes with
+it. That is the trade, and it is the one Instagram makes: what replaces the bar is the picture
+itself, held at 60% until the server has it, and a gutter that says "Sending…" and then "Not sent"
+with a retry beside it. The retry works on an image because `pendingUploadsRef` keys the `File`s by
+draft id and the id survives the failure — a `ThreadMessage` has no room for a `File` and should not
+have one. Every exit from a send releases the `blob:` URLs, including the unmount, because a URL that
+is never revoked pins its file in memory for the life of the tab.
+
+### What the browser proves about this phase
+
+Four new specs, and each one asserts something no unit test in this repo can reach:
+
+- **The chip's geometry, measured.** `reactions-and-replies.spec.ts` reads the bounding boxes of the
+  text and the chip and asserts the chip straddles the bubble's bottom edge without reaching the
+  type. The old spec asserted the chip sat entirely below the text box, which is what made it fail
+  when the overlap was introduced — the assertion was stricter than the apps it was modelled on, and
+  loosening it to the padding is the change, not the design.
+- **One reaction per person, over the socket.** Bob presses ❤️ then 😂 and Alice — who did nothing —
+  ends up with exactly one chip. The rule lives in a primary key; only a browser can show the UI and
+  the key agree.
+- **The reactor list names somebody who is not the reader.** Alice opens it from her own side, so
+  what it shows arrived over the socket rather than out of the click that made it.
+- **The theme survives a reload.** `appearance.spec.ts` is mostly about `public/theme.js`: a store
+  with three functions would unit-test green with the stylesheet missing, the attribute misspelled,
+  or that file 404ing — and that file is the entire reason a dark reader does not get a white flash.
+  The second spec sets the OS to dark, picks Light, reloads, and asserts Light held.
+
+### What this phase did not do
+
+- **The unread badge is still `text-paper` on `bg-signal`,** which is about 3.4:1 at 10px in the
+  light theme — under the 4.5:1 small text needs. It happens to be *better* in dark, where the
+  brighter signal takes dark text. Left alone because fixing it changes what the badge looks like,
+  which is a design decision rather than a bug fix, and it predates this phase.
+- **`MAX_RETAINED_MESSAGES` is not tuned against a measurement.** Four pages is reasoned rather than
+  measured — enough that scrolling up does not immediately re-fetch what was dropped. The phase 19
+  note asked for a measurement first and this is still not one; what changed is that the cost is now
+  bounded either way.
 
 ## Verification bar
 

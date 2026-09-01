@@ -5,6 +5,7 @@ export interface ReadReceipt {
 	messageId: string;
 	/** How many other participants have read it. Meaningful in a group; always 1 in a 1-1. */
 	readerCount: number;
+	readerIds: string[];
 }
 
 /**
@@ -56,9 +57,18 @@ export function getReadReceipt(
 		// A system message has no author, so it is never "yours" — a "Seen" under
 		// "Chi left the group" would be claiming a receipt for nobody's message.
 		if (message.author?.id === currentUserId) {
+			const readerIds = others
+				.filter((participant) => {
+					const markerIndex = messages.findIndex((item) => item.id === participant.lastReadMessageId);
+
+					return markerIndex >= index;
+				})
+				.map((participant) => participant.id);
+
 			return {
 				messageId: message.id,
-				readerCount: markerIndexes.filter((markerIndex) => markerIndex >= index).length,
+				readerCount: readerIds.length,
+				readerIds,
 			};
 		}
 	}

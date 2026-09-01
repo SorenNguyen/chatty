@@ -11,6 +11,7 @@ import { conversationsRouter } from "./modules/conversations/conversations.route
 import { messagesRouter } from "./modules/messages/messages.routes.js";
 import { searchRouter } from "./modules/search/search.routes.js";
 import { usersRouter } from "./modules/users/users.routes.js";
+import { conversationVaultRouter, personalVaultRouter } from "./modules/vault/vault.routes.js";
 
 /**
  * Wires up the Express app: middleware, then routes, then the error handler
@@ -70,7 +71,9 @@ export function createApp() {
 	app.use("/users", usersRouter);
 	app.use("/search", searchRouter);
 	app.use("/conversations", conversationsRouter);
+	app.use("/conversations/:conversationId", conversationVaultRouter);
 	app.use("/conversations/:conversationId/messages", messagesRouter);
+	app.use("/me", personalVaultRouter);
 
 	app.use(errorHandler);
 

@@ -1,17 +1,19 @@
-import type { MessageDTO, ParticipantDTO, ReactionKind } from "@chatty/shared-types";
-import { Fragment, useEffect, useState } from "react";
+import type { MessageDTO, ParticipantDTO, ReactionEmoji } from "@chatty/shared-types";
+import { useEffect, useState } from "react";
+import { ArrowDown } from "lucide-react";
 import { Button } from "@/components/button";
 import type { ThreadMessage } from "../types/thread-message";
-import { useMessageScroll } from "../hooks";
-import { getClusterPosition, getReadReceipt, hasMessageTimeGap, isNewDay, isWithinMessageBurst } from "../utils";
-import { DaySeparator } from "./day-separator";
+import { MAX_RETAINED_MESSAGES } from "../constants/pagination";
+import { useMessageEditing, useMessageScroll, useUnreadDivider } from "../hooks";
+import { getReadReceipt } from "../utils";
 import { MessageEditHistory } from "./message-edit-history";
-import { MessageRow } from "./message-row";
-import { MessageTimeSeparator } from "./message-time-separator";
-import { SystemMessage } from "./system-message";
+import { MessageRows } from "./message-rows";
+import { ReactionDetailsPanel } from "./reaction-details-panel";
 
 interface MessageListProps {
+	conversationId: string;
 	messages: ThreadMessage[];
+	unreadCount: number;
 	currentUserId: string;
 	participants: ParticipantDTO[];
 	/**
@@ -52,9 +54,19 @@ interface MessageListProps {
 	/** Both act on a draft this tab failed to send, never on a stored message. */
 	onRetrySend: (draftId: string) => void;
 	onDiscardDraft: (draftId: string) => void;
-	onToggleReaction: (messageId: string, kind: ReactionKind) => void;
+	onToggleReaction: (messageId: string, emoji: ReactionEmoji) => void;
 	/** Puts a message in the composer's reply slot. Owned by the page, which owns the composer. */
 	onReplyToMessage: (message: MessageDTO) => void;
+	onForwardMessage: (message: MessageDTO) => void;
+	onSaveMessage: (messageId: string) => void;
+	onTogglePinMessage: (messageId: string, isPinned: boolean) => void;
+	pinnedMessageIds: string[];
+	onJumpToMessage: (messageId: string) => void;
+	/** Drops the oldest page once the thread outgrows what it needs — see `MAX_RETAINED_MESSAGES`. */
+	onTrimHistory: () => void;
+	requestEditLast: number;
+	requestCancelEdit: number;
+	onEditingStateChange: (isEditing: boolean) => void;
 	targetMessageId?: string | null;
 	onReturnToLatest?: () => void;
 }
@@ -68,7 +80,9 @@ interface MessageListProps {
  * which one is open for editing.
  */
 export function MessageList({
+	conversationId,
 	messages,
+	unreadCount,
 	currentUserId,
 	participants,
 	isGroup,
@@ -87,17 +101,45 @@ export function MessageList({
 	onDiscardDraft,
 	onToggleReaction,
 	onReplyToMessage,
+	onForwardMessage,
+	onSaveMessage,
+	onTogglePinMessage,
+	pinnedMessageIds,
+	onJumpToMessage,
+	onTrimHistory,
+	requestEditLast,
+	requestCancelEdit,
+	onEditingStateChange,
 	targetMessageId,
 	onReturnToLatest,
 }: MessageListProps) {
 	// The scroll container lives here rather than in the page, so everything that
 	// reads or writes scroll position sits in one component.
-	const { containerRef, handleScroll } = useMessageScroll({ messages, hasMoreOlder, isLoadingOlder, onLoadOlder });
+	const { containerRef, handleScroll, isFarFromBottom, scrollToLatest, isPinnedToLatestRef } = useMessageScroll({
+		messages,
+		hasMoreOlder,
+		isLoadingOlder,
+		onLoadOlder,
+	});
 	const readReceipt = getReadReceipt(messages, participants, currentUserId, areReceiptsShared);
-	// Which message is open for editing, by id rather than by index: a page of
-	// older messages prepends and would shift every index under the editor.
-	const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+	const { editingMessageId, startEdit, cancelEdit } = useMessageEditing({
+		messages,
+		currentUserId,
+		requestEditLast,
+		requestCancelEdit,
+		onEditingStateChange,
+	});
 	const [historyMessageId, setHistoryMessageId] = useState<string | null>(null);
+	// By id rather than by value, for the reason `editingMessageId` is: the
+	// reactions on screen have to follow the `message:updated` broadcasts that
+	// arrive while the dialog is open, and a snapshot would freeze the list at
+	// whatever it said when it was opened.
+	const [reactionsMessageId, setReactionsMessageId] = useState<string | null>(null);
+	const { unreadDividerMessageId, initialUnreadCount } = useUnreadDivider({
+		conversationId,
+		messages,
+		unreadCount,
+	});
 
 	useEffect(() => {
 		if (!targetMessageId) return;
@@ -105,169 +147,147 @@ export function MessageList({
 		document.getElementById(`message-${targetMessageId}`)?.scrollIntoView({ block: "center" });
 	}, [targetMessageId, messages]);
 
+	/*
+	 * Three conditions, and each one is a way the reader would notice:
+	 *
+	 *  - **At the bottom.** Trimming above somebody who is reading history would
+	 *    take the messages out from under them. The ref rather than
+	 *    `isFarFromBottom` because this must not re-run on every scroll event.
+	 *  - **Not looking at a jumped-to message.** A search result opens the thread
+	 *    around an old message with newer ones still unloaded; the newest message
+	 *    is not on screen even though the scroll position says bottom.
+	 *  - **Nothing newer left to load**, which is the same situation seen from
+	 *    the other side.
+	 */
+	useEffect(() => {
+		if (messages.length <= MAX_RETAINED_MESSAGES) return;
+		if (targetMessageId || hasMoreNewer || !isPinnedToLatestRef.current) return;
+
+		onTrimHistory();
+	}, [messages, targetMessageId, hasMoreNewer, onTrimHistory, isPinnedToLatestRef]);
+
+	const reactionsMessage = reactionsMessageId
+		? messages.find((message) => message.id === reactionsMessageId)
+		: undefined;
+
 	function handleSaveEdit(messageId: string, content: string) {
-		setEditingMessageId(null);
+		cancelEdit();
 		onEditMessage(messageId, content);
 	}
 
 	return (
-		<div ref={containerRef} onScroll={handleScroll} className="h-full overflow-y-auto bg-paper">
-			{/* `justify-end` on a wrapper that is at least as tall as the viewport is
+		<div className="relative h-full">
+			<div ref={containerRef} onScroll={handleScroll} className="h-full overflow-y-auto bg-paper">
+				{/* `justify-end` on a wrapper that is at least as tall as the viewport is
 			    what makes a short conversation sit on the composer rather than
 			    hanging from the header with a screen of empty paper under it. It
 			    does nothing once the thread is long enough to scroll. */}
-			<div className="flex min-h-full flex-col justify-end">
-				{targetMessageId && onReturnToLatest && (
-					<div className="sticky top-3 z-10 flex justify-center">
-						<Button
-							variant="outline"
-							onClick={onReturnToLatest}
-							className="eyebrow bg-paper-raised px-3.5 py-2 text-ink-soft"
-						>
-							Return to latest messages
-						</Button>
-					</div>
-				)}
+				<div className="flex min-h-full flex-col justify-end">
+					{targetMessageId && onReturnToLatest && (
+						<div className="sticky top-3 z-10 flex justify-center">
+							<Button
+								variant="outline"
+								onClick={onReturnToLatest}
+								className="eyebrow bg-paper-raised px-3.5 py-2 text-ink-soft"
+							>
+								Return to latest messages
+							</Button>
+						</div>
+					)}
 
-				{isLoadingOlder && <p className="eyebrow py-4 text-center text-ink-faint">Loading earlier messages…</p>}
+					{isLoadingOlder && (
+						<p className="eyebrow py-4 text-center text-ink-faint">Loading earlier messages…</p>
+					)}
 
-				{!hasMoreOlder && messages.length > 0 && (
-					<p className="eyebrow py-4 text-center text-ink-faint">
-						This is the beginning of the conversation.
-					</p>
-				)}
+					{!hasMoreOlder && messages.length > 0 && (
+						<p className="eyebrow py-4 text-center text-ink-faint">
+							This is the beginning of the conversation.
+						</p>
+					)}
 
-				{messages.length === 0 ? (
-					<p className="p-8 text-center text-sm text-ink-faint">
-						{isLoadingThread ? "Loading messages…" : "No messages yet. Say hello."}
-					</p>
-				) : (
-					<div className="flex flex-col px-3 pb-4 pt-2 sm:px-5 md:px-8 md:pb-5">
-						{messages.map((message, index) => {
-							const previous = messages[index - 1];
-							const isFirstOfDay = isNewDay(message.createdAt, previous?.createdAt);
-							const hasLongPause =
-								!isFirstOfDay && hasMessageTimeGap(message.createdAt, previous?.createdAt);
+					{messages.length === 0 ? (
+						<p className="p-8 text-center text-sm text-ink-faint">
+							{isLoadingThread ? "Loading messages…" : "No messages yet. Say hello."}
+						</p>
+					) : (
+						<div className="flex flex-col px-3 pb-4 pt-2 sm:px-5 md:px-8 md:pb-5">
+							<MessageRows
+								messages={messages}
+								currentUserId={currentUserId}
+								participants={participants}
+								isGroup={isGroup}
+								readReceipt={readReceipt}
+								unreadDividerMessageId={unreadDividerMessageId}
+								unreadCount={initialUnreadCount}
+								editingMessageId={editingMessageId}
+								targetMessageId={targetMessageId}
+								pinnedMessageIds={pinnedMessageIds}
+								onStartEdit={startEdit}
+								onSaveEdit={handleSaveEdit}
+								onCancelEdit={cancelEdit}
+								onDeleteMessage={onDeleteMessage}
+								onHideMessage={onHideMessage}
+								onShowHistory={setHistoryMessageId}
+								onRetrySend={onRetrySend}
+								onDiscardDraft={onDiscardDraft}
+								onToggleReaction={onToggleReaction}
+								onShowReactions={setReactionsMessageId}
+								onReplyToMessage={onReplyToMessage}
+								onForwardMessage={onForwardMessage}
+								onSaveMessage={onSaveMessage}
+								onTogglePinMessage={onTogglePinMessage}
+								onJumpToMessage={onJumpToMessage}
+							/>
 
-							if (message.kind === "system") {
-								return (
-									<Fragment key={message.id}>
-										{isFirstOfDay && <DaySeparator isoTimestamp={message.createdAt} />}
-										{hasLongPause && <MessageTimeSeparator isoTimestamp={message.createdAt} />}
-										<SystemMessage content={message.content} createdAt={message.createdAt} />
-									</Fragment>
-								);
-							}
-
-							const author = message.author;
-							// One avatar and one byline per run of messages from the same
-							// person. Repeating them on every line turns a paragraph typed in
-							// three bursts into three faces stacked down the margin. A system
-							// line or a change of day between two of someone's messages breaks
-							// the run, which is what makes the avatar reappear underneath it
-							// rather than leaving a bare bubble.
-							//
-							// An authorless message never continues a run, and never starts one
-							// anything else can join: two deleted accounts are not one person,
-							// and comparing `undefined` to `undefined` would say they were.
-							// A tombstone breaks the run on both sides and belongs to no one:
-							// nothing was said, so there is no turn for it to continue or to
-							// carry on from. Without this a deleted message in the middle of a
-							// burst leaves the two halves seamed together as though it were
-							// still there.
-							const isDeleted = Boolean(message.deletedAt);
-							// A reply opens a run of its own even from the same person: it
-							// points somewhere else, so it is a new turn, and it takes full
-							// corners on top to say so. A pause longer than the burst window
-							// also starts a turn; otherwise two messages five hours apart would
-							// be seamed together just because nobody else spoke in between.
-							const isWithinPreviousBurst = isWithinMessageBurst(message.createdAt, previous?.createdAt);
-							const isFirstOfRun =
-								!author ||
-								isDeleted ||
-								isFirstOfDay ||
-								!isWithinPreviousBurst ||
-								Boolean(message.replyTo) ||
-								Boolean(previous?.deletedAt) ||
-								previous?.author?.id !== author.id;
-							// The one message of a run that states its time without being asked.
-							// A run ends at a change of author, a system line, a new day, or the
-							// end of the list.
-							const next = messages[index + 1];
-							const isWithinNextBurst = next
-								? isWithinMessageBurst(next.createdAt, message.createdAt)
-								: false;
-							const isLastOfRun =
-								!author ||
-								isDeleted ||
-								!next ||
-								next.kind === "system" ||
-								!isWithinNextBurst ||
-								Boolean(next.replyTo) ||
-								Boolean(next.deletedAt) ||
-								next.author?.id !== author.id ||
-								isNewDay(next.createdAt, message.createdAt);
-							const clusterPosition = getClusterPosition(isFirstOfRun, isLastOfRun);
-
-							return (
-								<Fragment key={message.id}>
-									{isFirstOfDay && <DaySeparator isoTimestamp={message.createdAt} />}
-									{hasLongPause && <MessageTimeSeparator isoTimestamp={message.createdAt} />}
-									<MessageRow
-										message={message}
-										isMine={author?.id === currentUserId}
-										isGroup={isGroup}
-										isFirstOfRun={isFirstOfRun}
-										clusterPosition={clusterPosition}
-										isTargeted={message.id === targetMessageId}
-										isEditing={editingMessageId === message.id}
-										receipt={readReceipt?.messageId === message.id ? readReceipt : null}
-										onStartEdit={() => setEditingMessageId(message.id)}
-										onSaveEdit={(content) => handleSaveEdit(message.id, content)}
-										onCancelEdit={() => setEditingMessageId(null)}
-										onDeleteForEveryone={() => onDeleteMessage(message.id)}
-										onDeleteForMe={() => onHideMessage(message.id)}
-										onShowHistory={() => setHistoryMessageId(message.id)}
-										onRetrySend={() => onRetrySend(message.id)}
-										onDiscardDraft={() => onDiscardDraft(message.id)}
-										currentUserId={currentUserId}
-										participants={participants}
-										onToggleReaction={(kind) => onToggleReaction(message.id, kind)}
-										onReply={() => onReplyToMessage(message)}
-										// The quoted original may be outside the loaded page, in
-										// which case there is nothing to scroll to and this is a
-										// no-op rather than a jump to the wrong place.
-										onJumpToReplyOriginal={() =>
-											document
-												.getElementById(`message-${message.replyTo?.id}`)
-												?.scrollIntoView({ block: "center", behavior: "smooth" })
-										}
-									/>
-								</Fragment>
-							);
-						})}
-
-						{hasMoreNewer && (
-							<div className="mt-5 text-center">
-								<Button
-									variant="outline"
-									onClick={onLoadNewer}
-									disabled={isLoadingNewer}
-									className="eyebrow bg-paper-raised px-3.5 py-2 text-ink-soft"
-								>
-									{isLoadingNewer ? "Loading newer messages…" : "Load newer messages"}
-								</Button>
-							</div>
-						)}
-					</div>
-				)}
+							{hasMoreNewer && (
+								<div className="mt-5 text-center">
+									<Button
+										variant="outline"
+										onClick={onLoadNewer}
+										disabled={isLoadingNewer}
+										className="eyebrow bg-paper-raised px-3.5 py-2 text-ink-soft"
+									>
+										{isLoadingNewer ? "Loading newer messages…" : "Load newer messages"}
+									</Button>
+								</div>
+							)}
+						</div>
+					)}
+				</div>
 			</div>
+
+			{isFarFromBottom && (
+				<Button
+					aria-label="Jump to latest messages"
+					onClick={hasMoreNewer && onReturnToLatest ? onReturnToLatest : scrollToLatest}
+					className="absolute bottom-4 right-4 z-20 size-10 rounded-full p-0 shadow-lift"
+				>
+					<ArrowDown className="size-4" />
+					{unreadCount > 0 && (
+						<span className="absolute -right-1 -top-1 min-w-5 rounded-badge bg-signal px-1 text-[10px] text-paper">
+							{unreadCount > 99 ? "99+" : unreadCount}
+						</span>
+					)}
+				</Button>
+			)}
 
 			{historyMessageId && messages[0] && (
 				<MessageEditHistory
 					conversationId={messages[0].conversationId}
 					messageId={historyMessageId}
 					onClose={() => setHistoryMessageId(null)}
+				/>
+			)}
+
+			{/* Closed rather than emptied when the last reaction is taken off while
+			    it is open: an empty dialog is a dead end, and the only way to reach
+			    zero from here is somebody undoing the thing being looked at. */}
+			{reactionsMessage && reactionsMessage.reactions.length > 0 && (
+				<ReactionDetailsPanel
+					reactions={reactionsMessage.reactions}
+					users={participants}
+					currentUserId={currentUserId}
+					onClose={() => setReactionsMessageId(null)}
 				/>
 			)}
 		</div>

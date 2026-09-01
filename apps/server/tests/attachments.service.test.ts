@@ -246,7 +246,15 @@ describe("a message with several images", () => {
 
 		await expect(
 			prisma.attachment.create({
-				data: { messageId: message.id, position: 0, width: 10, height: 10, byteSize: 1 },
+				data: {
+					messageId: message.id,
+					conversationId,
+					position: 0,
+					mediaType: "image/webp",
+					width: 10,
+					height: 10,
+					byteSize: 1,
+				},
 				select: { id: true },
 			}),
 		).rejects.toThrow();

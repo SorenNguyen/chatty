@@ -1,4 +1,4 @@
-import { Bell, CircleUserRound, Lock, Mail, TriangleAlert } from "lucide-react";
+import { Bell, CircleUserRound, Lock, Mail, Palette, TriangleAlert } from "lucide-react";
 import type { SettingsNavigationItem } from "../types/settings";
 
 /**
@@ -14,6 +14,12 @@ export const SETTINGS_NAVIGATION: SettingsNavigationItem[] = [
 		label: "Profile",
 		description: "How you appear to everyone you talk to.",
 		icon: CircleUserRound,
+	},
+	{
+		id: "appearance",
+		label: "Appearance",
+		description: "Light, dark, or whatever this device is doing.",
+		icon: Palette,
 	},
 	{
 		id: "email",

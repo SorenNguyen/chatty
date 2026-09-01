@@ -40,10 +40,10 @@ export function MessageReplyQuote({ replyTo, isMine, onJumpToOriginal }: Message
 				// has actually caused bugs in this app.
 				"mb-1.5 mt-px flex w-full min-w-0 flex-col items-start gap-0.5 rounded-none px-0 py-0 text-left",
 				"border-l-2 pl-2.5 hover:bg-transparent",
-				isMine ? "border-paper/30" : "border-rule",
+				isMine ? "border-block-ink/30" : "border-rule",
 			)}
 		>
-			<span className={cn("eyebrow", isMine ? "text-paper/60" : "text-ink-faint")}>
+			<span className={cn("eyebrow", isMine ? "text-block-ink/60" : "text-ink-faint")}>
 				{replyTo.authorName ?? DELETED_AUTHOR_NAME}
 			</span>
 			<span className="flex w-full min-w-0 items-center gap-2.5">
@@ -53,14 +53,14 @@ export function MessageReplyQuote({ replyTo, isMine, onJumpToOriginal }: Message
 						alt=""
 						className={cn(
 							"size-9 shrink-0 rounded-control border object-cover",
-							isMine ? "border-paper/20" : "border-rule",
+							isMine ? "border-block-ink/20" : "border-rule",
 						)}
 					/>
 				)}
 				<span
 					className={cn(
 						"min-w-0 flex-1 truncate text-[12.5px]/[1.45]",
-						isMine ? "text-paper/70" : "text-ink-faint",
+						isMine ? "text-block-ink/70" : "text-ink-faint",
 						replyTo.isDeleted && "italic",
 					)}
 				>

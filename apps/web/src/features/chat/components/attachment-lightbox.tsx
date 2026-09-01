@@ -9,6 +9,7 @@ interface AttachmentLightboxProps {
 	initialIndex: number;
 	caption: string;
 	onClose: () => void;
+	onOpenMessage?: (attachment: AttachmentDTO) => void;
 }
 
 /**
@@ -23,7 +24,13 @@ interface AttachmentLightboxProps {
  * useless for the thing people actually do here, which is glance through a
  * handful of photos in a row.
  */
-export function AttachmentLightbox({ attachments, initialIndex, caption, onClose }: AttachmentLightboxProps) {
+export function AttachmentLightbox({
+	attachments,
+	initialIndex,
+	caption,
+	onClose,
+	onOpenMessage,
+}: AttachmentLightboxProps) {
 	const [index, setIndex] = useState(initialIndex);
 	const total = attachments.length;
 
@@ -53,7 +60,7 @@ export function AttachmentLightbox({ attachments, initialIndex, caption, onClose
 			aria-modal="true"
 			aria-label={total > 1 ? `Image ${index + 1} of ${total}` : "Image preview"}
 			onClick={onClose}
-			className="fixed inset-0 z-50 flex items-center justify-center bg-ink/90 p-6"
+			className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/90 p-6 dark:bg-scrim/95"
 		>
 			<img
 				src={current.url}
@@ -74,7 +81,7 @@ export function AttachmentLightbox({ attachments, initialIndex, caption, onClose
 							step(-1);
 						}}
 						aria-label="Previous image"
-						className="absolute left-5 size-10 rounded-control border border-paper/25 p-0 text-paper hover:bg-paper/10"
+						className="absolute left-5 size-10 rounded-control border border-on-media/25 p-0 text-on-media hover:bg-on-media/10"
 					>
 						<ChevronLeft className="size-5" />
 					</Button>
@@ -85,22 +92,35 @@ export function AttachmentLightbox({ attachments, initialIndex, caption, onClose
 							step(1);
 						}}
 						aria-label="Next image"
-						className="absolute right-5 size-10 rounded-control border border-paper/25 p-0 text-paper hover:bg-paper/10"
+						className="absolute right-5 size-10 rounded-control border border-on-media/25 p-0 text-on-media hover:bg-on-media/10"
 					>
 						<ChevronRight className="size-5" />
 					</Button>
 					{/* Mono, like every other machine-produced number in this app. */}
-					<span className="meta absolute bottom-6 text-paper/70">
+					<span className="meta absolute bottom-6 text-on-media/70">
 						{index + 1} / {total}
 					</span>
 				</>
+			)}
+
+			{onOpenMessage && (
+				<Button
+					variant="ghost"
+					onClick={(event) => {
+						event.stopPropagation();
+						onOpenMessage(current);
+					}}
+					className="absolute bottom-5 left-5 border border-on-media/25 text-on-media hover:bg-on-media/10"
+				>
+					View in conversation
+				</Button>
 			)}
 
 			<Button
 				variant="ghost"
 				onClick={onClose}
 				aria-label="Close image preview"
-				className="absolute right-5 top-5 size-9 rounded-control border border-paper/25 p-0 text-paper hover:bg-paper/10"
+				className="absolute right-5 top-5 size-9 rounded-control border border-on-media/25 p-0 text-on-media hover:bg-on-media/10"
 			>
 				<X className="size-5" />
 			</Button>

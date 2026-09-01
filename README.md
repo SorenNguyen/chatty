@@ -139,12 +139,12 @@ the paging cursor still point at those rows. Read receipts can be turned off, an
 symmetric — hide yours and you stop seeing everyone else's, with nothing revealed retroactively when
 you turn them back on. See [docs/ROADMAP.md](docs/ROADMAP.md) phase 13.
 
-Verified by 353 server tests (against a real Postgres), 176 web tests, and 20 Playwright specs
+Verified by 402 server tests (against a real Postgres), 252 web tests, and 25 Playwright specs
 driving a real browser against a real server — plus typecheck, lint, the conventions audit, and a
 production image build. CI runs all of it except the browser suite on every push.
 
 **[docs/ROADMAP.md](docs/ROADMAP.md) is the current source of truth for what is done and what is
-next.** Phases 1 to 16 are complete. Phase 7 makes group and password-reset transitions safe under
+next.** Phases 1 to 28 are complete. Phase 7 makes group and password-reset transitions safe under
 concurrent requests: one conversation lock orders membership-sensitive writes, PostgreSQL enforces
 the owner/message invariants, and fault-injection tests prove partial writes do not escape. Phase 8
 adds editing and deleting your own messages, on the same lock, with the deletion kept as a tombstone
@@ -170,8 +170,8 @@ is the geometry inside that look: a run of messages from one person is now one s
 rather than five bubbles each claiming their own, every timestamp moved off its own line into the
 gutter beside the bubble, and the type changed to Geist and Geist Mono — one superfamily, and the
 first pair in this app to ship a Vietnamese subset, so a name with diacritics no longer falls out of
-the font mid-word. It also adds the two things a message could not do: **reactions** (a closed set of
-five, grouped by kind with participant names on hover) and **replies** (a self-relation, so an edited
+the font mid-word. It also adds the two things a message could not do: **reactions** (reworked in phase 29 — see below)
+and **replies** (a self-relation, so an edited
 original re-quotes itself, a deleted one quotes as a tombstone, and an image reply keeps a small
 thumbnail). Message bursts now break after a real pause rather than sticking together for hours, and
 the mobile layout is a deliberate conversation-list → thread → back flow instead of a squeezed
@@ -191,12 +191,34 @@ could take back, access tokens last fifteen minutes, and a refresh rotates so a 
 most once. Phase 22 lets a message carry up to ten images — a gallery in the bubble, a viewer that
 walks the set with the arrow keys — and gives the composer an emoji picker, searchable in English and
 in unaccented Vietnamese. A message that is nothing but one to three emoji is drawn large with no
-bubble at all; the *reactions* stay the closed set of five ink marks, because a full-colour glyph
-sitting permanently beside a bubble is the loudest thing on a page that spends its one colour very
-deliberately. Phase 23 replaced that gallery with a stacked album — a 2×2 grid took 320×320 of the
+bubble at all. Phase 23 replaced that gallery with a stacked album — a 2×2 grid took 320×320 of the
 conversation for a set that gets opened in a viewer anyway — and added **stickers**: a personal tray
 of saved images, one tap from every conversation, copied into the message when sent so clearing the
 tray never blanks a picture out of somebody else's chat.
+
+Phases 24–28 complete the everyday messaging surface: arbitrary files are served as safe downloads,
+voice is normalized to AAC/MP4 with a shared waveform, and each conversation has a paged vault for
+media, files, voice, links and saved messages. Archive, pin and mute are per participant and sync only
+to that person's devices; the sidebar patches socket events in place. Drafts survive navigation on
+the local device, and the thread adds unread navigation, drag/paste, links, forwarding, mentions,
+message pins, reply jumps, keyboard shortcuts, sidebar typing and group seen-by avatars.
+
+Phase 29 is about the distance between correct and familiar. **Reactions are any emoji rather than a
+closed set of five** — the closed set had been defended twice on the grounds that an ink mark keeps
+colour off the page, and the app had never actually implemented that argument: the chips rendered
+colour emoji while only the picker stayed in ink, so one reaction had three appearances and none of
+them predicted the others. A hover bar offers the familiar six with `+` for the rest, a double-click
+leaves ❤️, the chips straddle the bubble's bottom edge the way Messenger and Instagram draw them, and
+one person gets one reaction per message — picking a second replaces the first, which the primary key
+now enforces. What made the set closed is preserved where it belongs: the request boundary accepts a
+single fully-qualified RGI emoji and nothing else, so `❤` and `❤️` cannot both reach the column and
+split one reaction into two chips. **Who reacted is a panel** rather than a `title` attribute that no
+touch screen could ever reach. **There is a Light / Dark / System setting**, resolved before the first
+paint by a `<head>` script that is a file rather than an inline one, because the Content-Security-Policy
+sets `script-src 'self'` and is worth more than a theme. Pictures now send optimistically — decoded
+first, so the bubble reserves exactly the box the stored image will occupy — and the thread stops
+accumulating history it is not showing, which is item 76 answered by bounding the array rather than by
+windowing it.
 
 Largest known gaps:
 
@@ -215,7 +237,7 @@ Largest known gaps:
   invisible, because the outbox records that the server *accepted* the message rather than that it
   arrived. Changing an account's email address (phase 13) runs on the same machinery and inherits the
   same limits.
-- **An attachment URL works for anyone holding it, until it expires.** Signed and scoped to one image
+- **An attachment URL works for anyone holding it, until it expires.** Signed and scoped to one attachment
   with a one-hour life, but bearer proof for that hour — see
   [ADR 0007](docs/adr/0007-signed-attachment-urls.md). Files left behind by a send that failed midway
   are swept every six hours as of phase 14; avatar files are not swept yet.
@@ -225,10 +247,8 @@ Largest known gaps:
 - **The CSP is not verified against a live API.** The web app has one as of phase 14, checked in a
   real browser against the built image — but with no API behind it, so `img-src` and `connect-src`
   are argued from the header's contents rather than demonstrated end to end.
-- **The conversation list is not paginated,** and the sidebar re-lists the whole thing on every
-  incoming message. Fine at this size; the fix is not a cursor but replacing that re-list with
-  incremental patching, which is a redesign of the live-update path rather than a parameter. See
-  phase 21, item 80.
+- **The conversation list is not paginated.** Phase 27 removed the blocker by replacing per-message
+  full re-lists with incremental socket patches; a cursor is now an independent follow-up.
 - **The message list is not virtualised.** Messages accumulate only through explicit paging, so
   reaching a DOM large enough to matter takes deliberate work — but the ceiling is real, and the two
   cheap fixes both risk the scroll-position handling that already works. See phase 19, item 76.

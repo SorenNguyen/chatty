@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { NotFoundError, ValidationError } from "../src/lib/errors.js";
 import { prisma } from "../src/lib/prisma.js";
 import { deleteMessage, listMessages, sendMessage, toggleReaction } from "../src/modules/messages/messages.service.js";
+import { toggleReactionSchema } from "../src/modules/messages/messages.schema.js";
 import { installFakeIO, type FakeIO } from "./fake-io.js";
 
 let fakeIO: FakeIO;
@@ -16,39 +17,70 @@ describe("toggleReaction", () => {
 		const { conversationId, authorId, peerId } = await makeConversation();
 		const sent = await sendMessage(authorId, conversationId, { content: "shipped it" });
 
-		const added = await toggleReaction(peerId, conversationId, sent.id, { kind: "heart" });
-		expect(added.reactions).toEqual([{ kind: "heart", userIds: [peerId] }]);
+		const added = await toggleReaction(peerId, conversationId, sent.id, { emoji: "❤️" });
+		expect(added.reactions).toEqual([{ emoji: "❤️", userIds: [peerId] }]);
 
-		const removed = await toggleReaction(peerId, conversationId, sent.id, { kind: "heart" });
+		const removed = await toggleReaction(peerId, conversationId, sent.id, { emoji: "❤️" });
 		expect(removed.reactions).toEqual([]);
 	});
 
-	it("counts each person once per kind, and lets one person leave several", async () => {
+	it("groups people under one emoji, and gives each person only one", async () => {
 		const { conversationId, authorId, peerId } = await makeConversation();
 		const sent = await sendMessage(authorId, conversationId, { content: "shipped it" });
 
-		await toggleReaction(peerId, conversationId, sent.id, { kind: "heart" });
-		await toggleReaction(authorId, conversationId, sent.id, { kind: "heart" });
-		const message = await toggleReaction(peerId, conversationId, sent.id, { kind: "laugh" });
+		await toggleReaction(peerId, conversationId, sent.id, { emoji: "❤️" });
+		await toggleReaction(authorId, conversationId, sent.id, { emoji: "❤️" });
+		// The peer changing their mind moves them rather than adding a second chip
+		// on their behalf — one reaction per person is what the primary key says.
+		const message = await toggleReaction(peerId, conversationId, sent.id, { emoji: "😂" });
 
 		expect(message.reactions).toEqual([
-			{ kind: "heart", userIds: [peerId, authorId] },
-			{ kind: "laugh", userIds: [peerId] },
+			{ emoji: "❤️", userIds: [authorId] },
+			{ emoji: "😂", userIds: [peerId] },
 		]);
 	});
 
-	it("keeps the chips in the order the kinds were first used", async () => {
-		// Otherwise a chip hops sideways whenever somebody else reacts, and the one
-		// you were about to click is no longer under the cursor.
+	it("replaces rather than accumulates, however often somebody changes their mind", async () => {
 		const { conversationId, authorId, peerId } = await makeConversation();
 		const sent = await sendMessage(authorId, conversationId, { content: "shipped it" });
-		await toggleReaction(peerId, conversationId, sent.id, { kind: "laugh" });
-		await toggleReaction(peerId, conversationId, sent.id, { kind: "heart" });
+
+		await toggleReaction(peerId, conversationId, sent.id, { emoji: "❤️" });
+		await toggleReaction(peerId, conversationId, sent.id, { emoji: "😂" });
+		const message = await toggleReaction(peerId, conversationId, sent.id, { emoji: "😮" });
+
+		expect(message.reactions).toEqual([{ emoji: "😮", userIds: [peerId] }]);
+		await expect(prisma.messageReaction.count()).resolves.toBe(1);
+	});
+
+	it("takes a replaced reaction off with one more press of the emoji now showing", async () => {
+		// The sequence a naive delete-then-insert gets wrong: after a swap the row
+		// is no longer the emoji the caller first left, and pressing the chip that
+		// is actually on screen still has to be what clears it.
+		const { conversationId, authorId, peerId } = await makeConversation();
+		const sent = await sendMessage(authorId, conversationId, { content: "shipped it" });
+
+		await toggleReaction(peerId, conversationId, sent.id, { emoji: "❤️" });
+		await toggleReaction(peerId, conversationId, sent.id, { emoji: "👍" });
+		const message = await toggleReaction(peerId, conversationId, sent.id, { emoji: "👍" });
+
+		expect(message.reactions).toEqual([]);
+	});
+
+	it("keeps the chips in the order the emoji were first used", async () => {
+		// Otherwise a chip hops sideways whenever somebody else reacts, and the one
+		// you were about to click is no longer under the cursor.
+		const { conversationId, authorId, peerId, outsiderId } = await makeConversation();
+		// A third reactor, because one person can no longer leave two: the laugh
+		// has to belong to somebody who is not going to be moved off it.
+		await prisma.conversationParticipant.create({ data: { conversationId, userId: outsiderId } });
+		const sent = await sendMessage(authorId, conversationId, { content: "shipped it" });
+		await toggleReaction(peerId, conversationId, sent.id, { emoji: "😂" });
+		await toggleReaction(outsiderId, conversationId, sent.id, { emoji: "❤️" });
 
 		// A second heart must not promote it past the laugh that came first.
-		const message = await toggleReaction(authorId, conversationId, sent.id, { kind: "heart" });
+		const message = await toggleReaction(authorId, conversationId, sent.id, { emoji: "❤️" });
 
-		expect(message.reactions.map((reaction) => reaction.kind)).toEqual(["laugh", "heart"]);
+		expect(message.reactions.map((reaction) => reaction.emoji)).toEqual(["😂", "❤️"]);
 	});
 
 	it("names everyone rather than counting, so a broadcast is not one viewer's answer", async () => {
@@ -57,7 +89,7 @@ describe("toggleReaction", () => {
 		const { conversationId, authorId, peerId } = await makeConversation();
 		const sent = await sendMessage(authorId, conversationId, { content: "shipped it" });
 
-		const message = await toggleReaction(peerId, conversationId, sent.id, { kind: "heart" });
+		const message = await toggleReaction(peerId, conversationId, sent.id, { emoji: "❤️" });
 
 		expect(message.reactions[0]!.userIds).toEqual([peerId]);
 	});
@@ -66,7 +98,7 @@ describe("toggleReaction", () => {
 		const { conversationId, authorId, peerId } = await makeConversation();
 		const sent = await sendMessage(authorId, conversationId, { content: "shipped it" });
 
-		const message = await toggleReaction(peerId, conversationId, sent.id, { kind: "heart" });
+		const message = await toggleReaction(peerId, conversationId, sent.id, { emoji: "❤️" });
 
 		expect(fakeIO.emits.filter((emit) => emit.event === "message:updated")).toEqual([
 			{ room: conversationId, event: "message:updated", payload: message },
@@ -78,7 +110,7 @@ describe("toggleReaction", () => {
 		const elsewhere = await makeConversation("second");
 		const sent = await sendMessage(elsewhere.authorId, elsewhere.conversationId, { content: "not yours" });
 
-		await expect(toggleReaction(authorId, conversationId, sent.id, { kind: "heart" })).rejects.toBeInstanceOf(
+		await expect(toggleReaction(authorId, conversationId, sent.id, { emoji: "❤️" })).rejects.toBeInstanceOf(
 			NotFoundError,
 		);
 		await expect(prisma.messageReaction.count()).resolves.toBe(0);
@@ -88,7 +120,7 @@ describe("toggleReaction", () => {
 		const { conversationId, authorId, outsiderId } = await makeConversation();
 		const sent = await sendMessage(authorId, conversationId, { content: "private" });
 
-		await expect(toggleReaction(outsiderId, conversationId, sent.id, { kind: "heart" })).rejects.toThrow();
+		await expect(toggleReaction(outsiderId, conversationId, sent.id, { emoji: "❤️" })).rejects.toThrow();
 		await expect(prisma.messageReaction.count()).resolves.toBe(0);
 	});
 
@@ -97,7 +129,7 @@ describe("toggleReaction", () => {
 		const sent = await sendMessage(authorId, conversationId, { content: "oops" });
 		await deleteMessage(authorId, conversationId, sent.id);
 
-		await expect(toggleReaction(peerId, conversationId, sent.id, { kind: "heart" })).rejects.toBeInstanceOf(
+		await expect(toggleReaction(peerId, conversationId, sent.id, { emoji: "❤️" })).rejects.toBeInstanceOf(
 			ValidationError,
 		);
 	});
@@ -107,7 +139,7 @@ describe("toggleReaction", () => {
 		// under "This message was deleted" reads as approval of the deletion.
 		const { conversationId, authorId, peerId } = await makeConversation();
 		const sent = await sendMessage(authorId, conversationId, { content: "oops" });
-		await toggleReaction(peerId, conversationId, sent.id, { kind: "heart" });
+		await toggleReaction(peerId, conversationId, sent.id, { emoji: "❤️" });
 
 		const tombstone = await deleteMessage(authorId, conversationId, sent.id);
 
@@ -122,20 +154,49 @@ describe("toggleReaction", () => {
 		});
 
 		await expect(
-			toggleReaction(authorId, conversationId, systemMessage.id, { kind: "heart" }),
+			toggleReaction(authorId, conversationId, systemMessage.id, { emoji: "❤️" }),
 		).rejects.toBeInstanceOf(ValidationError);
 	});
 
 	it("goes with the person, when a person goes", async () => {
 		const { conversationId, authorId, peerId } = await makeConversation();
 		const sent = await sendMessage(authorId, conversationId, { content: "shipped it" });
-		await toggleReaction(peerId, conversationId, sent.id, { kind: "heart" });
+		await toggleReaction(peerId, conversationId, sent.id, { emoji: "❤️" });
 
 		await prisma.user.delete({ where: { id: peerId } });
 
 		// Unlike a message, which becomes authorless and stays. A reaction carries
 		// no history worth keeping without the person who left it.
 		await expect(prisma.messageReaction.count()).resolves.toBe(0);
+	});
+});
+
+/**
+ * The boundary, not the service.
+ *
+ * With the column a free string, this schema is the only thing standing between
+ * the database and two rows for one heart — so it is worth testing on its own
+ * rather than through an endpoint that would also be testing routing.
+ */
+describe("toggleReactionSchema", () => {
+	it("accepts an emoji in its qualified spelling, including sequences", () => {
+		for (const emoji of ["❤️", "👍", "😂", "👍🏽", "🇻🇳", "🏳️‍🌈"]) {
+			expect(toggleReactionSchema.safeParse({ emoji }).success).toBe(true);
+		}
+	});
+
+	it("refuses the unqualified heart, which is the whole reason it exists", () => {
+		// U+2764 without U+FE0F is the same heart to a reader and a different
+		// string to Postgres. Letting both in would split one reaction into two
+		// chips with half the count each.
+		expect(toggleReactionSchema.safeParse({ emoji: "\u2764" }).success).toBe(false);
+		expect(toggleReactionSchema.safeParse({ emoji: "\u2764\ufe0f" }).success).toBe(true);
+	});
+
+	it("refuses anything that is not exactly one emoji", () => {
+		for (const emoji of ["", "a", "👍👍", "👍 ", "not an emoji", "x".repeat(200)]) {
+			expect(toggleReactionSchema.safeParse({ emoji }).success).toBe(false);
+		}
 	});
 });
 

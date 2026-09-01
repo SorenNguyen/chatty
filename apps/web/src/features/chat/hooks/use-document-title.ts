@@ -14,7 +14,14 @@ import { buildDocumentTitle } from "../utils/document-title";
  * in the title and the badges under it can never disagree.
  */
 export function useDocumentTitle(conversations: ConversationDTO[]): void {
-	const unreadCount = conversations.reduce((total, conversation) => total + conversation.unreadCount, 0);
+	const unreadCount = conversations.reduce(
+		(total, conversation) =>
+			total +
+			(conversation.mutedUntil && new Date(conversation.mutedUntil).getTime() > Date.now()
+				? 0
+				: conversation.unreadCount),
+		0,
+	);
 
 	useEffect(() => {
 		document.title = buildDocumentTitle(unreadCount);

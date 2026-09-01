@@ -1,4 +1,7 @@
 import { CheckCheck } from "lucide-react";
+import type { ParticipantDTO } from "@chatty/shared-types";
+import { useState } from "react";
+import { Avatar } from "@/components/avatar";
 import { Button } from "@/components/button";
 import { cn } from "@/utils/cn";
 import { EDITED_MESSAGE_LABEL } from "../constants/message";
@@ -18,6 +21,7 @@ interface MessageMetaProps {
 	 */
 	isTimeAlwaysVisible: boolean;
 	receipt: ReadReceipt | null;
+	participants: ParticipantDTO[];
 	deliveryState: MessageDeliveryState | undefined;
 	onShowHistory: () => void;
 	onRetrySend: () => void;
@@ -44,15 +48,23 @@ export function MessageMeta({
 	isEdited,
 	isTimeAlwaysVisible,
 	receipt,
+	participants,
 	deliveryState,
 	onShowHistory,
 	onRetrySend,
 	onDiscardDraft,
 }: MessageMetaProps) {
+	const [isReaderListOpen, setIsReaderListOpen] = useState(false);
+	const readers = receipt
+		? receipt.readerIds
+				.map((readerId) => participants.find((participant) => participant.id === readerId))
+				.filter((participant): participant is ParticipantDTO => Boolean(participant))
+		: [];
+
 	return (
 		<div
 			className={cn(
-				"flex shrink-0 items-center gap-2",
+				"relative flex shrink-0 items-center gap-2",
 				"max-sm:absolute max-sm:top-full max-sm:mt-1",
 				isMine ? "max-sm:right-0" : "max-sm:left-10",
 				!isTimeAlwaysVisible && !isEdited && !deliveryState && "max-sm:hidden",
@@ -83,14 +95,44 @@ export function MessageMeta({
 				</span>
 			)}
 
-			{receipt && (
+			{receipt && !isGroup && (
 				<span className="inline-flex items-center gap-1">
 					<CheckCheck
 						aria-label={isGroup ? `Seen by ${receipt.readerCount}` : "Seen"}
 						className="size-3.5 text-signal"
 					/>
-					{isGroup && <span className="meta text-signal">{receipt.readerCount}</span>}
 				</span>
+			)}
+
+			{receipt && isGroup && (
+				<>
+					<Button
+						variant="ghost"
+						onClick={() => setIsReaderListOpen((current) => !current)}
+						aria-label={`Seen by ${receipt.readerCount}`}
+						aria-expanded={isReaderListOpen}
+						className="-space-x-1.5 px-0 py-0 hover:bg-transparent"
+					>
+						{readers.slice(0, 3).map((reader) => (
+							<Avatar key={reader.id} user={reader} size="xs" className="ring-2 ring-paper" />
+						))}
+						{readers.length > 3 && <span className="meta pl-2 text-signal">+{readers.length - 3}</span>}
+					</Button>
+					{isReaderListOpen && (
+						<div className="absolute bottom-full right-0 z-30 mb-2 w-48 rounded-control border border-rule bg-paper-raised p-2 shadow-lift">
+							<p className="eyebrow px-2 pb-1 text-ink-faint">Seen by</p>
+							{readers.map((reader) => (
+								<div
+									key={reader.id}
+									className="flex items-center gap-2 px-2 py-1.5 text-xs text-ink-soft"
+								>
+									<Avatar user={reader} size="xs" />
+									<span className="truncate">{reader.displayName}</span>
+								</div>
+							))}
+						</div>
+					)}
+				</>
 			)}
 		</div>
 	);

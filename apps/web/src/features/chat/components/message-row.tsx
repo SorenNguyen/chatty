@@ -1,12 +1,13 @@
-import type { ReactionKind, UserDTO } from "@chatty/shared-types";
+import type { ParticipantDTO, ReactionEmoji } from "@chatty/shared-types";
 import { Ban } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { cn } from "@/utils/cn";
 import { DELETED_AUTHOR_NAME, DELETED_MESSAGE_TEXT } from "../constants/message";
+import { DEFAULT_REACTION } from "../constants/reactions";
 import type { ClusterPosition } from "../types/message-cluster";
 import type { ThreadMessage } from "../types/thread-message";
 import type { ReadReceipt } from "../utils/read-receipt";
-import { countJumboEmoji } from "../utils";
+import { countJumboEmoji, findMyReaction } from "../utils";
 import { MessageActions } from "./message-actions";
 import { MessageBubble } from "./message-bubble";
 import { MessageEditor } from "./message-editor";
@@ -32,9 +33,15 @@ interface MessageRowProps {
 	receipt: ReadReceipt | null;
 	/** Whose view this is — the reaction chips need it to know which are theirs. */
 	currentUserId: string;
-	participants: UserDTO[];
-	onToggleReaction: (kind: ReactionKind) => void;
+	participants: ParticipantDTO[];
+	onToggleReaction: (emoji: ReactionEmoji) => void;
+	/** Opens the reactor list, which is owned by the list so one dialog serves every row. */
+	onShowReactions: () => void;
 	onReply: () => void;
+	onForward: () => void;
+	onSave: () => void;
+	onTogglePin: () => void;
+	isPinned: boolean;
 	onJumpToReplyOriginal: () => void;
 	onStartEdit: () => void;
 	onSaveEdit: (content: string) => void;
@@ -81,7 +88,12 @@ export function MessageRow({
 	currentUserId,
 	participants,
 	onToggleReaction,
+	onShowReactions,
 	onReply,
+	onForward,
+	onSave,
+	onTogglePin,
+	isPinned,
 	onJumpToReplyOriginal,
 	onStartEdit,
 	onSaveEdit,
@@ -108,20 +120,28 @@ export function MessageRow({
 	// message keeps its marker outright — a note saying "this is not what was
 	// sent" must not need to be discovered.
 	const isTimeAlwaysVisible = clusterPosition === "last" || clusterPosition === "solo" || Boolean(receipt);
-	// The chips hang 11px below the bubble and are out of flow, so the space for
-	// them has to be made here. The list already ends the run on a reacted
-	// message, so what this margin adds to is the 16px between runs, not the 3px
-	// inside one — a chip can never collide with the next bubble.
 	const hasImages = message.attachments.length > 0;
 	// A message that is nothing but a few emoji is drawn large and bare, the way
 	// every messenger worth using does it: at bubble size an emoji is a typo, and
 	// the bubble is chrome around content that does not need explaining. Only when
 	// it stands alone — a reply, a caption or a quote makes it part of something.
 	const jumboCount = !isDeleted && !hasImages && !message.replyTo ? countJumboEmoji(message.content) : 0;
+	// The chips straddle the bubble's bottom edge: half of a 22px chip is on the
+	// bubble and half is below it, so the row has to reserve those 11px plus room
+	// for the shadow to clear the next bubble rather than land on it.
 	const hasReactions = message.reactions.length > 0;
-	const reactedKinds = message.reactions
-		.filter((reaction) => reaction.userIds.includes(currentUserId))
-		.map((reaction) => reaction.kind);
+	// One per person, so this is an emoji and not a list — see `MessageReaction`.
+	const myReaction = findMyReaction(message.reactions, currentUserId);
+
+	// Double-click is the fastest way to leave a heart and the gesture every
+	// messenger binds to it. It also selects the word underneath, which would
+	// leave a highlight sitting on the message it just reacted to, so the
+	// selection is dropped in the same breath.
+	function reactWithDefault() {
+		if (isDeleted || isEditing || deliveryState) return;
+		window.getSelection()?.removeAllRanges();
+		onToggleReaction(DEFAULT_REACTION);
+	}
 
 	return (
 		<div
@@ -161,7 +181,7 @@ export function MessageRow({
 				className={cn(
 					"group relative flex max-w-full items-center gap-2 sm:gap-3",
 					isMine && "flex-row-reverse",
-					hasReactions && "mb-3",
+					hasReactions && "mb-[18px]",
 					!hasReactions && (isTimeAlwaysVisible || isEdited) && "max-sm:mb-4",
 				)}
 			>
@@ -180,7 +200,10 @@ export function MessageRow({
 				    70% is a line of text long enough that the eye loses its place
 				    returning to the left edge. On the bubble rather than on the row,
 				    so the gutter beside it is not paid for out of the text's width. */}
-				<div className="relative min-w-0 max-w-[76vw] sm:max-w-[min(62vw,34rem)]">
+				<div
+					onDoubleClick={reactWithDefault}
+					className="relative min-w-0 max-w-[76vw] sm:max-w-[min(62vw,34rem)]"
+				>
 					{isDeleted ? (
 						<div
 							className={cn(
@@ -208,6 +231,7 @@ export function MessageRow({
 							clusterPosition={clusterPosition}
 							jumboCount={jumboCount}
 							onJumpToReplyOriginal={onJumpToReplyOriginal}
+							participants={participants}
 						/>
 					)}
 
@@ -218,6 +242,7 @@ export function MessageRow({
 							users={participants}
 							isMine={isMine}
 							onToggle={onToggleReaction}
+							onShowDetails={onShowReactions}
 						/>
 					)}
 				</div>
@@ -228,8 +253,10 @@ export function MessageRow({
 						onDeleteForMe={onDeleteForMe}
 						// Both omitted on a tombstone: there is nothing left to answer or to
 						// mark, and the server refuses either write anyway.
-						{...(!isDeleted && { onReply, onToggleReaction })}
-						reactedKinds={reactedKinds}
+						{...(!isDeleted && { onReply, onToggleReaction, onForward, onSave, onTogglePin })}
+						{...(hasReactions && { onShowReactions })}
+						isPinned={isPinned}
+						myReaction={myReaction}
 						authorActionExpiresAt={message.authorActionExpiresAt}
 						align={isMine ? "end" : "start"}
 					/>
@@ -242,6 +269,7 @@ export function MessageRow({
 					isEdited={isEdited}
 					isTimeAlwaysVisible={isTimeAlwaysVisible}
 					receipt={receipt}
+					participants={participants}
 					deliveryState={deliveryState}
 					onShowHistory={onShowHistory}
 					onRetrySend={onRetrySend}

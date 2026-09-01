@@ -1,8 +1,12 @@
 import type { Request, Response } from "express";
 import {
 	addParticipantSchema,
+	archiveConversationSchema,
 	createConversationSchema,
+	listConversationsQuerySchema,
 	markReadSchema,
+	muteConversationSchema,
+	pinConversationSchema,
 	renameConversationSchema,
 	transferOwnershipSchema,
 } from "./conversations.schema.js";
@@ -17,8 +21,39 @@ export async function createConversationController(req: Request, res: Response):
 }
 
 export async function listConversationsController(req: Request, res: Response): Promise<void> {
-	const conversations = await conversationsService.listConversationsForUser(req.userId!);
+	const query = listConversationsQuerySchema.parse(req.query);
+	const conversations = await conversationsService.listConversationsForUser(req.userId!, query.archived);
 	res.status(200).json(conversations);
+}
+
+export async function archiveConversationController(req: Request, res: Response): Promise<void> {
+	const input = archiveConversationSchema.parse(req.body);
+	const state = await conversationsService.setConversationArchived(
+		req.userId!,
+		req.params.conversationId as string,
+		input,
+	);
+	res.status(200).json(state);
+}
+
+export async function pinConversationController(req: Request, res: Response): Promise<void> {
+	const input = pinConversationSchema.parse(req.body);
+	const state = await conversationsService.setConversationPinned(
+		req.userId!,
+		req.params.conversationId as string,
+		input,
+	);
+	res.status(200).json(state);
+}
+
+export async function muteConversationController(req: Request, res: Response): Promise<void> {
+	const input = muteConversationSchema.parse(req.body);
+	const state = await conversationsService.setConversationMuted(
+		req.userId!,
+		req.params.conversationId as string,
+		input,
+	);
+	res.status(200).json(state);
 }
 
 export async function markReadController(req: Request, res: Response): Promise<void> {

@@ -27,3 +27,10 @@ export function getAttachmentDisplaySize(width: number, height: number): Display
 
 	return { width: Math.round(width * scale), height: Math.round(height * scale) };
 }
+
+export function formatBytes(byteSize: number): string {
+	if (byteSize < 1024) return `${byteSize} B`;
+	if (byteSize < 1024 * 1024) return `${(byteSize / 1024).toFixed(1)} KB`;
+
+	return `${(byteSize / 1024 / 1024).toFixed(1)} MB`;
+}

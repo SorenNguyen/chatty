@@ -84,7 +84,7 @@ test.describe("a group with an owner", () => {
 
 		await owner.page.getByRole("button", { name: "Group members" }).click();
 		await owner.page.getByLabel("Group name").fill("Sunday football");
-		await owner.page.getByRole("button", { name: "Save" }).click();
+		await owner.page.getByRole("button", { name: "Save", exact: true }).click();
 
 		// The rename reaches the other member over the socket, as a heading and as
 		// a line in the log.

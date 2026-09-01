@@ -21,6 +21,9 @@ knowing before you spend an afternoon on them:
   a second run against `chatty_test` — another terminal, a watch mode left open — deletes the first
   one's fixtures mid-test. It surfaces as unique-constraint failures scattered across unrelated
   files, which reads as a broken suite rather than a busy database.
+- **Voice tests use the bundled ffmpeg binary.** `ffmpeg-static` is installed with the server package;
+  if its install script cannot provide a binary for your platform, voice encoding and its HTTP tests
+  cannot run. A system `ffmpeg` is intentionally not used as a silent fallback.
 
 ## Before you open a pull request
 

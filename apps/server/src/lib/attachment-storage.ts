@@ -22,6 +22,7 @@ import { signAttachmentToken } from "./attachment-token.js";
  * bubble. Smaller images are never enlarged.
  */
 const MAX_ATTACHMENT_DIMENSION = 1600;
+const MAX_THUMBNAIL_DIMENSION = 480;
 
 /**
  * Same guard as avatars, and for the same reason: a few kilobytes of PNG can
@@ -36,7 +37,12 @@ const attachmentsDirectory = path.resolve(env.UPLOAD_DIR, "attachments");
  * constant rather than something derived from the upload. Named because the
  * orphan sweep has to take it back off a filename to recover the id.
  */
-const ATTACHMENT_FILE_EXTENSION = ".webp";
+const IMAGE_FILE_EXTENSION = ".webp";
+const FILE_EXTENSION = ".bin";
+const THUMBNAIL_SUFFIX = "_t.webp";
+const ATTACHMENT_FILE_EXTENSIONS = [IMAGE_FILE_EXTENSION, FILE_EXTENSION] as const;
+
+export type StoredAttachmentKind = "IMAGE" | "FILE" | "AUDIO";
 
 /** What the re-encode produced, for the columns that describe it. */
 export interface StoredAttachment {
@@ -56,10 +62,19 @@ function assertSafeKey(attachmentId: string): void {
 	}
 }
 
-function attachmentPathFor(attachmentId: string): string {
+function attachmentPathFor(attachmentId: string, kind: StoredAttachmentKind = "IMAGE"): string {
 	assertSafeKey(attachmentId);
 
-	return path.join(attachmentsDirectory, `${attachmentId}${ATTACHMENT_FILE_EXTENSION}`);
+	return path.join(
+		attachmentsDirectory,
+		`${attachmentId}${kind === "IMAGE" ? IMAGE_FILE_EXTENSION : FILE_EXTENSION}`,
+	);
+}
+
+function thumbnailPathFor(attachmentId: string): string {
+	assertSafeKey(attachmentId);
+
+	return path.join(attachmentsDirectory, `${attachmentId}${THUMBNAIL_SUFFIX}`);
 }
 
 /**
@@ -79,6 +94,7 @@ function attachmentPathFor(attachmentId: string): string {
  */
 export async function saveAttachment(attachmentId: string, upload: Buffer): Promise<StoredAttachment> {
 	const filePath = attachmentPathFor(attachmentId);
+	const thumbnailPath = thumbnailPathFor(attachmentId);
 
 	let normalized: Buffer;
 	let width: number;
@@ -102,14 +118,33 @@ export async function saveAttachment(attachmentId: string, upload: Buffer): Prom
 	}
 
 	await mkdir(attachmentsDirectory, { recursive: true });
-	await writeFile(filePath, normalized);
+	const thumbnail = await sharp(normalized)
+		.resize(MAX_THUMBNAIL_DIMENSION, MAX_THUMBNAIL_DIMENSION, { fit: "inside", withoutEnlargement: true })
+		.webp({ quality: 70 })
+		.toBuffer();
+	await Promise.all([writeFile(filePath, normalized), writeFile(thumbnailPath, thumbnail)]);
 
 	return { width, height, byteSize: normalized.byteLength };
 }
 
+/** Writes bytes that were validated for download, under an opaque server key. */
+export async function saveFileAttachment(attachmentId: string, upload: Buffer): Promise<{ byteSize: number }> {
+	const filePath = attachmentPathFor(attachmentId, "FILE");
+
+	await mkdir(attachmentsDirectory, { recursive: true });
+	await writeFile(filePath, upload);
+
+	return { byteSize: upload.byteLength };
+}
+
 /** Absolute path of a stored attachment, or null when the file is not there. */
-export async function findAttachmentPath(attachmentId: string): Promise<string | null> {
-	const filePath = attachmentPathFor(attachmentId);
+export async function findAttachmentPath(
+	attachmentId: string,
+	kind: StoredAttachmentKind = "IMAGE",
+	isThumbnail = false,
+): Promise<string | null> {
+	const filePath =
+		isThumbnail && kind === "IMAGE" ? thumbnailPathFor(attachmentId) : attachmentPathFor(attachmentId, kind);
 
 	try {
 		await access(filePath);
@@ -122,7 +157,11 @@ export async function findAttachmentPath(attachmentId: string): Promise<string |
 
 /** Removes an attachment's file. Succeeds when there was nothing to remove. */
 export async function deleteAttachment(attachmentId: string): Promise<void> {
-	await rm(attachmentPathFor(attachmentId), { force: true });
+	await Promise.all([
+		rm(attachmentPathFor(attachmentId, "IMAGE"), { force: true }),
+		rm(attachmentPathFor(attachmentId, "FILE"), { force: true }),
+		rm(thumbnailPathFor(attachmentId), { force: true }),
+	]);
 }
 
 /** One stored file, as the orphan sweep needs to see it. */
@@ -154,12 +193,16 @@ export async function listStoredAttachments(): Promise<StoredAttachmentFile[]> {
 		return [];
 	}
 
+	const primaryEntries = entries.filter((entry) => !entry.endsWith(THUMBNAIL_SUFFIX));
 	const files = await Promise.all(
-		entries
-			.filter((entry) => entry.endsWith(ATTACHMENT_FILE_EXTENSION))
-			.map(async (entry) => {
-				const id = entry.slice(0, -ATTACHMENT_FILE_EXTENSION.length);
+		primaryEntries
+			.map((entry) => {
+				const extension = ATTACHMENT_FILE_EXTENSIONS.find((candidate) => entry.endsWith(candidate));
 
+				return extension ? { entry, id: entry.slice(0, -extension.length) } : null;
+			})
+			.filter((entry): entry is { entry: string; id: string } => entry !== null)
+			.map(async ({ entry, id }) => {
 				try {
 					const stats = await stat(path.join(attachmentsDirectory, entry));
 
@@ -173,7 +216,18 @@ export async function listStoredAttachments(): Promise<StoredAttachmentFile[]> {
 			}),
 	);
 
-	return files.filter((file): file is StoredAttachmentFile => file !== null);
+	// A healthy id has one primary file, but a crashed migration or a failed
+	// write can briefly leave both extensions behind. Report the id once so the
+	// sweep deletes/counts it once, and use the newest timestamp so one fresh
+	// sibling keeps the whole id inside the grace period.
+	const byId = new Map<string, StoredAttachmentFile>();
+	for (const file of files) {
+		if (!file) continue;
+		const current = byId.get(file.id);
+		if (!current || file.modifiedAt > current.modifiedAt) byId.set(file.id, file);
+	}
+
+	return [...byId.values()];
 }
 
 /**
@@ -189,8 +243,11 @@ export async function listStoredAttachments(): Promise<StoredAttachmentFile[]> {
  * avatar endpoint makes the opposite trade for the opposite reason: a profile
  * picture is public, so it can be cached forever.
  */
-export function buildAttachmentUrl(attachmentId: string): string {
-	return `${env.PUBLIC_URL}/attachments/${attachmentId}?token=${signAttachmentToken(attachmentId)}`;
+export function buildAttachmentUrl(attachmentId: string, size?: "thumb"): string {
+	const params = new URLSearchParams({ token: signAttachmentToken(attachmentId) });
+	if (size) params.set("size", size);
+
+	return `${env.PUBLIC_URL}/attachments/${attachmentId}?${params.toString()}`;
 }
 
 /**

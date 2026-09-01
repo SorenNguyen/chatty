@@ -21,9 +21,9 @@ interface AvatarProps {
 /**
  * Someone's face, or the initials standing in for it.
  *
- * A rounded square rather than a circle, with the initials set in mono: they
- * are a machine's reduction of a name, not the name, and everything in this app
- * that a machine produced is set the same way.
+ * Circular everywhere so a person keeps one silhouette across the inbox,
+ * thread, member list and settings. Initials stay mono because they are a
+ * machine's reduction of a name rather than the name itself.
  */
 export function Avatar({ user, size = "md", isOnline, className }: AvatarProps) {
 	const initials = getInitials(user.displayName);
@@ -54,7 +54,7 @@ export function Avatar({ user, size = "md", isOnline, className }: AvatarProps) 
 
 			{isOnline && (
 				<span
-					// Announced rather than left as a bare green square: colour alone
+					// Announced rather than left as a bare green dot: colour alone
 					// is not a status anyone using a screen reader can perceive.
 					role="status"
 					aria-label={`${user.displayName} is online`}

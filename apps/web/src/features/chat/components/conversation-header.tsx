@@ -1,5 +1,5 @@
 import type { ConversationDTO } from "@chatty/shared-types";
-import { ArrowLeft, Search, UsersRound } from "lucide-react";
+import { ArrowLeft, PanelRight, Search } from "lucide-react";
 import { Button } from "@/components/button";
 import { cn } from "@/utils/cn";
 import { formatLastSeen, getConversationTitle, getDirectPeer, getTypingMessage } from "../utils";
@@ -20,11 +20,8 @@ interface ConversationHeaderProps {
 /**
  * Who you are talking to, and the one line that says where they are.
  *
- * The status line has four shapes and each one is marked with a small square
- * rather than a coloured word: filled green for connected, filled grey for a
- * last-seen time, and **hollow** for somebody who has turned last-seen off. That
- * last one exists because "we do not know" and "they are away" are different
- * facts, and rendering them the same way makes the privacy setting look broken.
+ * Presence is already shown on the avatar, so a direct conversation's status
+ * line stays compact and uses text alone.
  */
 export function ConversationHeader({
 	conversation,
@@ -89,21 +86,9 @@ export function ConversationHeader({
 							)}
 						</>
 					) : (
-						<>
-							<span
-								aria-hidden="true"
-								className={cn(
-									"size-1.5 shrink-0",
-									isPeerOnline && "bg-live",
-									!isPeerOnline && lastSeen && "bg-ink-faint",
-									// Hollow: nobody is hiding the fact that it is hidden.
-									!isPeerOnline && !lastSeen && "border border-ink-faint",
-								)}
-							/>
-							<span className={cn("eyebrow truncate", isPeerOnline ? "text-live" : "text-ink-faint")}>
-								{isPeerOnline ? "Online" : (lastSeen ?? "Last seen hidden")}
-							</span>
-						</>
+						<span className={cn("eyebrow truncate", isPeerOnline ? "text-live" : "text-ink-faint")}>
+							{isPeerOnline ? "Online" : (lastSeen ?? "Last seen hidden")}
+						</span>
 					)}
 				</div>
 			</div>
@@ -119,15 +104,15 @@ export function ConversationHeader({
 				</Button>
 			)}
 
-			{conversation.isGroup && onToggleGroupMembers && (
+			{onToggleGroupMembers && (
 				<Button
 					variant="ghost"
 					onClick={onToggleGroupMembers}
 					aria-pressed={isManagingGroup}
-					aria-label="Group members"
+					aria-label={conversation.isGroup ? "Group members" : "Conversation storage and details"}
 					className={cn("size-8 shrink-0 p-0", isManagingGroup && "bg-ink/5 text-ink")}
 				>
-					<UsersRound className="size-4" />
+					<PanelRight className="size-4" />
 				</Button>
 			)}
 		</header>

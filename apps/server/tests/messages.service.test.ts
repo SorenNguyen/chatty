@@ -1,15 +1,180 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { NotFoundError } from "../src/lib/errors.js";
+import { NotFoundError, ValidationError } from "../src/lib/errors.js";
+import sharp from "sharp";
 import { prisma } from "../src/lib/prisma.js";
 import { register } from "../src/modules/auth/auth.service.js";
 import { createConversation } from "../src/modules/conversations/conversations.service.js";
-import { getMessageContext, listMessages, sendMessage } from "../src/modules/messages/messages.service.js";
+import {
+	getMessageContext,
+	hideMessageForUser,
+	listMessages,
+	deleteMessage,
+	editMessage,
+	removeSavedMessage,
+	saveMessageForUser,
+	sendMessage,
+	setMessagePinned,
+} from "../src/modules/messages/messages.service.js";
+import { listConversationLinks, listConversationMedia, listSavedMessages } from "../src/modules/vault/vault.service.js";
 import { installFakeIO, type FakeIO } from "./fake-io.js";
 
 let fakeIO: FakeIO;
 
 beforeEach(() => {
 	fakeIO = installFakeIO();
+});
+
+describe("vault, forwarding, mentions, and pins", () => {
+	it("extracts normalized links and returns them from the conversation vault", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const conversation = await createConversation(minhId, { participantIds: [anId] });
+		const sent = await sendMessage(minhId, conversation.id, {
+			content: "Docs https://example.com/path, again https://example.com/path",
+		});
+
+		const page = await listConversationLinks(anId, conversation.id, { limit: 20 });
+
+		expect(page.items).toHaveLength(1);
+		expect(page.items[0]).toMatchObject({ messageId: sent.id, url: "https://example.com/path" });
+	});
+
+	it("replaces vault links on edit and removes them with a tombstone", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const conversation = await createConversation(minhId, { participantIds: [anId] });
+		const sent = await sendMessage(minhId, conversation.id, { content: "https://before.example" });
+
+		await editMessage(minhId, conversation.id, sent.id, { content: "https://after.example" });
+		expect(
+			(await listConversationLinks(anId, conversation.id, { limit: 20 })).items.map((item) => item.url),
+		).toEqual(["https://after.example"]);
+
+		await deleteMessage(minhId, conversation.id, sent.id);
+		expect((await listConversationLinks(anId, conversation.id, { limit: 20 })).items).toEqual([]);
+	});
+
+	it("pages media without duplicates and respects delete-for-me", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const conversation = await createConversation(minhId, { participantIds: [anId] });
+		const image = await sharp({ create: { width: 12, height: 12, channels: 3, background: "black" } })
+			.png()
+			.toBuffer();
+		const first = await sendMessage(minhId, conversation.id, { content: "one", attachments: [image] });
+		const second = await sendMessage(minhId, conversation.id, { content: "two", attachments: [image] });
+		const third = await sendMessage(minhId, conversation.id, { content: "three", attachments: [image] });
+		for (const [message, createdAt] of [
+			[first, "2026-01-01T00:00:00.000Z"],
+			[second, "2026-01-02T00:00:00.000Z"],
+			[third, "2026-01-03T00:00:00.000Z"],
+		] as const) {
+			await prisma.attachment.update({
+				where: { id: message.attachments[0]!.id },
+				data: { createdAt: new Date(createdAt) },
+			});
+		}
+
+		const pageOne = await listConversationMedia(anId, conversation.id, { kind: "image", limit: 2 });
+		const pageTwo = await listConversationMedia(anId, conversation.id, {
+			kind: "image",
+			limit: 2,
+			before: pageOne.items.at(-1)!.id,
+		});
+		expect([...pageOne.items, ...pageTwo.items].map((item) => item.messageId)).toEqual([
+			third.id,
+			second.id,
+			first.id,
+		]);
+		expect(new Set([...pageOne.items, ...pageTwo.items].map((item) => item.id)).size).toBe(3);
+
+		await hideMessageForUser(anId, conversation.id, second.id);
+		expect(
+			(await listConversationMedia(anId, conversation.id, { kind: "image", limit: 20 })).items.map(
+				(item) => item.messageId,
+			),
+		).not.toContain(second.id);
+		expect(
+			(await listConversationMedia(minhId, conversation.id, { kind: "image", limit: 20 })).items.map(
+				(item) => item.messageId,
+			),
+		).toContain(second.id);
+	});
+
+	it("stores mentions by participant id and rejects ids outside the group", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const outsiderId = await createUser("outsider");
+		const conversation = await createConversation(minhId, { participantIds: [anId, outsiderId], name: "Team" });
+
+		const sent = await sendMessage(minhId, conversation.id, {
+			content: "@an_test hello",
+			mentionedUserIds: [anId],
+		});
+		expect(sent.mentionedUserIds).toEqual([anId]);
+
+		const strangerId = await createUser("stranger");
+		await expect(
+			sendMessage(minhId, conversation.id, { content: "nope", mentionedUserIds: [strangerId] }),
+		).rejects.toBeInstanceOf(ValidationError);
+	});
+
+	it("copies forwarded attachments instead of referencing the source rows", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const sourceConversation = await createConversation(minhId, { participantIds: [anId] });
+		const targetConversation = await createConversation(minhId, { participantIds: [binhId] });
+		const image = await sharp({ create: { width: 16, height: 16, channels: 3, background: "black" } })
+			.png()
+			.toBuffer();
+		const source = await sendMessage(minhId, sourceConversation.id, { content: "source", attachments: [image] });
+
+		const forwarded = await sendMessage(minhId, targetConversation.id, {
+			content: "",
+			forwardOfMessageId: source.id,
+		});
+
+		expect(forwarded.isForwarded).toBe(true);
+		expect(forwarded.content).toBe("source");
+		expect(forwarded.attachments[0]?.id).not.toBe(source.attachments[0]?.id);
+		expect(
+			(await listConversationMedia(binhId, targetConversation.id, { kind: "image", limit: 20 })).items,
+		).toHaveLength(1);
+	});
+
+	it("requires source membership before forwarding", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const outsiderId = await createUser("outsider");
+		const sourceConversation = await createConversation(minhId, { participantIds: [anId] });
+		const targetConversation = await createConversation(outsiderId, { participantIds: [anId] });
+		const source = await sendMessage(minhId, sourceConversation.id, { content: "private" });
+
+		await expect(
+			sendMessage(outsiderId, targetConversation.id, { content: "", forwardOfMessageId: source.id }),
+		).rejects.toBeInstanceOf(NotFoundError);
+	});
+
+	it("saves per user and limits a conversation to three pinned messages", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const conversation = await createConversation(minhId, { participantIds: [anId] });
+		const messages = [];
+		for (const content of ["one", "two", "three", "four"]) {
+			messages.push(await sendMessage(minhId, conversation.id, { content }));
+		}
+
+		await saveMessageForUser(anId, conversation.id, messages[0]!.id);
+		expect((await listSavedMessages(anId, { limit: 20 })).results[0]?.message.id).toBe(messages[0]!.id);
+		await removeSavedMessage(anId, conversation.id, messages[0]!.id);
+		expect((await listSavedMessages(anId, { limit: 20 })).results).toEqual([]);
+
+		for (const message of messages.slice(0, 3)) await setMessagePinned(anId, conversation.id, message.id, true);
+		await expect(setMessagePinned(anId, conversation.id, messages[3]!.id, true)).rejects.toThrow(
+			"at most 3 pinned messages",
+		);
+	});
 });
 
 /**

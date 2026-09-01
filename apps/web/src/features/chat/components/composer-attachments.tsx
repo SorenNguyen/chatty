@@ -24,7 +24,7 @@ export function ComposerAttachments({ previewUrls, onRemove }: ComposerAttachmen
 			{previewUrls.map((previewUrl, index) => (
 				// Keyed by the URL: object URLs are unique per file, and the index
 				// would re-key every thumbnail after the one that was removed.
-				<div key={previewUrl} className="relative shrink-0 pt-1">
+				<div key={`${previewUrl}-${index}`} className="relative shrink-0 pt-1">
 					<img
 						src={previewUrl}
 						alt={`Attached image preview ${index + 1}`}

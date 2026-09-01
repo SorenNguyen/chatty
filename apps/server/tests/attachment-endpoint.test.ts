@@ -93,6 +93,50 @@ async function sendImage(
 	});
 }
 
+async function sendFile(
+	token: string,
+	conversationId: string,
+	bytes: Buffer,
+	fileName: string,
+	mediaType = "application/octet-stream",
+): Promise<Response> {
+	const body = new FormData();
+	body.append("file", new Blob([bytes], { type: mediaType }), fileName);
+
+	return fetch(`${baseUrl}/conversations/${conversationId}/messages`, {
+		method: "POST",
+		headers: { Authorization: `Bearer ${token}` },
+		body,
+	});
+}
+
+function makeWave(durationSeconds = 1): Buffer {
+	const sampleRate = 8_000;
+	const dataSize = sampleRate * durationSeconds * 2;
+	const wave = Buffer.alloc(44 + dataSize);
+	wave.write("RIFF", 0);
+	wave.writeUInt32LE(36 + dataSize, 4);
+	wave.write("WAVEfmt ", 8);
+	wave.writeUInt32LE(16, 16);
+	wave.writeUInt16LE(1, 20);
+	wave.writeUInt16LE(1, 22);
+	wave.writeUInt32LE(sampleRate, 24);
+	wave.writeUInt32LE(sampleRate * 2, 28);
+	wave.writeUInt16LE(2, 32);
+	wave.writeUInt16LE(16, 34);
+	wave.write("data", 36);
+	wave.writeUInt32LE(dataSize, 40);
+	for (let sample = 0; sample < sampleRate * durationSeconds; sample += 1) {
+		wave.writeInt16LE(Math.round(Math.sin((sample / sampleRate) * Math.PI * 440 * 2) * 8_000), 44 + sample * 2);
+	}
+
+	return wave;
+}
+
+function onTestServer(url: string): string {
+	return `${baseUrl}${new URL(url).pathname}${new URL(url).search}`;
+}
+
 describe("POST /conversations/:id/messages with an image", () => {
 	it("creates a message carrying the attachment", async () => {
 		const { token, conversationId } = await makeSender();
@@ -196,6 +240,122 @@ describe("POST /conversations/:id/messages with several images", () => {
 	});
 });
 
+describe("POST /conversations/:id/messages with a file", () => {
+	it("stores one file and serves it only as a download", async () => {
+		const { token, conversationId } = await makeSender();
+		const response = await sendFile(
+			token,
+			conversationId,
+			Buffer.from("%PDF-1.4 chatty"),
+			"Tài liệu.pdf",
+			"application/pdf",
+		);
+
+		expect(response.status).toBe(201);
+		const message = (await response.json()) as {
+			attachments: { kind: string; fileName: string; mediaType: string; url: string }[];
+		};
+		expect(message.attachments[0]).toMatchObject({
+			kind: "file",
+			fileName: "Tài liệu.pdf",
+			mediaType: "application/pdf",
+		});
+
+		const download = await fetch(onTestServer(message.attachments[0]!.url));
+		expect(download.status).toBe(200);
+		expect(download.headers.get("content-disposition")).toContain("attachment;");
+		expect(download.headers.get("content-disposition")).toContain("filename*=UTF-8''");
+		expect(download.headers.get("x-content-type-options")).toBe("nosniff");
+		expect(download.headers.get("content-security-policy")).toContain("sandbox");
+	});
+
+	it("refuses executable extensions at the HTTP boundary", async () => {
+		const { token, conversationId } = await makeSender();
+
+		const response = await sendFile(token, conversationId, Buffer.from("echo nope"), "installer.cmd", "text/plain");
+
+		expect(response.status).toBe(400);
+		expect(((await response.json()) as { message: string }).message).toMatch(/executable/i);
+		expect(await prisma.message.count({ where: { conversationId } })).toBe(0);
+	});
+
+	it("demotes browser-interpretable text to an opaque download type", async () => {
+		const { token, conversationId } = await makeSender();
+
+		const response = await sendFile(
+			token,
+			conversationId,
+			Buffer.from("<!doctype html><script>alert(1)</script>"),
+			"notes.txt",
+			"text/plain",
+		);
+		const message = (await response.json()) as { attachments: { mediaType: string; url: string }[] };
+
+		expect(message.attachments[0]?.mediaType).toBe("application/octet-stream");
+		expect((await fetch(onTestServer(message.attachments[0]!.url))).headers.get("content-type")).toBe(
+			"application/octet-stream",
+		);
+	});
+
+	it("refuses mixed image and file fields before either can become a message", async () => {
+		const { token, conversationId } = await makeSender();
+		const body = new FormData();
+		body.append("attachment", new Blob([await makeImage()], { type: "image/png" }), "photo.png");
+		body.append("file", new Blob([Buffer.from("document")]), "notes.txt");
+
+		const response = await fetch(`${baseUrl}/conversations/${conversationId}/messages`, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${token}` },
+			body,
+		});
+
+		expect(response.status).toBe(400);
+		expect(((await response.json()) as { message: string }).message).toMatch(/not a mixture/i);
+		expect(await prisma.message.count({ where: { conversationId } })).toBe(0);
+	});
+});
+
+describe("POST /conversations/:id/messages with voice", () => {
+	it("normalizes a recording to AAC/MP4 with duration and waveform metadata", async () => {
+		const { token, conversationId } = await makeSender();
+		const body = new FormData();
+		body.append("voice", new Blob([makeWave()], { type: "audio/wav" }), "recording.wav");
+
+		const response = await fetch(`${baseUrl}/conversations/${conversationId}/messages`, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${token}` },
+			body,
+		});
+		expect(response.status).toBe(201);
+		const message = (await response.json()) as {
+			attachments: { kind: string; mediaType: string; durationMs: number; waveform: number[]; url: string }[];
+		};
+		expect(message.attachments[0]).toMatchObject({ kind: "audio", mediaType: "audio/mp4" });
+		expect(message.attachments[0]!.durationMs).toBeGreaterThanOrEqual(900);
+		expect(message.attachments[0]!.waveform).toHaveLength(64);
+
+		const ranged = await fetch(onTestServer(message.attachments[0]!.url), { headers: { Range: "bytes=0-31" } });
+		expect(ranged.status).toBe(206);
+		expect(ranged.headers.get("content-type")).toBe("audio/mp4");
+		expect(ranged.headers.get("content-disposition")).toContain("inline");
+	});
+
+	it("refuses audio whose decoded duration exceeds the server tolerance", async () => {
+		const { token, conversationId } = await makeSender();
+		const body = new FormData();
+		body.append("voice", new Blob([makeWave(360)], { type: "audio/wav" }), "too-long.wav");
+
+		const response = await fetch(`${baseUrl}/conversations/${conversationId}/messages`, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${token}` },
+			body,
+		});
+
+		expect(response.status).toBe(400);
+		expect(((await response.json()) as { message: string }).message).toMatch(/at most 5 minutes/i);
+	});
+});
+
 describe("GET /attachments/:attachmentId", () => {
 	async function sendAndGetUrl(): Promise<{ url: string; attachmentId: string; token: string }> {
 		const { token, conversationId } = await makeSender();
@@ -205,11 +365,6 @@ describe("GET /attachments/:attachmentId", () => {
 		return { url: message.attachments[0]!.url, attachmentId: message.attachments[0]!.id, token };
 	}
 
-	/** The DTO's absolute URL points at PUBLIC_URL, which is not this test server. */
-	function onTestServer(url: string): string {
-		return `${baseUrl}${new URL(url).pathname}${new URL(url).search}`;
-	}
-
 	it("serves the re-encoded image", async () => {
 		const { url } = await sendAndGetUrl();
 
@@ -217,6 +372,16 @@ describe("GET /attachments/:attachmentId", () => {
 
 		expect(response.status).toBe(200);
 		// WebP whatever went in — the PNG that was uploaded no longer exists.
+		expect(response.headers.get("content-type")).toBe("image/webp");
+		expect((await response.arrayBuffer()).byteLength).toBeGreaterThan(0);
+	});
+
+	it("serves the image thumbnail with the same signed token", async () => {
+		const { url } = await sendAndGetUrl();
+
+		const response = await fetch(`${onTestServer(url)}&size=thumb`);
+
+		expect(response.status).toBe(200);
 		expect(response.headers.get("content-type")).toBe("image/webp");
 		expect((await response.arrayBuffer()).byteLength).toBeGreaterThan(0);
 	});

@@ -4,7 +4,7 @@ import { TYPING_EXPIRY_MS } from "../constants/typing";
 import { useSocketEvent } from "./use-socket-event";
 
 /**
- * Who is currently typing in the open conversation.
+ * Who is currently typing, both in the open thread and in each sidebar row.
  *
  * Every typer carries an expiry timer, because a "stopped typing" message is
  * not guaranteed to arrive — the sender may close their laptop mid-sentence.
@@ -14,58 +14,67 @@ import { useSocketEvent } from "./use-socket-event";
  * session to catch an event that happens rarely, while a timer only exists
  * while someone is actually typing.
  */
-export function useTypingParticipants(conversationId: string | null): string[] {
-	const [typingUserIds, setTypingUserIds] = useState<string[]>([]);
+export function useTypingParticipants(conversationId: string | null): {
+	activeUserIds: string[];
+	typingByConversation: Record<string, string[]>;
+} {
+	const [typingByConversation, setTypingByConversation] = useState<Record<string, string[]>>({});
 	const expiryTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
-	const forgetTyper = useCallback((userId: string) => {
-		const timer = expiryTimers.current.get(userId);
+	const forgetTyper = useCallback((targetConversationId: string, userId: string) => {
+		const key = `${targetConversationId}:${userId}`;
+		const timer = expiryTimers.current.get(key);
 		if (timer) clearTimeout(timer);
 
-		expiryTimers.current.delete(userId);
-		setTypingUserIds((current) => current.filter((typingUserId) => typingUserId !== userId));
+		expiryTimers.current.delete(key);
+		setTypingByConversation((current) => {
+			const nextIds = (current[targetConversationId] ?? []).filter((typingUserId) => typingUserId !== userId);
+			if (nextIds.length > 0) return { ...current, [targetConversationId]: nextIds };
+			const rest = { ...current };
+			delete rest[targetConversationId];
+
+			return rest;
+		});
 	}, []);
 
 	useSocketEvent(
 		"typing:update",
 		useCallback(
 			(event: TypingEvent) => {
-				// Events arrive for every conversation the user is in, not just the
-				// one on screen. Someone typing in an unopened thread is not shown —
-				// a badge for it would be noise for something that expires anyway.
-				if (event.conversationId !== conversationId) return;
-
 				if (!event.isTyping) {
-					forgetTyper(event.userId);
+					forgetTyper(event.conversationId, event.userId);
 
 					return;
 				}
 
-				const existingTimer = expiryTimers.current.get(event.userId);
+				const key = `${event.conversationId}:${event.userId}`;
+				const existingTimer = expiryTimers.current.get(key);
 				if (existingTimer) clearTimeout(existingTimer);
 				expiryTimers.current.set(
-					event.userId,
-					setTimeout(() => forgetTyper(event.userId), TYPING_EXPIRY_MS),
+					key,
+					setTimeout(() => forgetTyper(event.conversationId, event.userId), TYPING_EXPIRY_MS),
 				);
 
-				setTypingUserIds((current) => (current.includes(event.userId) ? current : [...current, event.userId]));
+				setTypingByConversation((current) => {
+					const ids = current[event.conversationId] ?? [];
+
+					return ids.includes(event.userId)
+						? current
+						: { ...current, [event.conversationId]: [...ids, event.userId] };
+				});
 			},
-			[conversationId, forgetTyper],
+			[forgetTyper],
 		),
 	);
 
-	// Switching conversations drops everything: the previous thread's typers are
-	// not typing *here*, and their pending timers would fire against a list they
-	// no longer belong to.
 	useEffect(() => {
 		const timers = expiryTimers.current;
 
 		return () => {
 			for (const timer of timers.values()) clearTimeout(timer);
 			timers.clear();
-			setTypingUserIds([]);
 		};
-	}, [conversationId]);
+	}, []);
 
-	return typingUserIds;
+	return { activeUserIds: conversationId ? (typingByConversation[conversationId] ?? []) : [], typingByConversation };
 }

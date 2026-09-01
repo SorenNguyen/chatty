@@ -1,4 +1,4 @@
-import type { MessageDTO } from "@chatty/shared-types";
+import type { ConversationDTO, MessageDTO } from "@chatty/shared-types";
 import { useCallback } from "react";
 import { ATTACHMENT_PREVIEW_TEXT } from "../constants/message";
 import { NOTIFICATION_TAG_PREFIX } from "../constants/notification-tag";
@@ -24,7 +24,7 @@ import { useSocketEvent } from "./use-socket-event";
  * The tag is the conversation, so ten messages in one thread replace each other
  * rather than stacking ten notifications for one conversation.
  */
-export function useMessageNotifications(currentUserId: string): void {
+export function useMessageNotifications(currentUserId: string, conversations: ConversationDTO[]): void {
 	const { isEnabled } = useNotificationSetting();
 
 	useSocketEvent(
@@ -34,13 +34,18 @@ export function useMessageNotifications(currentUserId: string): void {
 				if (!isEnabled || Notification.permission !== "granted") return;
 				if (document.visibilityState === "visible") return;
 				if (!message.author || message.author.id === currentUserId) return;
+				const conversation = conversations.find((item) => item.id === message.conversationId);
+				const isMuted = Boolean(
+					conversation?.mutedUntil && new Date(conversation.mutedUntil).getTime() > Date.now(),
+				);
+				if (isMuted && !message.mentionedUserIds.includes(currentUserId)) return;
 
 				new Notification(message.author.displayName, {
 					body: message.content || ATTACHMENT_PREVIEW_TEXT,
 					tag: `${NOTIFICATION_TAG_PREFIX}${message.conversationId}`,
 				});
 			},
-			[isEnabled, currentUserId],
+			[isEnabled, currentUserId, conversations],
 		),
 	);
 }

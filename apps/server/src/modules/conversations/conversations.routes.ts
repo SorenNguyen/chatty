@@ -2,9 +2,12 @@ import { Router } from "express";
 import { requireAuth } from "../../middlewares/require-auth.js";
 import {
 	addParticipantController,
+	archiveConversationController,
 	createConversationController,
 	listConversationsController,
 	markReadController,
+	muteConversationController,
+	pinConversationController,
 	removeParticipantController,
 	renameConversationController,
 	transferOwnershipController,
@@ -19,6 +22,9 @@ conversationsRouter.post("/", createConversationController);
 // the server may keep the marker where it is when the client asks to move it
 // backwards — so the request is not idempotent in the way PUT promises.
 conversationsRouter.post("/:conversationId/read", markReadController);
+conversationsRouter.put("/:conversationId/archive", archiveConversationController);
+conversationsRouter.put("/:conversationId/pin", pinConversationController);
+conversationsRouter.put("/:conversationId/mute", muteConversationController);
 conversationsRouter.post("/:conversationId/members", addParticipantController);
 // Also how you leave: DELETE .../members/:userId with your own id as the
 // target. Removing yourself and being removed are the same operation on the

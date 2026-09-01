@@ -34,7 +34,7 @@ export function ConfirmDialog({ title, body, confirmLabel, onConfirm, onCancel }
 	const dialogRef = useDialog<HTMLDivElement>(handleCancel);
 
 	return (
-		<div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/20 px-4">
+		<div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/20 px-4 dark:bg-scrim/50">
 			<div
 				ref={dialogRef}
 				role="dialog"

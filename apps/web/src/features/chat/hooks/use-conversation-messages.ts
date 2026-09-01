@@ -1,14 +1,46 @@
-import type { MessageDTO, ReactionKind } from "@chatty/shared-types";
-import { useCallback, useEffect, useState } from "react";
+import type { MessageDTO, ReactionEmoji } from "@chatty/shared-types";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/api/client";
 import { useAuth } from "@/hooks/use-auth";
-import { MESSAGE_PAGE_SIZE } from "../constants/pagination";
+import { MAX_RETAINED_MESSAGES, MESSAGE_PAGE_SIZE } from "../constants/pagination";
 import type { ThreadMessage } from "../types/thread-message";
 import { buildDraftMessage, getNewestStoredMessage } from "../utils/build-draft-message";
+import { toDraftAttachments } from "../utils/draft-attachment";
 import { mergeReloadedMessages } from "../utils/merge-messages";
 import { toReplyQuote } from "../utils/reply-quote";
 import { useMessageActions } from "./use-message-actions";
 import { useSocketEvent } from "./use-socket-event";
+
+/**
+ * The files behind one optimistic image message, and the object URLs standing
+ * in for them until the server has its own.
+ *
+ * Kept beside the thread rather than inside it: a `ThreadMessage` is the shape
+ * the list renders, and a `File` is not something anything renders. The `urls`
+ * are held separately from the draft's attachments so releasing them does not
+ * depend on the draft still being in the array — which, on a discard, it is not.
+ */
+interface PendingUpload {
+	files: File[];
+	urls: string[];
+}
+
+/**
+ * Hands back one draft's object URLs, and forgets its files.
+ *
+ * Every `blob:` URL pins its file in memory until it is revoked or the document
+ * goes; a tab left open on a busy conversation would accumulate every picture
+ * ever sent from it. Safe to call twice and safe to call for an id that was
+ * never registered, which is what lets every exit from a send call it without
+ * first working out which kind of send it was.
+ */
+function releaseUpload(pending: Map<string, PendingUpload>, draftId: string): void {
+	const upload = pending.get(draftId);
+	if (!upload) return;
+
+	for (const url of upload.urls) URL.revokeObjectURL(url);
+	pending.delete(draftId);
+}
 
 interface ConversationMessages {
 	/** Oldest first, which is the order the view reads. */
@@ -35,7 +67,7 @@ interface ConversationMessages {
 		content: string,
 		attachments: File[],
 		replyTo: MessageDTO | null,
-		onProgress?: (percent: number) => void,
+		mentionedUserIds?: string[],
 	) => Promise<void>;
 	/**
 	 * Sends a saved sticker. Not optimistic: a sticker's picture has dimensions
@@ -44,13 +76,27 @@ interface ConversationMessages {
 	 * worse than one that appears a beat later.
 	 */
 	sendSticker: (stickerId: string, replyTo: MessageDTO | null) => Promise<void>;
+	sendFile: (
+		file: File,
+		content: string,
+		replyTo: MessageDTO | null,
+		onProgress?: (percent: number) => void,
+	) => Promise<void>;
+	sendVoice: (recording: Blob, onProgress?: (percent: number) => void) => Promise<void>;
 	/** Sends a draft that failed, again. */
 	retrySend: (draftId: string) => void;
 	/** Throws a failed draft away. */
 	discardDraft: (draftId: string) => void;
+	/**
+	 * Drops the oldest messages once the thread has more than it needs, so a long
+	 * session stops growing an array React has to reconcile on every keystroke.
+	 * Called by the list, which is the only thing that knows the reader is at the
+	 * bottom and will not notice.
+	 */
+	trimHistory: () => void;
 	editMessage: (messageId: string, content: string) => void;
 	deleteMessage: (messageId: string) => void;
-	toggleReaction: (messageId: string, kind: ReactionKind) => void;
+	toggleReaction: (messageId: string, emoji: ReactionEmoji) => void;
 	hideMessage: (messageId: string) => void;
 	targetMessageId: string | null;
 }
@@ -84,12 +130,20 @@ export function useConversationMessages(
 	// conversation or message it is loading.
 	const [reloadCount, setReloadCount] = useState(0);
 	const [targetMessageId, setTargetMessageId] = useState<string | null>(null);
+	const pendingUploadsRef = useRef(new Map<string, PendingUpload>());
 
-	const { editMessage, deleteMessage, toggleReaction } = useMessageActions(
-		conversationId,
-		setMessages,
-		onConversationsChanged,
-	);
+	// Anything still in flight when the tab navigates away or the hook unmounts
+	// has nobody left to settle it, and its URLs would outlive the component
+	// holding the only reference to them.
+	useEffect(() => {
+		const pending = pendingUploadsRef.current;
+
+		return () => {
+			for (const draftId of [...pending.keys()]) releaseUpload(pending, draftId);
+		};
+	}, []);
+
+	const { editMessage, deleteMessage, toggleReaction } = useMessageActions(conversationId, setMessages);
 	const hideMessage = useCallback(
 		(messageId: string) => {
 			if (!conversationId) return;
@@ -226,61 +280,77 @@ export function useConversationMessages(
 	 * broadcast regularly beats this response — the server emits it before the
 	 * response is serialised — so by the time this resolves the real message is
 	 * usually on screen already, and replacing by draft id would show it twice.
+	 *
+	 * The files a draft is carrying come from `pendingUploadsRef` rather than
+	 * from the draft itself, because a `ThreadMessage` has no room for a `File`
+	 * and should not: what the thread renders is a `blob:` URL and a size. Keying
+	 * them by draft id is also what makes retry work on an image — the id
+	 * survives the failure, so the second attempt finds the same bytes.
 	 */
 	const deliver = useCallback(async (draft: ThreadMessage) => {
 		try {
 			const sent = await api.sendMessage(
 				draft.conversationId,
 				draft.content,
-				undefined,
+				pendingUploadsRef.current.get(draft.id)?.files,
 				undefined,
 				draft.replyTo?.id,
+				draft.mentionedUserIds,
 			);
 
+			releaseUpload(pendingUploadsRef.current, draft.id);
 			setMessages((current) => {
 				const withoutDraft = current.filter((message) => message.id !== draft.id);
 
 				return withoutDraft.some((message) => message.id === sent.id) ? withoutDraft : [...withoutDraft, sent];
 			});
-		} catch {
+		} catch (error) {
 			// Kept on screen rather than removed, and this is the whole point of the
 			// state: a message that vanishes on a dropped connection takes the text
 			// with it, and the sender usually does not notice until much later.
 			setMessages((current) =>
 				current.map((message) => (message.id === draft.id ? { ...message, deliveryState: "failed" } : message)),
 			);
+			throw error;
 		}
 	}, []);
 
 	/**
-	 * Sends a message, showing it immediately.
+	 * Sends a message, showing it immediately — pictures included.
 	 *
-	 * **Text only.** A send carrying images deliberately keeps the old
-	 * behaviour — awaited in the composer, with the upload's progress bar. An
-	 * optimistic gallery would have to state each picture's dimensions to
-	 * reserve its space, and the client does not know them until it has decoded
-	 * the files; a gallery that resizes when the upload finishes is worse than
-	 * the progress bar that is already there and says more.
+	 * Images used to be the exception: awaited in the composer, behind a progress
+	 * bar, because an optimistic gallery has to reserve each picture's space and
+	 * a gallery that resizes when the upload lands is worse than no gallery. The
+	 * objection was right and it was about *dimensions*, not about uploads, so
+	 * `toDraftAttachments` decodes the picked files first and the bubble goes up
+	 * at the size the stored one will be. Nothing moves when the real message
+	 * arrives.
+	 *
+	 * The progress bar goes with it, and that is the trade. What replaces it is
+	 * the picture itself, held at 60% until the server has it, and a gutter that
+	 * says "Sending…" and then "Not sent" with a retry — which is more than the
+	 * bar ever said, on the one occasion it mattered.
 	 */
 	const sendMessage = useCallback(
-		async (
-			content: string,
-			attachments: File[],
-			replyTo: MessageDTO | null,
-			onProgress?: (percent: number) => void,
-		) => {
+		async (content: string, attachments: File[], replyTo: MessageDTO | null, mentionedUserIds: string[] = []) => {
 			if (!conversationId) return;
-
-			if (attachments.length > 0) {
-				await api.sendMessage(conversationId, content, attachments, onProgress, replyTo?.id);
-
-				return;
-			}
-
 			const author = useAuth.getState().currentUser;
 			if (!author) return;
 
-			const draft = buildDraftMessage(conversationId, author, content, replyTo ? toReplyQuote(replyTo) : null);
+			// Awaited before the bubble goes up rather than alongside it: a few
+			// milliseconds of decoding buys a gallery that never resizes, and the
+			// composer has already emptied so nothing is waiting on this.
+			const local = attachments.length > 0 ? await toDraftAttachments(attachments) : [];
+			const draft = {
+				...buildDraftMessage(conversationId, author, content, replyTo ? toReplyQuote(replyTo) : null, local),
+				mentionedUserIds,
+			};
+			if (attachments.length > 0) {
+				pendingUploadsRef.current.set(draft.id, {
+					files: attachments,
+					urls: local.map((attachment) => attachment.url),
+				});
+			}
 			setMessages((current) => [...current, draft]);
 
 			await deliver(draft);
@@ -297,6 +367,22 @@ export function useConversationMessages(
 		[conversationId],
 	);
 
+	const sendFile = useCallback(
+		async (file: File, content: string, replyTo: MessageDTO | null, onProgress?: (percent: number) => void) => {
+			if (!conversationId) return;
+			await api.sendFile(conversationId, file, content, onProgress, replyTo?.id);
+		},
+		[conversationId],
+	);
+
+	const sendVoice = useCallback(
+		async (recording: Blob, onProgress?: (percent: number) => void) => {
+			if (!conversationId) return;
+			await api.sendVoice(conversationId, recording, onProgress);
+		},
+		[conversationId],
+	);
+
 	const retrySend = useCallback(
 		(draftId: string) => {
 			const draft = messages.find((message) => message.id === draftId);
@@ -309,7 +395,30 @@ export function useConversationMessages(
 		[messages, deliver],
 	);
 
+	/**
+	 * Forgets the oldest page, and admits there is more above again.
+	 *
+	 * The inverse of `loadOlder` in every respect, which is why it needs no
+	 * machinery of its own: `hasMoreOlder` going back to true is what puts the
+	 * scroll handler back in charge of re-fetching what was dropped, through the
+	 * path that fetched it the first time.
+	 *
+	 * `hasMoreOlder` is set unconditionally rather than only when something was
+	 * removed, because the guard above has already established that something
+	 * was: below the cap this returns without touching anything.
+	 */
+	const trimHistory = useCallback(() => {
+		if (messages.length <= MAX_RETAINED_MESSAGES) return;
+
+		setMessages((current) => current.slice(current.length - MAX_RETAINED_MESSAGES));
+		setHasMoreOlder(true);
+	}, [messages]);
+
 	const discardDraft = useCallback((draftId: string) => {
+		// Before the row goes, not after: once it is out of the array there is
+		// nothing left holding the URLs, and a `blob:` that is never revoked
+		// keeps its file in memory for the life of the tab.
+		releaseUpload(pendingUploadsRef.current, draftId);
 		setMessages((current) => current.filter((message) => message.id !== draftId));
 	}, []);
 
@@ -337,12 +446,8 @@ export function useConversationMessages(
 						current.some((existing) => existing.id === message.id) ? current : [...current, message],
 					);
 				}
-
-				// Fires regardless of which conversation it belongs to, so the sidebar
-				// preview and ordering stay correct for unopened threads.
-				onConversationsChanged();
 			},
-			[conversationId, onConversationsChanged],
+			[conversationId],
 		),
 	);
 
@@ -360,8 +465,11 @@ export function useConversationMessages(
 		resync,
 		sendMessage,
 		sendSticker,
+		sendFile,
+		sendVoice,
 		retrySend,
 		discardDraft,
+		trimHistory,
 		editMessage,
 		deleteMessage,
 		toggleReaction,

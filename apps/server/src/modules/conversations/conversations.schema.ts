@@ -35,3 +35,19 @@ export const transferOwnershipSchema = z.object({
 	userId: z.string().min(1),
 });
 export type TransferOwnershipInput = z.infer<typeof transferOwnershipSchema>;
+
+export const listConversationsQuerySchema = z.object({
+	archived: z
+		.enum(["true", "false"])
+		.optional()
+		.transform((value) => value === "true"),
+});
+
+export const archiveConversationSchema = z.object({ archived: z.boolean() });
+export type ArchiveConversationInput = z.infer<typeof archiveConversationSchema>;
+
+export const pinConversationSchema = z.object({ pinned: z.boolean() });
+export type PinConversationInput = z.infer<typeof pinConversationSchema>;
+
+export const muteConversationSchema = z.object({ until: z.string().datetime().nullable() });
+export type MuteConversationInput = z.infer<typeof muteConversationSchema>;

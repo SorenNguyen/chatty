@@ -1,22 +1,15 @@
 import type { MessageDTO } from "@chatty/shared-types";
 import { useCallback, useEffect, useState } from "react";
+import { api } from "@/api/client";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/utils/cn";
-import {
-	ConnectionBanner,
-	ConversationHeader,
-	ConversationMessageSearch,
-	ConversationSidebar,
-	GroupMembersPanel,
-	MessageInput,
-	MessageList,
-	ThreadLoadError,
-} from "../components";
+import { ConnectionBanner, ChatConversationPane, ConversationSidebar, KeyboardShortcutsPanel } from "../components";
 import {
 	useConversationList,
 	useConversationMessages,
 	useDocumentTitle,
 	useMarkRead,
+	useKeyboardShortcuts,
 	useMessageNotifications,
 	usePresence,
 	useSocketConnection,
@@ -35,13 +28,44 @@ export function ChatPage() {
 	// is picked in the list and answered in the composer — two siblings, so the
 	// state belongs to the parent that owns both.
 	const [replyTo, setReplyTo] = useState<MessageDTO | null>(null);
+	const [pendingDraftReplyId, setPendingDraftReplyId] = useState<string | null>(null);
 	const [requestedMessageId, setRequestedMessageId] = useState<string | null>(null);
 	const [isConversationSearchOpen, setIsConversationSearchOpen] = useState(false);
+	const [forwardingMessage, setForwardingMessage] = useState<MessageDTO | null>(null);
+	const [isEditingMessage, setIsEditingMessage] = useState(false);
+	const [editLastRequest, setEditLastRequest] = useState(0);
+	const [cancelEditRequest, setCancelEditRequest] = useState(0);
+	const [isShortcutHelpOpen, setIsShortcutHelpOpen] = useState(false);
 
 	const onlineUserIds = usePresence();
-	const typingUserIds = useTypingParticipants(selectedConversationId);
+	const { activeUserIds: typingUserIds, typingByConversation } = useTypingParticipants(selectedConversationId);
+	const hasOpenPanel =
+		isShortcutHelpOpen || Boolean(forwardingMessage) || isManagingGroup || isConversationSearchOpen;
+	useKeyboardShortcuts({
+		hasOpenPanel,
+		onClosePanel: () => {
+			if (isShortcutHelpOpen) setIsShortcutHelpOpen(false);
+			else if (forwardingMessage) setForwardingMessage(null);
+			else if (isManagingGroup) setIsManagingGroup(false);
+			else closeMessageSearch();
+		},
+		hasReply: Boolean(replyTo),
+		onCancelReply: () => setReplyTo(null),
+		isEditing: isEditingMessage,
+		onCancelEdit: () => setCancelEditRequest((current) => current + 1),
+		onEditLast: () => setEditLastRequest((current) => current + 1),
+		onOpenConversationSearch: () => {
+			if (selectedConversationId) setIsConversationSearchOpen(true);
+		},
+		onShowHelp: () => setIsShortcutHelpOpen(true),
+	});
 
-	const { conversations, refresh: refreshConversations } = useConversationList(
+	const {
+		conversations,
+		refresh: refreshConversations,
+		isShowingArchived,
+		setIsShowingArchived,
+	} = useConversationList(
 		currentUser?.id,
 		// Deselect only when the conversation that ended is the one on screen —
 		// leaving a group you were not looking at must not close the one you were.
@@ -50,10 +74,8 @@ export function ChatPage() {
 		}, []),
 	);
 
-	// Both are about the tab nobody is looking at: one says something happened in
-	// the title, the other says it in a notification.
 	useDocumentTitle(conversations);
-	useMessageNotifications(currentUser?.id ?? "");
+	useMessageNotifications(currentUser?.id ?? "", conversations);
 
 	const {
 		messages,
@@ -69,8 +91,11 @@ export function ChatPage() {
 		resync,
 		sendMessage,
 		sendSticker,
+		sendFile,
+		sendVoice,
 		retrySend,
 		discardDraft,
+		trimHistory,
 		editMessage,
 		deleteMessage,
 		toggleReaction,
@@ -78,9 +103,6 @@ export function ChatPage() {
 		targetMessageId,
 	} = useConversationMessages(selectedConversationId, refreshConversations, requestedMessageId);
 
-	// Everything on this screen is pushed rather than polled, so a socket that
-	// was down missed both halves of the state: the sidebar's ordering, previews
-	// and unread counts, and the open thread's messages. Neither repairs itself.
 	const isConnectionLost = useSocketConnection(
 		useCallback(() => {
 			refreshConversations();
@@ -91,7 +113,19 @@ export function ChatPage() {
 	useEffect(() => {
 		setIsManagingGroup(false);
 		setIsConversationSearchOpen(false);
+		setForwardingMessage(null);
+		setReplyTo(null);
+		setPendingDraftReplyId(null);
 	}, [selectedConversationId]);
+
+	useEffect(() => {
+		if (!pendingDraftReplyId) return;
+		const target = messages.find((message) => message.id === pendingDraftReplyId);
+		if (target) {
+			setReplyTo(target);
+			setPendingDraftReplyId(null);
+		}
+	}, [messages, pendingDraftReplyId]);
 
 	// Reading is defined by what is on screen, so the marker follows the newest
 	// loaded message rather than the newest that exists. Loading older pages
@@ -130,12 +164,24 @@ export function ChatPage() {
 		setRequestedMessageId(null);
 	}
 
+	function jumpToMessage(messageId: string) {
+		const element = document.getElementById(`message-${messageId}`);
+		if (element) {
+			element.scrollIntoView({ block: "center", behavior: "smooth" });
+
+			return;
+		}
+		setIsConversationSearchOpen(false);
+		setRequestedMessageId(messageId);
+	}
+
 	const selectedConversation = conversations.find((conversation) => conversation.id === selectedConversationId);
 
 	if (!currentUser) return null;
 
 	return (
-		<div className="flex h-dvh flex-col overflow-hidden bg-paper">
+		<div className="relative flex h-dvh flex-col overflow-hidden bg-paper">
+			{isShortcutHelpOpen && <KeyboardShortcutsPanel onClose={() => setIsShortcutHelpOpen(false)} />}
 			{isConnectionLost && <ConnectionBanner />}
 
 			<div className="flex min-h-0 flex-1">
@@ -147,87 +193,98 @@ export function ChatPage() {
 					onSelect={handleConversationSelected}
 					onConversationStarted={handleConversationStarted}
 					onSignOut={logout}
+					isShowingArchived={isShowingArchived}
+					onToggleArchived={() => setIsShowingArchived(!isShowingArchived)}
+					typingByConversation={typingByConversation}
 					className={cn(selectedConversation && "max-md:hidden")}
 				/>
 
-				<main className={cn("min-w-0 flex-1 flex-col", selectedConversation ? "flex" : "hidden md:flex")}>
+				<main
+					className={cn("relative min-w-0 flex-1 flex-col", selectedConversation ? "flex" : "hidden md:flex")}
+				>
 					{selectedConversation ? (
-						<>
-							<ConversationHeader
-								conversation={selectedConversation}
-								currentUserId={currentUser.id}
-								onlineUserIds={onlineUserIds}
-								typingUserIds={typingUserIds}
-								onToggleGroupMembers={() => setIsManagingGroup((current) => !current)}
-								isManagingGroup={isManagingGroup}
-								onBack={() => {
-									setReplyTo(null);
-									setSelectedConversationId(null);
-								}}
-								onOpenMessageSearch={() => {
-									setIsManagingGroup(false);
-									setRequestedMessageId(null);
-									setIsConversationSearchOpen(true);
-								}}
-							/>
-
-							{isConversationSearchOpen ? (
-								<ConversationMessageSearch
-									conversationId={selectedConversation.id}
-									onSelectResult={selectSearchResult}
-									onClearResult={() => {
-										setRequestedMessageId(null);
-									}}
-									onClose={closeMessageSearch}
-								/>
-							) : null}
-
-							{isManagingGroup && (
-								<GroupMembersPanel
-									conversation={selectedConversation}
-									currentUserId={currentUser.id}
-									onClose={() => setIsManagingGroup(false)}
-								/>
-							)}
-
-							<div className="min-h-0 flex-1">
-								{loadError ? (
-									<ThreadLoadError message={loadError} onRetry={retryLoad} />
-								) : (
-									<MessageList
-										messages={messages}
-										currentUserId={currentUser.id}
-										participants={selectedConversation.participants}
-										isGroup={selectedConversation.isGroup}
-										areReceiptsShared={currentUser.readReceiptsEnabled}
-										isLoadingThread={isLoadingThread}
-										hasMoreOlder={hasMoreOlder}
-										isLoadingOlder={isLoadingOlder}
-										onLoadOlder={loadOlder}
-										hasMoreNewer={hasMoreNewer}
-										isLoadingNewer={isLoadingNewer}
-										onLoadNewer={loadNewer}
-										onEditMessage={editMessage}
-										onDeleteMessage={deleteMessage}
-										onHideMessage={hideMessage}
-										onRetrySend={retrySend}
-										onDiscardDraft={discardDraft}
-										onToggleReaction={toggleReaction}
-										onReplyToMessage={setReplyTo}
-										targetMessageId={targetMessageId}
-										onReturnToLatest={closeMessageSearch}
-									/>
-								)}
-							</div>
-
-							<MessageInput
-								conversationId={selectedConversation.id}
-								replyTo={replyTo}
-								onCancelReply={() => setReplyTo(null)}
-								onSend={sendMessage}
-								onSendSticker={sendSticker}
-							/>
-						</>
+						<ChatConversationPane
+							conversation={selectedConversation}
+							currentUserId={currentUser.id}
+							onlineUserIds={onlineUserIds}
+							typingUserIds={typingUserIds}
+							isManagingDetails={isManagingGroup}
+							onToggleDetails={() => setIsManagingGroup((current) => !current)}
+							onBack={() => {
+								setReplyTo(null);
+								setSelectedConversationId(null);
+							}}
+							isSearchOpen={isConversationSearchOpen}
+							onOpenSearch={() => {
+								setIsManagingGroup(false);
+								setRequestedMessageId(null);
+								setIsConversationSearchOpen(true);
+							}}
+							onCloseSearch={closeMessageSearch}
+							onSelectSearchResult={selectSearchResult}
+							onClearSearchResult={() => setRequestedMessageId(null)}
+							forwardingMessage={forwardingMessage}
+							conversations={conversations}
+							onCloseForward={() => setForwardingMessage(null)}
+							onOpenMessage={(messageId) => {
+								jumpToMessage(messageId);
+								setIsManagingGroup(false);
+							}}
+							loadError={loadError}
+							onRetryLoad={retryLoad}
+							messageListProps={{
+								conversationId: selectedConversation.id,
+								messages,
+								unreadCount: selectedConversation.unreadCount,
+								currentUserId: currentUser.id,
+								participants: selectedConversation.participants,
+								isGroup: selectedConversation.isGroup,
+								areReceiptsShared: currentUser.readReceiptsEnabled,
+								isLoadingThread,
+								hasMoreOlder,
+								isLoadingOlder,
+								onLoadOlder: loadOlder,
+								hasMoreNewer,
+								isLoadingNewer,
+								onLoadNewer: loadNewer,
+								onEditMessage: editMessage,
+								onDeleteMessage: deleteMessage,
+								onHideMessage: hideMessage,
+								onRetrySend: retrySend,
+								onDiscardDraft: discardDraft,
+								onToggleReaction: toggleReaction,
+								onReplyToMessage: setReplyTo,
+								onForwardMessage: setForwardingMessage,
+								onSaveMessage: (messageId) => {
+									void api.saveMessage(selectedConversation.id, messageId);
+								},
+								onTogglePinMessage: (messageId, isPinned) => {
+									void (isPinned
+										? api.unpinMessage(selectedConversation.id, messageId)
+										: api.pinMessage(selectedConversation.id, messageId));
+								},
+								pinnedMessageIds: selectedConversation.pinnedMessages.map((pin) => pin.messageId),
+								onJumpToMessage: jumpToMessage,
+								onTrimHistory: trimHistory,
+								requestEditLast: editLastRequest,
+								requestCancelEdit: cancelEditRequest,
+								onEditingStateChange: setIsEditingMessage,
+								targetMessageId,
+								onReturnToLatest: closeMessageSearch,
+							}}
+							messageInputProps={{
+								conversationId: selectedConversation.id,
+								participants: selectedConversation.participants,
+								currentUserId: currentUser.id,
+								replyTo,
+								onCancelReply: () => setReplyTo(null),
+								onSend: sendMessage,
+								onSendSticker: sendSticker,
+								onSendFile: sendFile,
+								onSendVoice: sendVoice,
+								onRestoreReply: setPendingDraftReplyId,
+							}}
+						/>
 					) : (
 						<div className="flex flex-1 items-center justify-center">
 							<p className="text-sm text-ink-faint">

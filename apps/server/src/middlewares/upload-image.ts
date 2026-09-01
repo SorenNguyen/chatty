@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
-import multer, { MulterError } from "multer";
+import multer, { MulterError, type StorageEngine } from "multer";
 import { ValidationError } from "../lib/errors.js";
 
 /**
@@ -19,6 +19,8 @@ const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
 
 /** Roomier than an avatar: this one is the thing being sent, not a thumbnail of a face. */
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+export const MAX_FILE_BYTES = 25 * 1024 * 1024;
+export const MAX_VOICE_UPLOAD_BYTES = 16 * 1024 * 1024;
 
 /**
  * How many images one message may carry.
@@ -29,6 +31,29 @@ const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
  * so the real ceiling is this times `MAX_ATTACHMENT_BYTES`.
  */
 export const MAX_ATTACHMENTS_PER_MESSAGE = 10;
+export const MAX_FILES_PER_MESSAGE = 1;
+
+export const REFUSED_FILE_EXTENSIONS = new Set([
+	"exe",
+	"msi",
+	"bat",
+	"cmd",
+	"com",
+	"scr",
+	"pif",
+	"jar",
+	"apk",
+	"dmg",
+	"app",
+	"sh",
+	"ps1",
+	"vbs",
+	"js",
+	"jse",
+	"wsf",
+	"lnk",
+	"reg",
+]);
 
 interface ImageUploadOptions {
 	/** Form field the file arrives under. The client must match this exactly. */
@@ -139,3 +164,139 @@ export const uploadAttachment = createImageUpload({
 	label: "Image",
 	maxFiles: MAX_ATTACHMENTS_PER_MESSAGE,
 });
+
+function getExtension(fileName: string): string {
+	const safeName = fileName.trim().replace(/[. ]+$/gu, "");
+	const lastDot = safeName.lastIndexOf(".");
+
+	return lastDot < 0 ? "" : safeName.slice(lastDot + 1).toLowerCase();
+}
+
+function uploadLimitFor(fieldName: string): number {
+	if (fieldName === "attachment") return MAX_ATTACHMENT_BYTES;
+	if (fieldName === "voice") return MAX_VOICE_UPLOAD_BYTES;
+
+	return MAX_FILE_BYTES;
+}
+
+/**
+ * Multer only has one global byte ceiling, but this route carries three shapes
+ * with different limits. Capping each stream while it is read avoids buffering
+ * a 25MB "image" ten times before the controller can apply the 10MB rule.
+ */
+const fieldBoundedMemoryStorage: StorageEngine = {
+	_handleFile(_req, file, callback) {
+		const chunks: Buffer[] = [];
+		const limit = uploadLimitFor(file.fieldname);
+		let size = 0;
+		let finished = false;
+
+		function finish(error?: Error): void {
+			if (finished) return;
+			finished = true;
+			if (error) callback(error);
+			else callback(undefined, { buffer: Buffer.concat(chunks), size });
+		}
+
+		file.stream.on("data", (chunk: Buffer) => {
+			if (finished) return;
+			size += chunk.byteLength;
+			if (size > limit) {
+				chunks.length = 0;
+				finish(new MulterError("LIMIT_FILE_SIZE", file.fieldname));
+
+				return;
+			}
+			chunks.push(chunk);
+		});
+		file.stream.on("error", (error: Error) => finish(error));
+		file.stream.on("end", () => finish());
+	},
+	_removeFile(_req, _file, callback) {
+		callback(null);
+	},
+};
+
+const selectedUploadShape = new WeakMap<Request, string>();
+
+/**
+ * One multipart parser for the message endpoint's three mutually exclusive
+ * upload shapes. The controller enforces the exclusivity after parsing because
+ * only it can see every field together.
+ */
+const messageUpload = multer({
+	storage: fieldBoundedMemoryStorage,
+	limits: { files: MAX_ATTACHMENTS_PER_MESSAGE },
+	fileFilter: (req, file, next) => {
+		const selectedField = selectedUploadShape.get(req);
+		if (selectedField && selectedField !== file.fieldname) {
+			next(new ValidationError("Send images, one file, or one voice message — not a mixture"));
+
+			return;
+		}
+		selectedUploadShape.set(req, file.fieldname);
+
+		if (file.fieldname === "attachment" && !file.mimetype.startsWith("image/")) {
+			next(new ValidationError("Image must be an image"));
+
+			return;
+		}
+
+		if (file.fieldname === "file" && REFUSED_FILE_EXTENSIONS.has(getExtension(file.originalname))) {
+			next(new ValidationError("Executable files cannot be sent"));
+
+			return;
+		}
+
+		if (file.fieldname === "voice" && !file.mimetype.startsWith("audio/")) {
+			next(new ValidationError("Voice message must be audio"));
+
+			return;
+		}
+
+		next(null, true);
+	},
+}).fields([
+	{ name: "attachment", maxCount: MAX_ATTACHMENTS_PER_MESSAGE },
+	{ name: "file", maxCount: MAX_FILES_PER_MESSAGE },
+	{ name: "voice", maxCount: 1 },
+]);
+
+export function uploadMessageAttachments(req: Request, res: Response, next: NextFunction): void {
+	messageUpload(req, res, (error: unknown) => {
+		if (error instanceof MulterError) {
+			// Busboy reports LIMIT_FILE_COUNT before Multer attaches the final
+			// file's field. The first accepted field still identifies the shape.
+			const field = error.field ?? selectedUploadShape.get(req);
+			if (error.code === "LIMIT_FILE_SIZE") {
+				const maxBytes =
+					field === "voice"
+						? MAX_VOICE_UPLOAD_BYTES
+						: field === "attachment"
+							? MAX_ATTACHMENT_BYTES
+							: MAX_FILE_BYTES;
+				next(
+					new ValidationError(
+						`${field === "voice" ? "Voice message" : field === "attachment" ? "Image" : "File"} must be smaller than ${maxBytes / 1024 / 1024}MB`,
+					),
+				);
+
+				return;
+			}
+			if (
+				(error.code === "LIMIT_UNEXPECTED_FILE" || error.code === "LIMIT_FILE_COUNT") &&
+				field === "attachment"
+			) {
+				next(new ValidationError(`A message may carry at most ${MAX_ATTACHMENTS_PER_MESSAGE} images`));
+
+				return;
+			}
+
+			next(new ValidationError("Could not read the message upload"));
+
+			return;
+		}
+
+		next(error);
+	});
+}

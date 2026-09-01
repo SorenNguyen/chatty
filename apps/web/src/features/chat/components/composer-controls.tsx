@@ -1,12 +1,14 @@
-import { ArrowUp, ImagePlus, Smile, Sticker } from "lucide-react";
-import { useRef } from "react";
+import { ArrowUp, Smile } from "lucide-react";
+import type { ReactNode } from "react";
 import { Button } from "@/components/button";
-import { ACCEPTED_IMAGE_TYPES, MAX_ATTACHMENTS_PER_MESSAGE } from "../constants/attachment";
+import { cn } from "@/utils/cn";
+import { ComposerAttachmentMenu } from "./composer-attachment-menu";
 import { EmojiPicker } from "./emoji-picker";
 import { StickerTray } from "./sticker-tray";
 
 interface ComposerControlsProps {
 	isSending: boolean;
+	isVoiceActive: boolean;
 	/** True at the attachment cap: the picker is disabled rather than silently trimming. */
 	isFull: boolean;
 	canSend: boolean;
@@ -17,21 +19,24 @@ interface ComposerControlsProps {
 	onCloseEmojiPicker: () => void;
 	onCloseStickerTray: () => void;
 	onFilesSelected: (event: React.ChangeEvent<HTMLInputElement>) => void;
+	onFileSelected: (event: React.ChangeEvent<HTMLInputElement>) => void;
 	onInsertEmoji: (char: string) => void;
 	onPickSticker: (stickerId: string) => void;
+	field: ReactNode;
+	voiceRecorder: ReactNode;
 }
 
 /**
- * The row under the field: attach, emoji, sticker, send — and the two panels
- * that open above it.
+ * The complete one-line composer: one attachment entry point, the text well
+ * and one contextual action at the end. Voice replaces the rest of the bar.
  *
  * Split out of `MessageInput` when that file went over the 300-line limit for
- * the second time. Every piece of state still lives in the composer; this owns
- * the file input's ref and nothing else, because the ref exists only to click
- * a hidden element that is rendered right here.
+ * the second time. State stays in the composer; the attachment menu owns its
+ * file inputs because they only exist to support that trigger.
  */
 export function ComposerControls({
 	isSending,
+	isVoiceActive,
 	isFull,
 	canSend,
 	isEmojiPickerOpen,
@@ -41,72 +46,65 @@ export function ComposerControls({
 	onCloseEmojiPicker,
 	onCloseStickerTray,
 	onFilesSelected,
+	onFileSelected,
 	onInsertEmoji,
 	onPickSticker,
+	field,
+	voiceRecorder,
 }: ComposerControlsProps) {
-	const fileInputRef = useRef<HTMLInputElement>(null);
-
 	return (
-		// `relative` so the panels, which are absolutely positioned above this row,
-		// are placed against the controls rather than the whole form.
-		<div className="relative flex items-center justify-between gap-3 px-2.5 pb-2.5">
+		<div className="relative flex min-w-0 items-center gap-1.5">
 			{isEmojiPickerOpen && <EmojiPicker onPick={onInsertEmoji} onClose={onCloseEmojiPicker} />}
 			{isStickerTrayOpen && <StickerTray onPick={onPickSticker} onClose={onCloseStickerTray} />}
 
-			<input
-				ref={fileInputRef}
-				type="file"
-				accept={ACCEPTED_IMAGE_TYPES}
-				multiple
-				onChange={onFilesSelected}
-				className="hidden"
-			/>
-			<Button
-				variant="ghost"
-				onClick={() => fileInputRef.current?.click()}
-				// Disabled at the cap rather than silently dropping the extras: a
-				// picker that opens and then ignores what was chosen is worse than one
-				// that will not open.
-				disabled={isSending || isFull}
-				aria-label={isFull ? `At most ${MAX_ATTACHMENTS_PER_MESSAGE} images` : "Attach an image"}
-				className="size-7 shrink-0 p-0"
-			>
-				<ImagePlus className="size-4" />
-			</Button>
+			{!isVoiceActive && (
+				<ComposerAttachmentMenu
+					isDisabled={isSending}
+					isFull={isFull}
+					onOpen={() => {
+						onCloseEmojiPicker();
+						onCloseStickerTray();
+					}}
+					onOpenStickerTray={onToggleStickerTray}
+					onFilesSelected={onFilesSelected}
+					onFileSelected={onFileSelected}
+				/>
+			)}
 
-			<Button
-				variant="ghost"
-				onClick={onToggleEmojiPicker}
-				disabled={isSending}
-				aria-label="Insert an emoji"
-				aria-expanded={isEmojiPickerOpen}
-				className="-ml-auto size-7 shrink-0 p-0"
+			<div
+				className={cn(
+					"flex min-w-0 flex-1 items-center rounded-panel bg-paper-sunken pl-1",
+					"transition-shadow focus-within:ring-2 focus-within:ring-ink/10",
+					isVoiceActive && "hidden",
+				)}
 			>
-				<Smile className="size-4" />
-			</Button>
+				{field}
+				<Button
+					variant="ghost"
+					onClick={onToggleEmojiPicker}
+					disabled={isSending}
+					aria-label="Insert an emoji"
+					aria-expanded={isEmojiPickerOpen}
+					className="mr-1 size-8 shrink-0 rounded-bubble p-0 text-ink-faint hover:text-ink"
+				>
+					<Smile className="size-[17px]" />
+				</Button>
+			</div>
 
-			<Button
-				variant="ghost"
-				onClick={onToggleStickerTray}
-				disabled={isSending}
-				aria-label="Send a sticker"
-				aria-expanded={isStickerTrayOpen}
-				className="mr-auto size-7 shrink-0 p-0"
-			>
-				<Sticker className="size-4" />
-			</Button>
+			{(!canSend || isVoiceActive) && (
+				<div className={cn("shrink-0", isVoiceActive && "min-w-0 flex-1")}>{voiceRecorder}</div>
+			)}
 
-			<div className="flex items-center gap-3">
-				<span className="eyebrow text-ink-faint max-sm:hidden">Enter to send</span>
+			{!isVoiceActive && canSend && (
 				<Button
 					type="submit"
-					disabled={isSending || !canSend}
+					disabled={isSending}
 					aria-label="Send message"
-					className="size-8 shrink-0 p-0"
+					className="size-9 shrink-0 rounded-bubble p-0"
 				>
 					<ArrowUp className="size-4" />
 				</Button>
-			</div>
+			)}
 		</div>
 	);
 }

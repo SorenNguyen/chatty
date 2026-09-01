@@ -1,6 +1,7 @@
 import type {
 	ConversationDTO,
 	ConversationReadEvent,
+	ConversationSelfUpdatedEvent,
 	ConversationUpdatedEvent,
 	MessageDTO,
 	ParticipantDTO,
@@ -13,11 +14,16 @@ import { messageSelect, toMessageDTO, type MessageRow } from "../messages/messag
 import { toUserDTO, userSelect, type UserRow } from "../users/users.mapper.js";
 import type {
 	AddParticipantInput,
+	ArchiveConversationInput,
 	CreateConversationInput,
 	MarkReadInput,
+	MuteConversationInput,
+	PinConversationInput,
 	RenameConversationInput,
 	TransferOwnershipInput,
 } from "./conversations.schema.js";
+
+const MAX_PINNED_CONVERSATIONS = 5;
 
 /** Shape returned by every query below, so one mapper can serve all of them. */
 const conversationInclude = {
@@ -27,6 +33,9 @@ const conversationInclude = {
 			// process reads the private one — see `mapParticipants`.
 			lastSharedReadMessageId: true,
 			role: true,
+			archivedAt: true,
+			pinnedAt: true,
+			mutedUntil: true,
 			user: { select: userSelect },
 		},
 	},
@@ -35,11 +44,21 @@ const conversationInclude = {
 		orderBy: [{ createdAt: "desc" }, { id: "desc" }],
 		select: messageSelect,
 	},
+	pinnedMessages: {
+		orderBy: { pinnedAt: "desc" },
+		select: {
+			messageId: true,
+			pinnedAt: true,
+			pinnedById: true,
+			message: { select: { content: true } },
+		},
+	},
 } satisfies Prisma.ConversationInclude;
 
 function conversationIncludeForUser(userId: string) {
 	return {
 		participants: conversationInclude.participants,
+		pinnedMessages: conversationInclude.pinnedMessages,
 		messages: {
 			...conversationInclude.messages,
 			where: { hiddenFor: { none: { userId } } },
@@ -55,9 +74,18 @@ interface ConversationRow {
 	participants: {
 		lastSharedReadMessageId: string | null;
 		role: DbConversationRole;
+		archivedAt: Date | null;
+		pinnedAt: Date | null;
+		mutedUntil: Date | null;
 		user: UserRow;
 	}[];
 	messages: MessageRow[];
+	pinnedMessages: {
+		messageId: string;
+		pinnedAt: Date;
+		pinnedById: string;
+		message: { content: string };
+	}[];
 }
 
 /**
@@ -83,8 +111,9 @@ function mapParticipants(rows: ConversationRow["participants"]): ParticipantDTO[
  * field that differs per viewer: the same conversation is "3 unread" to one
  * participant and "0 unread" to the person who just wrote those three messages.
  */
-function toConversationDTO(row: ConversationRow, unreadCount: number): ConversationDTO {
+function toConversationDTO(row: ConversationRow, unreadCount: number, viewerId: string): ConversationDTO {
 	const participants = mapParticipants(row.participants);
+	const viewer = row.participants.find((participant) => participant.user.id === viewerId);
 
 	const latest = row.messages[0];
 	// Mapped by the messages module rather than here, so a message carries the
@@ -99,6 +128,15 @@ function toConversationDTO(row: ConversationRow, unreadCount: number): Conversat
 		participants,
 		lastMessage,
 		unreadCount,
+		isPinned: viewer?.pinnedAt !== null && viewer?.pinnedAt !== undefined,
+		isArchived: viewer?.archivedAt !== null && viewer?.archivedAt !== undefined,
+		mutedUntil: viewer?.mutedUntil?.toISOString() ?? null,
+		pinnedMessages: row.pinnedMessages.map((pinned) => ({
+			messageId: pinned.messageId,
+			content: pinned.message.content,
+			pinnedAt: pinned.pinnedAt.toISOString(),
+			pinnedById: pinned.pinnedById,
+		})),
 		updatedAt: row.updatedAt.toISOString(),
 	};
 }
@@ -344,7 +382,7 @@ export async function createConversation(
 			// count is looked up rather than assumed to be zero the way it is below.
 			const unreadCounts = await countUnreadByConversation(currentUserId, [existing.id]);
 
-			return toConversationDTO(existing, unreadCounts.get(existing.id) ?? 0);
+			return toConversationDTO(existing, unreadCounts.get(existing.id) ?? 0, currentUserId);
 		}
 	}
 
@@ -369,7 +407,7 @@ export async function createConversation(
 		include: conversationInclude,
 	});
 
-	const conversationDTO = toConversationDTO(conversation, 0);
+	const conversationDTO = toConversationDTO(conversation, 0, currentUserId);
 
 	// Join first, announce second. A client told about the conversation before
 	// its socket is in the room could send a message and never see its own
@@ -380,19 +418,127 @@ export async function createConversation(
 	return conversationDTO;
 }
 
-export async function listConversationsForUser(userId: string): Promise<ConversationDTO[]> {
-	const conversations = await prisma.conversation.findMany({
-		where: { participants: { some: { userId } } },
-		orderBy: { updatedAt: "desc" },
-		include: conversationIncludeForUser(userId),
+export async function listConversationsForUser(userId: string, isArchived = false): Promise<ConversationDTO[]> {
+	const memberships = await prisma.conversationParticipant.findMany({
+		where: { userId, ...(isArchived ? { archivedAt: { not: null } } : { archivedAt: null }) },
+		// Ordered by the viewer's own membership row, so the database—not each
+		// client—defines the stable pin order. Nulls last keeps every ordinary row
+		// below all pinned rows before activity breaks ties.
+		orderBy: [{ pinnedAt: { sort: "desc", nulls: "last" } }, { conversation: { updatedAt: "desc" } }],
+		select: { conversation: { include: conversationIncludeForUser(userId) } },
 	});
+	const conversations = memberships.map((membership) => membership.conversation);
 
 	const unreadCounts = await countUnreadByConversation(
 		userId,
 		conversations.map((conversation) => conversation.id),
 	);
 
-	return conversations.map((conversation) => toConversationDTO(conversation, unreadCounts.get(conversation.id) ?? 0));
+	return conversations.map((conversation) =>
+		toConversationDTO(conversation, unreadCounts.get(conversation.id) ?? 0, userId),
+	);
+}
+
+function toConversationSelfUpdatedEvent(row: {
+	conversationId: string;
+	pinnedAt: Date | null;
+	archivedAt: Date | null;
+	mutedUntil: Date | null;
+}): ConversationSelfUpdatedEvent {
+	return {
+		conversationId: row.conversationId,
+		isPinned: row.pinnedAt !== null,
+		isArchived: row.archivedAt !== null,
+		mutedUntil: row.mutedUntil?.toISOString() ?? null,
+	};
+}
+
+function announceConversationSelfUpdated(userId: string, event: ConversationSelfUpdatedEvent): void {
+	getIO().to(userRoom(userId)).emit("conversation:self-updated", event);
+}
+
+const selfStateSelect = {
+	conversationId: true,
+	pinnedAt: true,
+	archivedAt: true,
+	mutedUntil: true,
+} as const;
+
+export async function setConversationArchived(
+	userId: string,
+	conversationId: string,
+	input: ArchiveConversationInput,
+): Promise<ConversationSelfUpdatedEvent> {
+	await assertParticipant(userId, conversationId);
+	const participant = await prisma.conversationParticipant.update({
+		where: { conversationId_userId: { conversationId, userId } },
+		data: {
+			archivedAt: input.archived ? new Date() : null,
+			// A row cannot be intentionally prominent and hidden at once.
+			...(input.archived ? { pinnedAt: null } : {}),
+		},
+		select: selfStateSelect,
+	});
+	const event = toConversationSelfUpdatedEvent(participant);
+	announceConversationSelfUpdated(userId, event);
+
+	return event;
+}
+
+export async function setConversationPinned(
+	userId: string,
+	conversationId: string,
+	input: PinConversationInput,
+): Promise<ConversationSelfUpdatedEvent> {
+	await assertParticipant(userId, conversationId);
+	const participant = await prisma.$transaction(async (transaction) => {
+		await transaction.$queryRaw`
+			SELECT id FROM "ConversationParticipant"
+			WHERE "userId" = ${userId}
+			FOR UPDATE
+		`;
+		if (input.pinned) {
+			const pinnedCount = await transaction.conversationParticipant.count({
+				where: { userId, pinnedAt: { not: null }, conversationId: { not: conversationId } },
+			});
+			if (pinnedCount >= MAX_PINNED_CONVERSATIONS) {
+				throw new ValidationError(`You can pin up to ${MAX_PINNED_CONVERSATIONS} conversations`);
+			}
+		}
+
+		return transaction.conversationParticipant.update({
+			where: { conversationId_userId: { conversationId, userId } },
+			data: {
+				pinnedAt: input.pinned ? new Date() : null,
+				...(input.pinned ? { archivedAt: null } : {}),
+			},
+			select: selfStateSelect,
+		});
+	});
+	const event = toConversationSelfUpdatedEvent(participant);
+	announceConversationSelfUpdated(userId, event);
+
+	return event;
+}
+
+export async function setConversationMuted(
+	userId: string,
+	conversationId: string,
+	input: MuteConversationInput,
+): Promise<ConversationSelfUpdatedEvent> {
+	await assertParticipant(userId, conversationId);
+	const until = input.until ? new Date(input.until) : null;
+	if (until && until.getTime() <= Date.now()) throw new ValidationError("Mute end time must be in the future");
+
+	const participant = await prisma.conversationParticipant.update({
+		where: { conversationId_userId: { conversationId, userId } },
+		data: { mutedUntil: until },
+		select: selfStateSelect,
+	});
+	const event = toConversationSelfUpdatedEvent(participant);
+	announceConversationSelfUpdated(userId, event);
+
+	return event;
 }
 
 /**
@@ -745,12 +891,15 @@ export async function addParticipant(
 	announceSystemMessage(systemMessage);
 
 	const newMemberUnread = await countUnreadByConversation(input.userId, [conversationId]);
-	announceNewConversation([input.userId], toConversationDTO(updated, newMemberUnread.get(conversationId) ?? 0));
+	announceNewConversation(
+		[input.userId],
+		toConversationDTO(updated, newMemberUnread.get(conversationId) ?? 0, input.userId),
+	);
 
 	announceConversationUpdated(conversationId, toConversationUpdatedEvent(updated));
 
 	const actorUnread = await countUnreadByConversation(currentUserId, [conversationId]);
-	return toConversationDTO(updated, actorUnread.get(conversationId) ?? 0);
+	return toConversationDTO(updated, actorUnread.get(conversationId) ?? 0, currentUserId);
 }
 
 /**
@@ -865,7 +1014,7 @@ export async function renameConversation(
 	announceConversationUpdated(conversationId, toConversationUpdatedEvent(updated));
 
 	const actorUnread = await countUnreadByConversation(currentUserId, [conversationId]);
-	return toConversationDTO(updated, actorUnread.get(conversationId) ?? 0);
+	return toConversationDTO(updated, actorUnread.get(conversationId) ?? 0, currentUserId);
 }
 
 /**
@@ -934,7 +1083,7 @@ export async function transferGroupOwnership(
 	announceConversationUpdated(conversationId, toConversationUpdatedEvent(updated));
 
 	const actorUnread = await countUnreadByConversation(currentUserId, [conversationId]);
-	return toConversationDTO(updated, actorUnread.get(conversationId) ?? 0);
+	return toConversationDTO(updated, actorUnread.get(conversationId) ?? 0, currentUserId);
 }
 
 /**

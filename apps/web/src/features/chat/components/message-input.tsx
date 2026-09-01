@@ -1,101 +1,125 @@
-import { useEffect, useRef, useState } from "react";
-import { CornerUpLeft, X } from "lucide-react";
-import type { MessageDTO } from "@chatty/shared-types";
-import { Button } from "@/components/button";
+import type { ChangeEvent, FormEvent } from "react";
+import { useCallback, useRef, useState } from "react";
+import type { MessageDTO, ParticipantDTO } from "@chatty/shared-types";
 import { cn } from "@/utils/cn";
-import { MAX_ATTACHMENTS_PER_MESSAGE } from "../constants/attachment";
-import { DELETED_AUTHOR_NAME } from "../constants/message";
-import { getAttachmentPreviewText } from "../utils";
 import { useTypingNotifier } from "../hooks";
-import { ComposerAttachments } from "./composer-attachments";
+import { useComposerAttachments } from "../hooks/use-composer-attachments";
+import { useMessageDraft } from "../hooks/use-message-draft";
 import { ComposerControls } from "./composer-controls";
+import { ComposerMentionSuggestions } from "./composer-mention-suggestions";
+import { ComposerReplyPreview } from "./composer-reply-preview";
+import { ComposerUploadPreview } from "./composer-upload-preview";
+import { VoiceRecorder } from "./voice-recorder";
 
 interface MessageInputProps {
 	conversationId: string;
+	participants: ParticipantDTO[];
+	currentUserId: string;
 	/** The message being answered, or null for an ordinary send. Owned by the page. */
 	replyTo: MessageDTO | null;
 	onCancelReply: () => void;
 	/**
-	 * Owned by the page, because a text message appears in the thread before the
-	 * server has it and the thread is this component's sibling. A send carrying
-	 * an image still resolves only once it is stored — see `useConversationMessages`.
+	 * Owned by the page, because a message appears in the thread before the
+	 * server has it and the thread is this component's sibling. Pictures included
+	 * as of phase 29 — see `useConversationMessages`, which measures them first so
+	 * the gallery reserves the right box.
 	 */
 	onSend: (
 		content: string,
 		attachments: File[],
 		replyTo: MessageDTO | null,
-		onProgress?: (percent: number) => void,
+		mentionedUserIds?: string[],
 	) => Promise<void>;
 	/** Sends a saved sticker. Its own path because a sticker is the whole message. */
 	onSendSticker: (stickerId: string, replyTo: MessageDTO | null) => Promise<void>;
+	onSendFile: (
+		file: File,
+		content: string,
+		replyTo: MessageDTO | null,
+		onProgress?: (percent: number) => void,
+	) => Promise<void>;
+	onSendVoice: (recording: Blob, onProgress?: (percent: number) => void) => Promise<void>;
+	onRestoreReply: (messageId: string) => void;
 }
 
-/**
- * The composer: one bordered block with the field on top and its controls under
- * it, rather than a row of a pill, a paperclip and a circle. The block is the
- * same shape as the bubbles above it, which is what makes writing look like the
- * beginning of the thread rather than a separate piece of furniture.
- */
-export function MessageInput({ conversationId, replyTo, onCancelReply, onSend, onSendSticker }: MessageInputProps) {
+export function MessageInput({
+	conversationId,
+	participants,
+	currentUserId,
+	replyTo,
+	onCancelReply,
+	onSend,
+	onSendSticker,
+	onSendFile,
+	onSendVoice,
+	onRestoreReply,
+}: MessageInputProps) {
 	const [content, setContent] = useState("");
-	const [attachments, setAttachments] = useState<File[]>([]);
-	const [previewUrls, setPreviewUrls] = useState<string[]>([]);
 	const [isSending, setIsSending] = useState(false);
 	const [uploadProgress, setUploadProgress] = useState(0);
 	const [error, setError] = useState("");
 	const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
 	const [isStickerTrayOpen, setIsStickerTrayOpen] = useState(false);
+	const [isVoiceActive, setIsVoiceActive] = useState(false);
 	const fieldRef = useRef<HTMLInputElement>(null);
+	const contentRef = useRef(content);
+	contentRef.current = content;
 	const { notifyTyping, stopTyping } = useTypingNotifier(conversationId);
+	const {
+		attachments,
+		setAttachments,
+		selectedFile,
+		setSelectedFile,
+		previewUrls,
+		isDragActive,
+		isFull,
+		handleFilesSelected,
+		handleFileSelected,
+		handlePaste,
+		removeAttachment,
+	} = useComposerAttachments({ setError });
+	const clearDraft = useMessageDraft({
+		conversationId,
+		content,
+		replyToId: replyTo?.id ?? null,
+		onRestore: useCallback(
+			(draft) => {
+				setContent(draft.content);
+				if (draft.replyToId) onRestoreReply(draft.replyToId);
+			},
+			[onRestoreReply],
+		),
+		isPaused: isSending,
+	});
+	const mentionMatch = content.match(/(?:^|\s)@([a-z0-9_.-]*)$/iu);
+	const mentionQuery = mentionMatch?.[1]?.toLowerCase();
+	const mentionSuggestions = mentionMatch
+		? participants
+				.filter(
+					(participant) =>
+						participant.id !== currentUserId &&
+						(participant.handle.includes(mentionQuery ?? "") ||
+							participant.displayName.toLowerCase().includes(mentionQuery ?? "")),
+				)
+				.slice(0, 5)
+		: [];
 
 	// A message is allowed to be pictures with nothing written on them.
-	const hasSomethingToSend = Boolean(content.trim()) || attachments.length > 0;
-	const isFull = attachments.length >= MAX_ATTACHMENTS_PER_MESSAGE;
+	const hasSomethingToSend = Boolean(content.trim()) || attachments.length > 0 || selectedFile !== null;
 
-	// Each preview is an object URL, which holds its file in memory until it is
-	// revoked. Doing that in the cleanup rather than at send time covers the two
-	// cases a send does not: removing one, and navigating away with some still
-	// attached. The whole set is rebuilt whenever the list changes — cheap, and
-	// it makes the revoke a single obvious line rather than per-file bookkeeping.
-	useEffect(() => {
-		const objectUrls = attachments.map((file) => URL.createObjectURL(file));
-		setPreviewUrls(objectUrls);
-
-		return () => objectUrls.forEach((objectUrl) => URL.revokeObjectURL(objectUrl));
-	}, [attachments]);
-
-	function handleChange(event: React.ChangeEvent<HTMLInputElement>) {
+	function handleChange(event: ChangeEvent<HTMLInputElement>) {
 		setContent(event.target.value);
 		notifyTyping();
 	}
 
-	function handleFilesSelected(event: React.ChangeEvent<HTMLInputElement>) {
-		const picked = [...(event.target.files ?? [])];
-		// Resetting the input is what makes picking the same file twice work: the
-		// change event does not fire when the value is unchanged, so re-attaching
-		// after removing would do nothing.
-		event.target.value = "";
-		if (picked.length === 0) return;
-
-		// Appended rather than replacing, so a second trip to the file dialog adds
-		// to the set. Trimmed here as well as on the server: refusing before the
-		// upload is the difference between a sentence and ten megabytes.
-		setAttachments((current) => [...current, ...picked].slice(0, MAX_ATTACHMENTS_PER_MESSAGE));
-		setError(
-			picked.length + attachments.length > MAX_ATTACHMENTS_PER_MESSAGE
-				? `A message may carry at most ${MAX_ATTACHMENTS_PER_MESSAGE} images`
-				: "",
-		);
+	function insertMention(participant: ParticipantDTO) {
+		if (!mentionMatch || mentionMatch.index === undefined) return;
+		const leadingSpace = mentionMatch[0].startsWith(" ") ? " " : "";
+		setContent(`${content.slice(0, mentionMatch.index)}${leadingSpace}@${participant.handle} `);
+		requestAnimationFrame(() => fieldRef.current?.focus());
 	}
 
-	/**
-	 * Puts an emoji where the caret is, not on the end.
-	 *
-	 * Appending is the version that looks fine until somebody goes back to fix a
-	 * word and their next emoji lands three sentences away from where they are
-	 * looking. Focus and the caret are restored afterwards, so the picker can be
-	 * used several times in a row without reaching for the field between each.
-	 */
+	/** Inserts at the caret and restores focus after the controlled field renders. */
 	function insertEmoji(char: string) {
 		const field = fieldRef.current;
 		const caret = field?.selectionStart ?? content.length;
@@ -117,140 +141,117 @@ export function MessageInput({ conversationId, replyTo, onCancelReply, onSend, o
 		setIsStickerTrayOpen(false);
 		stopTyping();
 		const target = replyTo;
-		onCancelReply();
-		void onSendSticker(stickerId, target);
+		void onSendSticker(stickerId, target).then(() => {
+			clearDraft();
+			onCancelReply();
+		});
 	}
 
-	function removeAttachment(index: number) {
-		setAttachments((current) => current.filter((_, position) => position !== index));
-		setError("");
-	}
-
-	async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+	async function handleSubmit(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
 		if (!hasSomethingToSend) return;
 
-		// Retracted before the send, not after: the message itself is what tells
-		// the other side you finished, and leaving "typing…" up while the request
-		// is in flight makes a slow network look like a second message coming.
+		// Retract before the request: a slow network must not leave "typing…" behind.
 		stopTyping();
 		setError("");
 
 		const draftContent = content.trim();
 		const draftReplyTo = replyTo;
+		const mentionedUserIds = participants
+			.filter((participant) =>
+				new RegExp(`(^|\\s)@${participant.handle.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}(?=\\s|$)`, "iu").test(
+					draftContent,
+				),
+			)
+			.map((participant) => participant.id);
 
 		// A text-only send empties the composer *before* the round trip, because
 		// the message is already in the thread by then — the whole point of the
 		// optimistic bubble is that writing the next one does not wait on the
 		// network. A failed send is reported on that bubble, not here.
-		if (attachments.length === 0) {
-			setContent("");
-			onCancelReply();
-			await onSend(draftContent, [], draftReplyTo);
+		if (selectedFile) {
+			setIsSending(true);
+			setUploadProgress(0);
+			try {
+				await onSendFile(selectedFile, draftContent, draftReplyTo, setUploadProgress);
+				setSelectedFile(null);
+				setContent("");
+				clearDraft();
+				onCancelReply();
+			} catch (caught) {
+				setError(caught instanceof Error ? caught.message : "The file could not be sent");
+			} finally {
+				setIsSending(false);
+			}
 
 			return;
 		}
 
-		// Images still resolve only once they are stored, so the composer keeps
-		// the files and their progress bar until then.
-		setIsSending(true);
-		setUploadProgress(0);
-		try {
-			await onSend(draftContent, attachments, draftReplyTo, setUploadProgress);
+		if (attachments.length === 0) {
+			localStorage.setItem(
+				`chatty:draft:${conversationId}`,
+				JSON.stringify({ content: draftContent, replyToId: draftReplyTo?.id ?? null }),
+			);
 			setContent("");
-			setAttachments([]);
-			// Cleared only on success, alongside the text. A reply that failed to
-			// send still has a target, and making the sender re-pick it after a
-			// dropped connection loses the one piece of context they chose.
-			onCancelReply();
-		} catch (sendError) {
-			// The file is kept on failure — re-picking it after a dropped
-			// connection is the most annoying possible way to lose a photo.
-			setError((sendError as Error).message);
-		} finally {
-			setIsSending(false);
+			try {
+				await onSend(draftContent, [], draftReplyTo, mentionedUserIds);
+				if (contentRef.current === "") clearDraft();
+				onCancelReply();
+			} catch (sendError) {
+				setContent(draftContent);
+				setError(sendError instanceof Error ? sendError.message : "The message could not be sent");
+			}
+
+			return;
+		}
+
+		// Pictures now empty the composer up front, exactly as text does. They
+		// used to be held here behind a progress bar until the upload landed,
+		// which meant the previews and the bubble were never on screen together —
+		// and it also meant a failed photo was reported in two places at once.
+		// It is reported on the bubble now, which is where the retry is.
+		setContent("");
+		setAttachments([]);
+		clearDraft();
+		onCancelReply();
+		try {
+			await onSend(draftContent, attachments, draftReplyTo, mentionedUserIds);
+		} catch {
+			// Swallowed on purpose: the draft in the thread is already showing
+			// "Not sent" with a retry beside it, and a second copy of the same
+			// news in a composer the sender has moved on from is noise.
 		}
 	}
 
 	return (
-		<div className="shrink-0 bg-paper px-3 pb-3 pt-2 sm:px-5 sm:pb-4 md:px-7 md:pb-6">
+		<div className="shrink-0 border-t border-rule-soft bg-paper-raised px-3 py-2.5 sm:px-4 md:px-5">
 			<form
 				onSubmit={handleSubmit}
 				className={cn(
-					"flex flex-col rounded-bubble border bg-paper-raised focus-within:border-ink-faint",
-					replyTo ? "border-ink-faint" : "border-rule",
+					"relative flex flex-col gap-2 rounded-panel transition",
+					isDragActive && "bg-signal-soft p-2 ring-2 ring-signal/20",
 				)}
 			>
-				{replyTo && (
-					<div className="flex items-start gap-2.5 border-b border-rule-soft px-4 py-2.5">
-						<CornerUpLeft aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-ink-faint" />
-						<div className="flex min-w-0 flex-col gap-0.5">
-							<span className="eyebrow text-ink-faint">
-								Replying to {replyTo.author?.displayName ?? DELETED_AUTHOR_NAME}
-							</span>
-							<span className="truncate text-[12.5px]/[1.45] text-ink-soft">
-								{replyTo.content ||
-									(replyTo.attachments.length > 0
-										? getAttachmentPreviewText(replyTo.attachments.length)
-										: "")}
-							</span>
-						</div>
-						{replyTo.attachments[0] && (
-							<img
-								src={replyTo.attachments[0].url}
-								alt=""
-								className="ml-auto size-10 shrink-0 rounded-control border border-rule object-cover"
-							/>
-						)}
-						<Button
-							variant="ghost"
-							onClick={onCancelReply}
-							aria-label="Cancel reply"
-							className={cn(
-								"size-6 shrink-0 p-0 text-ink-faint hover:bg-transparent hover:text-ink",
-								replyTo.attachments.length === 0 && "ml-auto",
-							)}
-						>
-							<X className="size-3.5" />
-						</Button>
-					</div>
-				)}
-
-				{error && (
-					<p role="alert" className="eyebrow border-b border-rule-soft px-4 py-2.5 text-signal">
-						{error}
-					</p>
-				)}
-
-				{isSending && attachments.length > 0 && (
-					<div className="px-4 pt-3" role="status" aria-label={`Uploading images ${uploadProgress}%`}>
-						<div className="mb-1.5 flex justify-between">
-							<span className="eyebrow text-ink-faint">
-								{attachments.length > 1 ? `Uploading ${attachments.length} images` : "Uploading image"}
-							</span>
-							<span className="meta text-ink-faint">{uploadProgress}%</span>
-						</div>
-						<div className="h-[3px] overflow-hidden rounded-badge bg-rule-soft">
-							<div className="h-full bg-ink transition-[width]" style={{ width: `${uploadProgress}%` }} />
-						</div>
-					</div>
-				)}
-
-				{previewUrls.length > 0 && (
-					<ComposerAttachments previewUrls={previewUrls} onRemove={removeAttachment} />
-				)}
-
-				<input
-					ref={fieldRef}
-					value={content}
-					onChange={handleChange}
-					placeholder="Write a message"
-					aria-label="Message"
-					className="bg-transparent px-4 pb-2.5 pt-3.5 text-sm text-ink outline-none placeholder:text-ink-faint"
+				{replyTo && <ComposerReplyPreview replyTo={replyTo} onCancel={onCancelReply} />}
+				<ComposerUploadPreview
+					error={error}
+					isSending={isSending}
+					uploadProgress={uploadProgress}
+					attachments={attachments}
+					previewUrls={previewUrls}
+					selectedFile={selectedFile}
+					onRemoveImage={removeAttachment}
+					onRemoveFile={() => {
+						setSelectedFile(null);
+						setError("");
+					}}
 				/>
 
+				<ComposerMentionSuggestions participants={mentionSuggestions} onPick={insertMention} />
+
 				<ComposerControls
-					isSending={isSending}
+					isSending={isSending || isVoiceActive}
+					isVoiceActive={isVoiceActive}
 					isFull={isFull}
 					canSend={hasSomethingToSend}
 					isEmojiPickerOpen={isEmojiPickerOpen}
@@ -266,8 +267,28 @@ export function MessageInput({ conversationId, replyTo, onCancelReply, onSend, o
 					onCloseEmojiPicker={() => setIsEmojiPickerOpen(false)}
 					onCloseStickerTray={() => setIsStickerTrayOpen(false)}
 					onFilesSelected={handleFilesSelected}
+					onFileSelected={handleFileSelected}
 					onInsertEmoji={insertEmoji}
 					onPickSticker={sendSticker}
+					field={
+						<input
+							ref={fieldRef}
+							value={content}
+							onChange={handleChange}
+							onPaste={handlePaste}
+							disabled={isVoiceActive}
+							placeholder="Write a message"
+							aria-label="Message"
+							className="min-w-0 flex-1 bg-transparent px-2.5 py-2.5 text-sm text-ink outline-none placeholder:text-ink-faint"
+						/>
+					}
+					voiceRecorder={
+						<VoiceRecorder
+							isDisabled={isSending || hasSomethingToSend || replyTo !== null}
+							onSend={onSendVoice}
+							onActiveChange={setIsVoiceActive}
+						/>
+					}
 				/>
 			</form>
 		</div>

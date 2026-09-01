@@ -1,7 +1,8 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MessageInput } from "@/features/chat/components/message-input";
+import { makeParticipant } from "./factories";
 
 /**
  * The composer no longer calls the API. A text message is put on screen before
@@ -17,19 +18,26 @@ vi.mock("@/features/chat/hooks", () => ({
 
 beforeEach(() => {
 	onSend.mockReset().mockResolvedValue(undefined);
+	localStorage.clear();
 	// jsdom has no object URL implementation; the preview needs one.
 	URL.createObjectURL = vi.fn(() => "blob:preview");
 	URL.revokeObjectURL = vi.fn();
 });
 
-function renderInput() {
+function renderInput(overrides: Partial<React.ComponentProps<typeof MessageInput>> = {}) {
 	return render(
 		<MessageInput
 			conversationId="conversation-1"
+			participants={[]}
+			currentUserId="minh"
 			replyTo={null}
 			onCancelReply={vi.fn()}
 			onSend={onSend}
 			onSendSticker={vi.fn()}
+			onSendFile={vi.fn().mockResolvedValue(undefined)}
+			onSendVoice={vi.fn().mockResolvedValue(undefined)}
+			onRestoreReply={vi.fn()}
+			{...overrides}
 		/>,
 	);
 }
@@ -47,10 +55,23 @@ function sendButton(): HTMLElement {
 const image = new File(["pretend-bytes"], "photo.png", { type: "image/png" });
 
 describe("MessageInput", () => {
-	it("cannot send a message that is neither text nor picture", () => {
+	it("shows voice instead of an inactive send button when the composer is empty", () => {
 		renderInput();
 
-		expect(sendButton()).toBeDisabled();
+		expect(screen.queryByRole("button", { name: "Send message" })).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Record a voice message" })).toBeEnabled();
+	});
+
+	it("groups photos, files and stickers behind one attachment trigger", async () => {
+		const typist = userEvent.setup();
+		renderInput();
+
+		expect(screen.queryByRole("menu", { name: "Choose an attachment" })).not.toBeInTheDocument();
+		await typist.click(screen.getByRole("button", { name: "Add an attachment" }));
+
+		expect(screen.getByRole("menuitem", { name: "Photos" })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "File" })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "Sticker" })).toBeInTheDocument();
 	});
 
 	it("enables sending as soon as a picture is attached, with no text", async () => {
@@ -68,7 +89,58 @@ describe("MessageInput", () => {
 
 		await typist.type(screen.getByLabelText("Message"), "hello{Enter}");
 
-		expect(onSend).toHaveBeenCalledWith("hello", [], null);
+		expect(onSend).toHaveBeenCalledWith("hello", [], null, []);
+	});
+
+	it("restores a device-local draft for the conversation", () => {
+		localStorage.setItem(
+			"chatty:draft:conversation-1",
+			JSON.stringify({ content: "unfinished thought", replyToId: null }),
+		);
+
+		renderInput();
+
+		expect(screen.getByLabelText("Message")).toHaveValue("unfinished thought");
+	});
+
+	it("persists the latest text immediately when leaving the composer", () => {
+		const view = renderInput();
+		fireEvent.change(screen.getByLabelText("Message"), { target: { value: "keep this" } });
+
+		view.unmount();
+
+		expect(JSON.parse(localStorage.getItem("chatty:draft:conversation-1") ?? "null")).toEqual({
+			content: "keep this",
+			replyToId: null,
+		});
+	});
+
+	it("accepts an image pasted directly into the composer", () => {
+		renderInput();
+
+		fireEvent.paste(screen.getByLabelText("Message"), { clipboardData: { files: [image] } });
+
+		expect(screen.getByAltText("Attached image preview 1")).toBeInTheDocument();
+	});
+
+	it("accepts an image dropped over the chat surface", () => {
+		renderInput();
+
+		fireEvent.drop(window, { dataTransfer: { types: ["Files"], files: [image] } });
+
+		expect(screen.getByAltText("Attached image preview 1")).toBeInTheDocument();
+	});
+
+	it("autocompletes a group mention and sends the participant id", async () => {
+		const user = userEvent.setup();
+		const an = makeParticipant("an", "An");
+		renderInput({ participants: [makeParticipant("minh", "Minh"), an] });
+
+		await user.type(screen.getByLabelText("Message"), "Hello @a");
+		await user.click(screen.getByRole("button", { name: "An@an" }));
+		await user.type(screen.getByLabelText("Message"), "there{Enter}");
+
+		expect(onSend).toHaveBeenCalledWith("Hello @an there", [], null, ["an"]);
 	});
 
 	it("empties the field before the send resolves, so the next message need not wait", async () => {
@@ -89,6 +161,25 @@ describe("MessageInput", () => {
 		releaseSend?.();
 	});
 
+	it("can send the next text message while the previous request is still pending", async () => {
+		const pendingSends: Array<() => void> = [];
+		onSend.mockImplementation(
+			() =>
+				new Promise<void>((resolve) => {
+					pendingSends.push(resolve);
+				}),
+		);
+		const typist = userEvent.setup();
+		renderInput();
+
+		await typist.type(screen.getByLabelText("Message"), "first{Enter}");
+		await typist.type(screen.getByLabelText("Message"), "second{Enter}");
+
+		expect(onSend).toHaveBeenCalledTimes(2);
+		expect(onSend).toHaveBeenLastCalledWith("second", [], null, []);
+		pendingSends.forEach((resolve) => resolve());
+	});
+
 	it("lets an image be sent with no text at all", async () => {
 		// The whole reason the send button's guard changed: a picture is a message.
 		const typist = userEvent.setup();
@@ -97,7 +188,7 @@ describe("MessageInput", () => {
 		await typist.upload(fileInput(container), image);
 		await typist.click(sendButton());
 
-		expect(onSend).toHaveBeenCalledWith("", [image], null, expect.any(Function));
+		expect(onSend).toHaveBeenCalledWith("", [image], null, []);
 	});
 
 	it("sends an image together with its caption", async () => {
@@ -107,7 +198,7 @@ describe("MessageInput", () => {
 		await typist.upload(fileInput(container), image);
 		await typist.type(screen.getByLabelText("Message"), "look at this{Enter}");
 
-		expect(onSend).toHaveBeenCalledWith("look at this", [image], null, expect.any(Function));
+		expect(onSend).toHaveBeenCalledWith("look at this", [image], null, []);
 	});
 
 	it("shows a preview that can be removed again", async () => {
@@ -152,7 +243,7 @@ describe("MessageInput", () => {
 		await typist.upload(fileInput(container), [image, second]);
 		await typist.click(sendButton());
 
-		expect(onSend).toHaveBeenCalledWith("", [image, second], null, expect.any(Function));
+		expect(onSend).toHaveBeenCalledWith("", [image, second], null, []);
 	});
 
 	it("adds to the set on a second trip to the file dialog rather than replacing it", async () => {
@@ -178,7 +269,7 @@ describe("MessageInput", () => {
 		await typist.click(screen.getByRole("button", { name: "Remove attached image 1" }));
 		await typist.click(sendButton());
 
-		expect(onSend).toHaveBeenCalledWith("", [second], null, expect.any(Function));
+		expect(onSend).toHaveBeenCalledWith("", [second], null, []);
 	});
 
 	it("refuses more than the cap, and says so", async () => {
@@ -192,16 +283,42 @@ describe("MessageInput", () => {
 		);
 
 		await typist.upload(fileInput(container), eleven);
+		await typist.click(screen.getByRole("button", { name: "Add an attachment" }));
 
 		expect(screen.getByRole("alert")).toHaveTextContent("at most 10 images");
 		expect(screen.getAllByAltText(/Attached image preview/)).toHaveLength(10);
-		expect(screen.getByRole("button", { name: "At most 10 images" })).toBeDisabled();
+		expect(screen.getByRole("menuitem", { name: "At most 10 images" })).toBeDisabled();
 	});
 
-	it("keeps the attachment when the send fails", async () => {
-		// Re-picking a photo after a dropped connection is the most annoying
-		// possible way to lose it. Only the image path reports here: a failed text
-		// send is marked on its own bubble in the thread instead.
+	it("empties the composer on a picture send without waiting for the upload", async () => {
+		// The composer used to hold the previews and a progress bar until the
+		// upload landed, so the picture was never in the thread and in the
+		// composer at the same time. It goes up as an optimistic bubble now, and
+		// leaving the previews behind would show the same photo twice.
+		let resolveSend = () => {};
+		onSend.mockReturnValue(
+			new Promise<void>((resolve) => {
+				resolveSend = resolve;
+			}),
+		);
+		const typist = userEvent.setup();
+		const { container } = renderInput();
+
+		await typist.upload(fileInput(container), image);
+		await typist.click(sendButton());
+
+		expect(screen.queryByAltText("Attached image preview 1")).not.toBeInTheDocument();
+		// And the send button is gone with them: an empty composer offers the
+		// voice recorder instead, which is the state a fresh one is in.
+		expect(screen.queryByRole("button", { name: "Send message" })).not.toBeInTheDocument();
+		resolveSend();
+	});
+
+	it("says nothing about a failed picture, because its bubble already does", async () => {
+		// The retry lives on the draft in the thread. A second copy of the same
+		// news, in a composer the sender has already moved on from, is noise —
+		// and worse, it invites a re-send of a photo that is one click from
+		// being retried where it actually is.
 		onSend.mockRejectedValue(new Error("Network is down"));
 		const typist = userEvent.setup();
 		const { container } = renderInput();
@@ -209,7 +326,8 @@ describe("MessageInput", () => {
 		await typist.upload(fileInput(container), image);
 		await typist.click(sendButton());
 
-		expect(await screen.findByText("Network is down")).toBeInTheDocument();
-		expect(screen.getByAltText("Attached image preview 1")).toBeInTheDocument();
+		await waitFor(() => expect(onSend).toHaveBeenCalled());
+		expect(screen.queryByText("Network is down")).not.toBeInTheDocument();
+		expect(screen.queryByAltText("Attached image preview 1")).not.toBeInTheDocument();
 	});
 });

@@ -76,6 +76,8 @@ export function makeMessage(
 		content,
 		attachments,
 		isSticker: false,
+		isForwarded: false,
+		mentionedUserIds: [],
 		createdAt: "2026-08-23T10:00:00.000Z",
 		authorActionExpiresAt: "2099-08-23T18:00:00.000Z",
 		editedAt: null,
@@ -101,6 +103,8 @@ export function makeSystemMessage(id: string, content: string): MessageDTO {
 		content,
 		attachments: [],
 		isSticker: false,
+		isForwarded: false,
+		mentionedUserIds: [],
 		createdAt: "2026-08-23T10:00:00.000Z",
 		authorActionExpiresAt: null,
 		// Not overridable, unlike `makeMessage`: nobody wrote a system line, so
@@ -133,10 +137,16 @@ export function makeOrphanedMessage(id: string, content: string): MessageDTO {
 export function makeAttachment(overrides: Partial<AttachmentDTO> = {}): AttachmentDTO {
 	return {
 		id: "attachment-1",
+		kind: "image",
 		url: "http://api.test/attachments/attachment-1?token=signed",
+		thumbUrl: "http://api.test/attachments/attachment-1?token=signed&size=thumb",
 		width: 800,
 		height: 400,
 		byteSize: 12_345,
+		fileName: null,
+		mediaType: "image/webp",
+		durationMs: null,
+		waveform: [],
 		...overrides,
 	};
 }
@@ -149,6 +159,10 @@ export function makeConversation(overrides: Partial<ConversationDTO> = {}): Conv
 		participants: [],
 		lastMessage: null,
 		unreadCount: 0,
+		isPinned: false,
+		isArchived: false,
+		mutedUntil: null,
+		pinnedMessages: [],
 		updatedAt: FIXED_DATE,
 		...overrides,
 	};

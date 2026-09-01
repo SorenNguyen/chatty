@@ -201,6 +201,17 @@ wrong colour on a page that has no other grey on it. `scripts/audit-rules.sh` se
 build on any numbered Tailwind swatch, and on `bg-white` / `text-black` — the paper is ivory, and
 pure white beside it reads as a rendering bug.
 
+**There are two themes, and a component never mentions the second one.** `[data-theme="dark"]` in
+the same file redefines the same token names; a component written against `bg-paper text-ink` is
+already correct at night. The ladder is preserved rather than mirrored — paper still steps sunken →
+base → raised and ink still steps faint → soft → full — so anything that leaned on "raised is lighter
+than base" keeps being right. A `dark:` variant exists and is keyed to the same attribute rather than
+to `prefers-color-scheme`, but reaching for it is nearly always a sign the palette is missing a token:
+use it only where no colour can express the difference, such as deepening a scrim.
+
+Three tokens exist precisely because they must **not** invert with the theme, and using `ink`/`paper`
+in their place is the bug they were extracted to fix:
+
 | Token | For |
 | --- | --- |
 | `paper`, `paper-raised` | the sheet, and anything sitting on top of it |
@@ -210,6 +221,9 @@ pure white beside it reads as a rendering bug.
 | `signal-soft` | the ground under a destructive hover, and a search hit |
 | `live` | presence, which is a different kind of fact from a notification |
 | `tint-*` / `tint-*-ink` | avatar grounds, always used as a pair — via `@/constants/avatar-colors` |
+| `block` / `block-ink` | the app's one solid fill: a message you sent, a group avatar. **Not** `bg-ink text-paper` — those two invert together, and a dark theme would answer with a white slab across half the thread |
+| `scrim` | behind a dialog or a lightbox. Goes *blacker* in dark rather than lighter, because a scrim's job is to darken what is behind it |
+| `on-media` | type and chrome drawn on a photograph or a scrim. The one token that is the same in both themes, because a stranger's picture knows nothing about the reader's theme |
 
 Three fonts and one rule about when each applies:
 

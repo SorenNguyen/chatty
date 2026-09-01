@@ -9,6 +9,12 @@ import { searchEmoji } from "../utils";
 interface EmojiPickerProps {
 	onPick: (char: string) => void;
 	onClose: () => void;
+	/**
+	 * Where the panel hangs. Defaults to above-left, which is what the composer
+	 * needs; the reaction bar passes its own so the panel opens over the message
+	 * rather than off the bottom of the thread.
+	 */
+	className?: string;
 }
 
 /**
@@ -20,13 +26,15 @@ interface EmojiPickerProps {
  * is the app's: hairline rules, ink on paper, mono for the machine-produced
  * labels. Only the emoji themselves are colour, and they are the content.
  *
- * The reactions are deliberately **not** this. They stay the closed set of five
- * ink marks, because a full-colour glyph sitting permanently beside a bubble is
- * the loudest thing on the page, and this app spends its one colour on unread
- * counts and things you cannot undo. A picker is transient and dismissed; a
- * reaction is furniture.
+ * The reactions used to be deliberately **not** this — a closed set of five ink
+ * marks, on the argument that a full-colour glyph parked beside a bubble is the
+ * loudest thing on the page. The argument was sound and the implementation never
+ * honoured it: the chips rendered colour emoji anyway while only the picker
+ * stayed in ink, so one reaction had two appearances and neither predicted the
+ * other. The set is open now and this panel is what `+` on the reaction bar
+ * opens, which is why it takes an anchor.
  */
-export function EmojiPicker({ onPick, onClose }: EmojiPickerProps) {
+export function EmojiPicker({ onPick, onClose, className }: EmojiPickerProps) {
 	const [query, setQuery] = useState("");
 	const [activeCategoryId, setActiveCategoryId] = useState(EMOJI_CATEGORIES[0]!.id);
 	const { recent, remember } = useRecentEmoji();
@@ -69,7 +77,12 @@ export function EmojiPicker({ onPick, onClose }: EmojiPickerProps) {
 			ref={panelRef}
 			role="dialog"
 			aria-label="Choose an emoji"
-			className="absolute bottom-full left-0 z-40 mb-2 w-[320px] rounded-bubble border border-rule bg-paper-raised shadow-lg"
+			className={cn(
+				"z-40 w-[320px] rounded-bubble border border-rule bg-paper-raised shadow-lift",
+				// The app declares one shadow and this used to reach for Tailwind's
+				// `shadow-lg`, which is a neutral grey drop on warm paper.
+				className ?? "absolute bottom-full left-0 mb-2",
+			)}
 		>
 			<div className="flex items-center gap-2.5 border-b border-rule-soft px-3.5 py-2.5">
 				<Search aria-hidden="true" className="size-[15px] shrink-0 text-ink-faint" />

@@ -14,5 +14,6 @@ export type AttachmentParams = z.infer<typeof attachmentParamsSchema>;
 
 export const attachmentQuerySchema = z.object({
 	token: z.string().min(1).max(2048),
+	size: z.enum(["thumb"]).optional(),
 });
 export type AttachmentQuery = z.infer<typeof attachmentQuerySchema>;

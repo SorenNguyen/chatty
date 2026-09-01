@@ -6,6 +6,7 @@ import { Avatar } from "@/components/avatar";
 import { Button } from "@/components/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { TextField } from "@/components/text-field";
+import { cn } from "@/utils/cn";
 import { useUserSearch } from "../hooks";
 import { GroupMemberRow } from "./group-member-row";
 
@@ -13,6 +14,7 @@ interface GroupMembersPanelProps {
 	conversation: ConversationDTO;
 	currentUserId: string;
 	onClose: () => void;
+	isEmbedded?: boolean;
 }
 
 /**
@@ -25,7 +27,12 @@ interface GroupMembersPanelProps {
  * remove button on everyone else's row. Members can still invite, and can
  * always leave. See ADR 0008.
  */
-export function GroupMembersPanel({ conversation, currentUserId, onClose }: GroupMembersPanelProps) {
+export function GroupMembersPanel({
+	conversation,
+	currentUserId,
+	onClose,
+	isEmbedded = false,
+}: GroupMembersPanelProps) {
 	const [nameDraft, setNameDraft] = useState(conversation.name ?? "");
 	const [isSavingName, setIsSavingName] = useState(false);
 	const [nameError, setNameError] = useState("");
@@ -134,13 +141,15 @@ export function GroupMembersPanel({ conversation, currentUserId, onClose }: Grou
 	}
 
 	return (
-		<div className="shrink-0 border-b border-rule bg-paper-raised px-7 py-5">
-			<div className="flex items-center justify-between">
-				<h2 className="eyebrow text-ink-soft">Group members</h2>
-				<Button variant="ghost" onClick={onClose} aria-label="Close group settings" className="size-8 p-0">
-					<X className="size-4" />
-				</Button>
-			</div>
+		<div className={cn("shrink-0 bg-paper-raised", isEmbedded ? "px-0 py-1" : "border-b border-rule px-7 py-5")}>
+			{!isEmbedded && (
+				<div className="flex items-center justify-between">
+					<h2 className="eyebrow text-ink-soft">Group members</h2>
+					<Button variant="ghost" onClick={onClose} aria-label="Close group settings" className="size-8 p-0">
+						<X className="size-4" />
+					</Button>
+				</div>
+			)}
 
 			<div className="mt-3 flex items-end gap-2">
 				{/* Wrapped rather than passed a className: TextField forwards

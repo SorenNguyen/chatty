@@ -6,6 +6,7 @@ import { CurrentUserAvatar } from "@/components/current-user-avatar";
 import { useDialog } from "@/hooks/use-dialog";
 import { SETTINGS_NAVIGATION } from "../constants/settings";
 import type { SettingsSection } from "../types/settings";
+import { AppearanceSettings } from "./appearance-settings";
 import { ChangeEmailForm } from "./change-email-form";
 import { ChangePasswordForm } from "./change-password-form";
 import { DeleteAccountForm } from "./delete-account-form";
@@ -39,7 +40,7 @@ export function SettingsModal({ user, onClose }: SettingsModalProps) {
 
 	return (
 		<div
-			className="fixed inset-0 z-40 flex items-center justify-center bg-ink/30 p-4"
+			className="fixed inset-0 z-40 flex items-center justify-center bg-scrim/30 p-4 dark:bg-scrim/55"
 			onPointerDown={(event) => {
 				if (event.target === event.currentTarget) onClose();
 			}}
@@ -89,6 +90,7 @@ export function SettingsModal({ user, onClose }: SettingsModalProps) {
 								<ProfileForm user={user} />
 							</>
 						)}
+						{activeSection === "appearance" && <AppearanceSettings />}
 						{activeSection === "email" && <ChangeEmailForm user={user} />}
 						{activeSection === "notifications" && <NotificationSettings />}
 						{activeSection === "security" && <ChangePasswordForm />}

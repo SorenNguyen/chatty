@@ -178,6 +178,35 @@ describe("typing over the socket", () => {
 	});
 });
 
+describe("personal conversation updates over the socket", () => {
+	it("reaches every device owned by the actor and no other participant", async () => {
+		const minh = await createUser("minh");
+		const an = await createUser("an");
+		const conversation = await createConversation(minh.id, { participantIds: [an.id] });
+		const phone = await connectAs(minh.token);
+		const laptop = await connectAs(minh.token);
+		const anSocket = await connectAs(an.token);
+
+		const heardOnPhone = nextEvent(phone, "conversation:self-updated");
+		const heardOnLaptop = nextEvent(laptop, "conversation:self-updated");
+		const heardByAn = nextEvent(anSocket, "conversation:self-updated");
+		const response = await fetch(`${url}/conversations/${conversation.id}/archive`, {
+			method: "PUT",
+			headers: {
+				Authorization: `Bearer ${minh.token}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({ archived: true }),
+		});
+
+		expect(response.status).toBe(200);
+		const expected = expect.objectContaining({ conversationId: conversation.id, isArchived: true });
+		expect(await heardOnPhone).toEqual(expected);
+		expect(await heardOnLaptop).toEqual(expected);
+		expect(await heardByAn).toBeNull();
+	});
+});
+
 describe("presence over the socket", () => {
 	it("stores and announces last seen when the last connection closes", async () => {
 		const minh = await createUser("minh");

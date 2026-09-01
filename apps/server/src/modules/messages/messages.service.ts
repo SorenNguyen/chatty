@@ -1,15 +1,23 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import type { MessageContextDTO, MessageDTO, MessageEditDTO } from "@chatty/shared-types";
+import type { MessageContextDTO, MessageDTO, MessageEditDTO, PinnedMessageDTO } from "@chatty/shared-types";
 import type { Prisma } from "@prisma/client";
-import { deleteAttachment, saveAttachment } from "../../lib/attachment-storage.js";
+import {
+	deleteAttachment,
+	findAttachmentPath,
+	saveAttachment,
+	saveFileAttachment,
+} from "../../lib/attachment-storage.js";
+import { saveVoiceAttachment } from "../../lib/audio-storage.js";
+import { extractLinks } from "../../lib/extract-links.js";
+import { normalizeFileName, sniffFileMediaType } from "../../lib/file-attachment.js";
 import { ForbiddenError, NotFoundError, ValidationError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
 import { prisma } from "../../lib/prisma.js";
 import { readOwnedStickerPath } from "../stickers/stickers.service.js";
 import { getIO, userRoom } from "../../lib/socket-bus.js";
 import { assertParticipant } from "../conversations/conversations.service.js";
-import { messageSelect, toMessageDTO } from "./messages.mapper.js";
+import { messageSelect, toMessageDTO, type MessageRow } from "./messages.mapper.js";
 import { MESSAGE_AUTHOR_ACTION_WINDOW_MS } from "./messages.constants.js";
 import type {
 	EditMessageInput,
@@ -27,20 +35,30 @@ export interface SendMessageArgs {
 	content: string;
 	/** In the order the sender picked them; empty for a text-only message. */
 	attachments?: Buffer[] | undefined;
+	file?: { buffer: Buffer; fileName: string } | undefined;
+	voice?: Buffer | undefined;
 	/** One of the sender's own stickers. The whole message when it is set. */
 	stickerId?: string | undefined;
 	/** The message being answered, already validated as a string by the schema. */
 	replyToId?: string | undefined;
+	forwardOfMessageId?: string | undefined;
+	mentionedUserIds?: string[] | undefined;
 }
 
-/** The wire spelling of a reaction kind, and the enum the database stores. */
-const REACTION_KIND_TO_COLUMN = {
-	heart: "HEART",
-	"thumbs-up": "THUMBS_UP",
-	laugh: "LAUGH",
-	frown: "FROWN",
-	angry: "ANGRY",
-} as const;
+interface StoredMessageAttachment {
+	id: string;
+	conversationId: string;
+	position: number;
+	kind: "IMAGE" | "FILE" | "AUDIO";
+	mediaType: string;
+	fileName: string | null;
+	width: number | null;
+	height: number | null;
+	byteSize: number;
+	durationMs: number | null;
+	waveform: number[];
+	hasThumbnail: boolean;
+}
 
 export async function sendMessage(
 	currentUserId: string,
@@ -51,6 +69,55 @@ export async function sendMessage(
 	// case. This is only a cheap guard; the check inside the locked transaction
 	// below is the authority when membership changes concurrently.
 	await assertParticipant(currentUserId, conversationId);
+	let content = input.content;
+	let forwardedSource:
+		| {
+				isSticker: boolean;
+				attachments: {
+					id: string;
+					kind: "IMAGE" | "FILE" | "AUDIO";
+					mediaType: string;
+					fileName: string | null;
+					width: number | null;
+					height: number | null;
+					durationMs: number | null;
+					waveform: number[];
+				}[];
+		  }
+		| undefined;
+
+	if (input.forwardOfMessageId) {
+		const source = await prisma.message.findFirst({
+			where: {
+				id: input.forwardOfMessageId,
+				kind: "USER",
+				deletedAt: null,
+				hiddenFor: { none: { userId: currentUserId } },
+			},
+			select: {
+				conversationId: true,
+				content: true,
+				isSticker: true,
+				attachments: {
+					orderBy: { position: "asc" },
+					select: {
+						id: true,
+						kind: true,
+						mediaType: true,
+						fileName: true,
+						width: true,
+						height: true,
+						durationMs: true,
+						waveform: true,
+					},
+				},
+			},
+		});
+		if (!source) throw new NotFoundError("Message not found");
+		await assertParticipant(currentUserId, source.conversationId);
+		content = source.content;
+		forwardedSource = source;
+	}
 
 	// The ids are generated here, not by the database, so each file can be
 	// written before the row that points at it exists. A crash between the two
@@ -61,7 +128,7 @@ export async function sendMessage(
 	// Sequential rather than `Promise.all`: each of these decodes and re-encodes
 	// a full-size image, and ten of them at once is ten sharp pipelines competing
 	// for the same cores — slower in wall-clock terms and a memory spike besides.
-	const storedAttachments: { id: string; position: number; width: number; height: number; byteSize: number }[] = [];
+	const storedAttachments: StoredMessageAttachment[] = [];
 
 	// A sticker is *copied* into a fresh attachment rather than referenced.
 	// Referencing would tie every message it was ever sent in to one row, so
@@ -70,12 +137,106 @@ export async function sendMessage(
 	if (input.stickerId) {
 		const stickerPath = await readOwnedStickerPath(currentUserId, input.stickerId);
 		const id = randomUUID();
-		storedAttachments.push({ id, position: 0, ...(await saveAttachment(id, await readFile(stickerPath))) });
+		storedAttachments.push({
+			id,
+			conversationId,
+			position: 0,
+			kind: "IMAGE",
+			mediaType: "image/webp",
+			fileName: null,
+			durationMs: null,
+			waveform: [],
+			hasThumbnail: true,
+			...(await saveAttachment(id, await readFile(stickerPath))),
+		});
 	}
 
 	for (const [position, buffer] of (input.attachments ?? []).entries()) {
 		const id = randomUUID();
-		storedAttachments.push({ id, position, ...(await saveAttachment(id, buffer)) });
+		storedAttachments.push({
+			id,
+			conversationId,
+			position,
+			kind: "IMAGE",
+			mediaType: "image/webp",
+			fileName: null,
+			durationMs: null,
+			waveform: [],
+			hasThumbnail: true,
+			...(await saveAttachment(id, buffer)),
+		});
+	}
+
+	if (input.file) {
+		const id = randomUUID();
+		storedAttachments.push({
+			id,
+			conversationId,
+			position: 0,
+			kind: "FILE",
+			mediaType: await sniffFileMediaType(input.file.buffer),
+			fileName: normalizeFileName(input.file.fileName),
+			width: null,
+			height: null,
+			durationMs: null,
+			waveform: [],
+			hasThumbnail: false,
+			...(await saveFileAttachment(id, input.file.buffer)),
+		});
+	}
+
+	if (input.voice) {
+		const id = randomUUID();
+		const storedVoice = await saveVoiceAttachment(id, input.voice);
+		storedAttachments.push({
+			id,
+			conversationId,
+			position: 0,
+			kind: "AUDIO",
+			fileName: null,
+			width: null,
+			height: null,
+			hasThumbnail: false,
+			...storedVoice,
+		});
+	}
+
+	if (forwardedSource) {
+		for (const [position, source] of forwardedSource.attachments.entries()) {
+			const sourcePath = await findAttachmentPath(source.id, source.kind);
+			if (!sourcePath) throw new NotFoundError("Message attachment not found");
+			const bytes = await readFile(sourcePath);
+			const id = randomUUID();
+			if (source.kind === "IMAGE") {
+				storedAttachments.push({
+					id,
+					conversationId,
+					position,
+					kind: "IMAGE",
+					mediaType: "image/webp",
+					fileName: null,
+					durationMs: null,
+					waveform: [],
+					hasThumbnail: true,
+					...(await saveAttachment(id, bytes)),
+				});
+			} else {
+				storedAttachments.push({
+					id,
+					conversationId,
+					position,
+					kind: source.kind,
+					mediaType: source.mediaType,
+					fileName: source.fileName,
+					width: null,
+					height: null,
+					durationMs: source.durationMs,
+					waveform: source.waveform,
+					hasThumbnail: false,
+					...(await saveFileAttachment(id, bytes)),
+				});
+			}
+		}
 	}
 
 	const message = await prisma.$transaction(async (transaction) => {
@@ -107,14 +268,39 @@ export async function sendMessage(
 			if (!parent) throw new ValidationError("You can only reply to a message in this conversation");
 		}
 
+		const conversation = await transaction.conversation.findUniqueOrThrow({
+			where: { id: conversationId },
+			select: { isGroup: true, participants: { select: { userId: true } } },
+		});
+		const participantIds = new Set(conversation.participants.map((participant) => participant.userId));
+		const mentionedUserIds = [...new Set(input.mentionedUserIds ?? [])];
+		if (mentionedUserIds.length > 0 && !conversation.isGroup) {
+			throw new ValidationError("Mentions are only available in group conversations");
+		}
+		if (mentionedUserIds.some((userId) => !participantIds.has(userId))) {
+			throw new ValidationError("You can only mention conversation participants");
+		}
+
+		const links = extractLinks(content);
 		const created = await transaction.message.create({
 			data: {
 				conversationId,
 				authorId: currentUserId,
-				content: input.content,
+				content,
 				...(input.replyToId ? { replyToId: input.replyToId } : {}),
-				...(input.stickerId ? { isSticker: true } : {}),
+				...(input.stickerId || forwardedSource?.isSticker ? { isSticker: true } : {}),
+				...(input.forwardOfMessageId ? { isForwarded: true } : {}),
 				...(storedAttachments.length > 0 ? { attachments: { createMany: { data: storedAttachments } } } : {}),
+				...(links.length > 0
+					? {
+							links: {
+								createMany: { data: links.map((url, position) => ({ conversationId, url, position })) },
+							},
+						}
+					: {}),
+				...(mentionedUserIds.length > 0
+					? { mentions: { createMany: { data: mentionedUserIds.map((userId) => ({ userId })) } } }
+					: {}),
 			},
 			select: messageSelect,
 		});
@@ -172,6 +358,117 @@ export async function listMessages(
 	});
 
 	return messages.map(toMessageDTO);
+}
+
+export async function saveMessageForUser(userId: string, conversationId: string, messageId: string): Promise<void> {
+	await assertParticipant(userId, conversationId);
+	const message = await prisma.message.findFirst({
+		where: { id: messageId, conversationId, deletedAt: null, hiddenFor: { none: { userId } } },
+		select: { id: true },
+	});
+	if (!message) throw new NotFoundError("Message not found");
+
+	await prisma.messageStar.upsert({
+		where: { messageId_userId: { messageId, userId } },
+		create: { messageId, userId },
+		update: {},
+	});
+}
+
+export async function removeSavedMessage(userId: string, conversationId: string, messageId: string): Promise<void> {
+	await assertParticipant(userId, conversationId);
+	await prisma.messageStar.deleteMany({ where: { messageId, userId, message: { conversationId } } });
+}
+
+function toPinnedMessageDTO(
+	rows: {
+		messageId: string;
+		pinnedById: string;
+		pinnedAt: Date;
+		message: { content: string };
+	}[],
+): PinnedMessageDTO[] {
+	return rows.map((row) => ({
+		messageId: row.messageId,
+		content: row.message.content,
+		pinnedById: row.pinnedById,
+		pinnedAt: row.pinnedAt.toISOString(),
+	}));
+}
+
+export async function setMessagePinned(
+	userId: string,
+	conversationId: string,
+	messageId: string,
+	isPinned: boolean,
+): Promise<PinnedMessageDTO[]> {
+	const result = await prisma.$transaction(async (transaction) => {
+		await transaction.$queryRaw`
+			SELECT id FROM "Conversation" WHERE id = ${conversationId} FOR UPDATE
+		`;
+		await assertParticipant(userId, conversationId, transaction);
+		const message = await transaction.message.findFirst({
+			where: { id: messageId, conversationId, deletedAt: null },
+			select: { id: true },
+		});
+		if (!message) throw new NotFoundError("Message not found");
+		const existing = await transaction.pinnedMessage.findUnique({
+			where: { conversationId_messageId: { conversationId, messageId } },
+			select: { messageId: true },
+		});
+		let didChange = false;
+		if (isPinned && !existing) {
+			const count = await transaction.pinnedMessage.count({ where: { conversationId } });
+			if (count >= 3) throw new ValidationError("A conversation may have at most 3 pinned messages");
+			await transaction.pinnedMessage.create({ data: { conversationId, messageId, pinnedById: userId } });
+			didChange = true;
+		}
+		if (!isPinned && existing) {
+			await transaction.pinnedMessage.delete({
+				where: { conversationId_messageId: { conversationId, messageId } },
+			});
+			didChange = true;
+		}
+
+		let systemMessage: MessageRow | null = null;
+		if (didChange) {
+			const actor = await transaction.user.findUniqueOrThrow({
+				where: { id: userId },
+				select: { displayName: true },
+			});
+			systemMessage = await transaction.message.create({
+				data: {
+					conversationId,
+					kind: "SYSTEM",
+					content: `${actor.displayName} ${isPinned ? "pinned" : "unpinned"} a message`,
+				},
+				select: messageSelect,
+			});
+			await transaction.conversation.update({
+				where: { id: conversationId },
+				data: { updatedAt: new Date() },
+				select: { id: true },
+			});
+		}
+
+		const pinned = await transaction.pinnedMessage.findMany({
+			where: { conversationId },
+			orderBy: { pinnedAt: "desc" },
+			select: {
+				messageId: true,
+				pinnedById: true,
+				pinnedAt: true,
+				message: { select: { content: true } },
+			},
+		});
+
+		return { pinned: toPinnedMessageDTO(pinned), systemMessage };
+	});
+
+	if (result.systemMessage) getIO().to(conversationId).emit("message:new", toMessageDTO(result.systemMessage));
+	getIO().to(conversationId).emit("message:pins-updated", { conversationId, pinnedMessages: result.pinned });
+
+	return result.pinned;
 }
 
 export async function getMessageContext(
@@ -331,6 +628,14 @@ export async function editMessage(
 			data: { messageId, content: message.content },
 			select: { id: true },
 		});
+		await transaction.messageLink.deleteMany({ where: { messageId } });
+		await transaction.messageMention.deleteMany({ where: { messageId } });
+		const links = extractLinks(content);
+		if (links.length > 0) {
+			await transaction.messageLink.createMany({
+				data: links.map((url, position) => ({ messageId, conversationId, url, position })),
+			});
+		}
 
 		return transaction.message.update({
 			where: { id: messageId },
@@ -410,6 +715,8 @@ export async function deleteMessage(
 		if (message.attachmentIds.length > 0) {
 			await transaction.attachment.deleteMany({ where: { messageId } });
 		}
+		await transaction.messageLink.deleteMany({ where: { messageId } });
+		await transaction.messageMention.deleteMany({ where: { messageId } });
 
 		const updated = await transaction.message.update({
 			where: { id: messageId },
@@ -447,14 +754,19 @@ export async function deleteMessage(
 }
 
 /**
- * Adds or removes the caller's reaction of one kind on one message.
+ * Sets, changes or clears the caller's one reaction on one message.
  *
- * A toggle rather than an add and a remove, because the caller never has to know
- * which it is doing: the button that puts a heart on is the button that takes it
- * off, and asking the client to track its own state would make a double-click
- * across two tabs disagree with the database. The composite primary key does the
- * deciding — `deleteMany` returns how many rows it removed, and zero means there
- * was nothing there, so create one.
+ * One reaction per person, so this is not quite a toggle: sending the emoji they
+ * already left removes it, and sending a different one *replaces* it rather than
+ * adding a second. That is the rule the primary key enforces and the rule every
+ * messenger this was modelled on implements — see the note on `MessageReaction`.
+ *
+ * One endpoint rather than an add and a remove, because the caller never has to
+ * know which it is doing: the button that puts a heart on is the button that
+ * takes it off, and asking the client to track its own state would make a
+ * double-click across two tabs disagree with the database. The database does the
+ * deciding — `deleteMany` reports whether the caller had already left *this*
+ * emoji, and the upsert covers both of the remaining cases without a second read.
  *
  * Returns the whole message rather than the reaction, for the same reason
  * `deleteMessage` returns the tombstone: what the client renders is the message,
@@ -467,7 +779,6 @@ export async function toggleReaction(
 	input: ToggleReactionInput,
 ): Promise<MessageDTO> {
 	await assertParticipant(currentUserId, conversationId);
-	const kind = REACTION_KIND_TO_COLUMN[input.kind];
 
 	const target = await prisma.message.findFirst({
 		// Scoped by conversation, so an id from a conversation the caller is not in
@@ -482,12 +793,31 @@ export async function toggleReaction(
 	if (target.deletedAt) throw new ValidationError("This message was deleted");
 	if (target.kind === "SYSTEM") throw new ValidationError("You cannot react to a system message");
 
-	const removed = await prisma.messageReaction.deleteMany({
-		where: { messageId, userId: currentUserId, kind },
+	// Three outcomes from one call, and the order is what makes them fall out
+	// without a read first: delete the caller's reaction if it is already this
+	// emoji, and otherwise write this one over whatever else they had. The upsert
+	// is doing double duty — it inserts for someone reacting for the first time
+	// and updates for someone changing their mind, which under the
+	// `(messageId, userId)` key are the same statement.
+	//
+	// In a transaction because the pair is a read-modify-write in disguise:
+	// double-tapping fires two of these, and without it both can see nothing to
+	// delete and race into the upsert.
+	await prisma.$transaction(async (tx) => {
+		const removed = await tx.messageReaction.deleteMany({
+			where: { messageId, userId: currentUserId, emoji: input.emoji },
+		});
+		if (removed.count > 0) return;
+
+		await tx.messageReaction.upsert({
+			where: { messageId_userId: { messageId, userId: currentUserId } },
+			create: { messageId, userId: currentUserId, emoji: input.emoji },
+			// `createdAt` moves with the emoji. The mapper orders chips by it, so
+			// leaving it would put a reaction somebody just changed to in the
+			// position of the one they abandoned.
+			update: { emoji: input.emoji, createdAt: new Date() },
+		});
 	});
-	if (removed.count === 0) {
-		await prisma.messageReaction.create({ data: { messageId, userId: currentUserId, kind } });
-	}
 
 	const message = await prisma.message.findUniqueOrThrow({ where: { id: messageId }, select: messageSelect });
 	const messageDTO = toMessageDTO(message);

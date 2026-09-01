@@ -57,6 +57,7 @@ export function MessageGallery({ attachments, caption, isMine, clusterPosition }
 
 	const first = attachments[0];
 	if (!first) return null;
+	if (first.width === null || first.height === null) return null;
 
 	const size = getAttachmentDisplaySize(first.width, first.height);
 	const isAlbum = attachments.length > 1;
@@ -123,9 +124,9 @@ export function MessageGallery({ attachments, caption, isMine, clusterPosition }
 							className="size-full object-cover"
 						/>
 						{/* Mono, like every machine-produced number in this app. */}
-						<span className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-badge bg-ink/70 px-1.5 py-0.5">
-							<Layers aria-hidden="true" className="size-3 text-paper" />
-							<span className="meta text-paper">{attachments.length}</span>
+						<span className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-badge bg-scrim/70 px-1.5 py-0.5">
+							<Layers aria-hidden="true" className="size-3 text-on-media" />
+							<span className="meta text-on-media">{attachments.length}</span>
 						</span>
 					</Button>
 				</div>

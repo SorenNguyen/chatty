@@ -1,4 +1,4 @@
-import type { MessageDTO, ReactionKind } from "@chatty/shared-types";
+import type { MessageDTO, ReactionEmoji } from "@chatty/shared-types";
 import { useCallback, type Dispatch, type SetStateAction } from "react";
 import { api } from "@/api/client";
 import { useSocketEvent } from "./use-socket-event";
@@ -6,7 +6,7 @@ import { useSocketEvent } from "./use-socket-event";
 interface MessageActions {
 	editMessage: (messageId: string, content: string) => void;
 	deleteMessage: (messageId: string) => void;
-	toggleReaction: (messageId: string, kind: ReactionKind) => void;
+	toggleReaction: (messageId: string, emoji: ReactionEmoji) => void;
 }
 
 /**
@@ -26,7 +26,6 @@ interface MessageActions {
 export function useMessageActions(
 	conversationId: string | null,
 	setMessages: Dispatch<SetStateAction<MessageDTO[]>>,
-	onConversationsChanged: () => void,
 ): MessageActions {
 	useSocketEvent(
 		"message:updated",
@@ -41,14 +40,8 @@ export function useMessageActions(
 						current.map((existing) => (existing.id === message.id ? message : existing)),
 					);
 				}
-
-				// For the sidebar preview only. The server deliberately does not bump
-				// `updatedAt` for an edit, so this re-read cannot reorder the list —
-				// editing something from last week must not raise that thread to the
-				// top with nothing new in it.
-				onConversationsChanged();
 			},
-			[conversationId, setMessages, onConversationsChanged],
+			[conversationId, setMessages],
 		),
 	);
 
@@ -75,10 +68,10 @@ export function useMessageActions(
 	// for nothing. Applying an optimistic count here as well would render the
 	// change twice and drift the moment two people react at once.
 	const toggleReaction = useCallback(
-		(messageId: string, kind: ReactionKind) => {
+		(messageId: string, emoji: ReactionEmoji) => {
 			if (!conversationId) return;
 
-			void api.toggleReaction(conversationId, messageId, kind);
+			void api.toggleReaction(conversationId, messageId, emoji);
 		},
 		[conversationId],
 	);

@@ -1,6 +1,8 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/api/client";
+import { MAX_RETAINED_MESSAGES } from "@/features/chat/constants/pagination";
 import { MessageList } from "@/features/chat/components/message-list";
 import { makeAttachment, makeMessage, makeOrphanedMessage, makeParticipant, makeSystemMessage } from "./factories";
 
@@ -18,7 +20,9 @@ afterEach(() => vi.restoreAllMocks());
 
 function renderList(overrides: Partial<React.ComponentProps<typeof MessageList>> = {}) {
 	const props = {
+		conversationId: "conversation-1",
 		messages,
+		unreadCount: 0,
 		currentUserId: "minh",
 		participants: [makeParticipant("minh", "Minh"), makeParticipant("an", "An")],
 		isGroup: false,
@@ -37,6 +41,15 @@ function renderList(overrides: Partial<React.ComponentProps<typeof MessageList>>
 		onDiscardDraft: vi.fn(),
 		onToggleReaction: vi.fn(),
 		onReplyToMessage: vi.fn(),
+		onForwardMessage: vi.fn(),
+		onSaveMessage: vi.fn(),
+		onTogglePinMessage: vi.fn(),
+		pinnedMessageIds: [],
+		onJumpToMessage: vi.fn(),
+		onTrimHistory: vi.fn(),
+		requestEditLast: 0,
+		requestCancelEdit: 0,
+		onEditingStateChange: vi.fn(),
 		...overrides,
 	};
 
@@ -70,7 +83,7 @@ describe("MessageList", () => {
 		renderList({
 			messages: [
 				makeMessage("m1", "an", "first", [], {
-					reactions: [{ kind: "heart", userIds: ["minh"] }],
+					reactions: [{ emoji: "❤️", userIds: ["minh"] }],
 				}),
 				makeMessage("m2", "an", "second"),
 			],
@@ -78,6 +91,74 @@ describe("MessageList", () => {
 		});
 
 		expect(screen.getAllByText("an")).toHaveLength(1);
+		const reactionGroup = screen.getByRole("group", { name: "Reactions to received message" });
+		expect(reactionGroup).toContainElement(screen.getByRole("button", { name: "❤️, 1" }));
+	});
+
+	it("collapses past three distinct emoji into one chip that opens the list", async () => {
+		// An open emoji set has no ceiling on how many chips a group can produce
+		// and the bubble does, so the overflow has to lead somewhere rather than
+		// simply hiding what did not fit.
+		renderList({
+			messages: [
+				makeMessage("m1", "an", "first", [], {
+					reactions: [
+						{ emoji: "❤️", userIds: ["minh"] },
+						{ emoji: "😂", userIds: ["an"] },
+						{ emoji: "👍", userIds: ["minh"] },
+						{ emoji: "😮", userIds: ["an"] },
+						{ emoji: "😢", userIds: ["minh"] },
+					],
+				}),
+			],
+			isGroup: true,
+		});
+
+		const reactionGroup = screen.getByRole("group", { name: "Reactions to received message" });
+		expect(reactionGroup.querySelectorAll("button")).toHaveLength(4);
+		expect(screen.queryByRole("button", { name: "😢, 1" })).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: /2 more reactions/ }));
+
+		expect(screen.getByRole("dialog", { name: "Reactions" })).toBeInTheDocument();
+	});
+
+	it("leaves the default reaction on a double-click, and takes it off on a second", async () => {
+		const onToggleReaction = vi.fn();
+		renderList({ messages: [makeMessage("m1", "an", "first")], onToggleReaction });
+
+		await userEvent.dblClick(screen.getByText("first"));
+
+		expect(onToggleReaction).toHaveBeenCalledWith("m1", "❤️");
+	});
+
+	it("drops the oldest page only once the thread outgrows the cap", () => {
+		// The cheap half of "virtualise the message list": the array stops growing
+		// without touching scroll anchoring, jump-to-message or the divider.
+		const short = Array.from({ length: MAX_RETAINED_MESSAGES }, (_, index) =>
+			makeMessage(`m${index}`, "an", `line ${index}`),
+		);
+		const { onTrimHistory } = renderList({ messages: short });
+
+		expect(onTrimHistory).not.toHaveBeenCalled();
+
+		cleanup();
+		const long = [...short, makeMessage("one-too-many", "an", "over")];
+		const overflowing = renderList({ messages: long });
+
+		expect(overflowing.onTrimHistory).toHaveBeenCalled();
+	});
+
+	it("leaves history alone while the reader is looking at a jumped-to message", () => {
+		// A search result opens the thread around an old message with newer ones
+		// still unloaded, so "scrolled to the bottom" does not mean "at the
+		// latest" — trimming there would drop what they came to read.
+		const long = Array.from({ length: MAX_RETAINED_MESSAGES + 1 }, (_, index) =>
+			makeMessage(`m${index}`, "an", `line ${index}`),
+		);
+		const { onTrimHistory } = renderList({ messages: long, targetMessageId: "m3" });
+
+		expect(onTrimHistory).not.toHaveBeenCalled();
 	});
 
 	it("marks the time when a conversation resumes after a long pause", () => {
@@ -88,7 +169,7 @@ describe("MessageList", () => {
 			],
 		});
 
-		expect(screen.getByLabelText(/Conversation resumed at/i)).toBeInTheDocument();
+		expect(screen.getByRole("separator", { name: /Conversation resumed at/i })).toBeInTheDocument();
 	});
 
 	it("keeps the name of an author who is no longer in the conversation", () => {
@@ -211,6 +292,35 @@ describe("MessageList", () => {
 
 		expect(screen.getAllByRole("button", { name: "Load newer messages" })).toHaveLength(1);
 	});
+
+	it("places one divider before the first unread message", () => {
+		renderList({ unreadCount: 1 });
+
+		expect(screen.getAllByText("1 new message")).toHaveLength(1);
+	});
+
+	it("loads a quoted message that is outside the current page", () => {
+		const onJumpToMessage = vi.fn();
+		renderList({
+			messages: [
+				makeMessage("reply", "an", "answer", [], {
+					replyTo: {
+						id: "older-message",
+						authorName: "Minh",
+						content: "question",
+						hasAttachment: false,
+						attachmentUrl: null,
+						isDeleted: false,
+					},
+				}),
+			],
+			onJumpToMessage,
+		});
+
+		fireEvent.click(screen.getByText("question"));
+
+		expect(onJumpToMessage).toHaveBeenCalledWith("older-message");
+	});
 });
 
 describe("MessageList editing and deleting", () => {
@@ -227,6 +337,15 @@ describe("MessageList editing and deleting", () => {
 
 		expect(screen.getByRole("menuitem", { name: "Edit message" })).toBeInTheDocument();
 		expect(screen.getByRole("menuitem", { name: "Delete message" })).toBeInTheDocument();
+	});
+
+	it("offers the reusable forward, save, and pin actions", () => {
+		renderList({ messages: [mine] });
+		openMessageActions();
+
+		expect(screen.getByRole("menuitem", { name: "Forward" })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "Save message" })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "Pin message" })).toBeInTheDocument();
 	});
 
 	it("offers delete-for-me but not editing on someone else's", () => {

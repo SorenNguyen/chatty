@@ -1,4 +1,4 @@
-import type { MessageDTO, UserDTO } from "@chatty/shared-types";
+import type { AttachmentDTO, MessageDTO, UserDTO } from "@chatty/shared-types";
 import type { ThreadMessage } from "../types/thread-message";
 
 /** Marks an id as this tab's, so a draft is never mistaken for a server message. */
@@ -36,6 +36,10 @@ export function getNewestStoredMessage<T extends { id: string }>(messages: T[]):
  * of its author's previous messages, sit under the right day rule, and be laid
  * out by the cluster grammar without a second code path.
  *
+ * `attachments` are local ones built by `toDraftAttachments`: real dimensions
+ * and a `blob:` URL, so the gallery reserves the exact box the stored picture
+ * will occupy and nothing shifts when the server's version replaces it.
+ *
  * The fields that are null are null because they are facts the server owns and
  * has not yet stated: nothing may be edited, deleted or reacted to before it
  * exists, and `authorActionExpiresAt` counts from a `createdAt` the database
@@ -48,6 +52,7 @@ export function buildDraftMessage(
 	author: UserDTO,
 	content: string,
 	replyTo: MessageDTO["replyTo"],
+	attachments: AttachmentDTO[] = [],
 ): ThreadMessage {
 	return {
 		id: `${DRAFT_ID_PREFIX}${crypto.randomUUID()}`,
@@ -55,8 +60,10 @@ export function buildDraftMessage(
 		kind: "user",
 		author,
 		content,
-		attachments: [],
+		attachments,
 		isSticker: false,
+		isForwarded: false,
+		mentionedUserIds: [],
 		createdAt: new Date().toISOString(),
 		authorActionExpiresAt: null,
 		editedAt: null,

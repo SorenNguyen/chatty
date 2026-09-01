@@ -58,6 +58,9 @@ model User {
   stickers            Sticker[]
   hiddenMessages      MessageHiddenFor[]
   reactions           MessageReaction[]
+  starredMessages     MessageStar[]
+  mentions            MessageMention[]
+  pinnedMessages      PinnedMessage[]
 }
 
 enum PresenceVisibility {
@@ -124,7 +127,7 @@ model EmailChangeToken {
 model RefreshToken {
   id String @id @default(cuid())
 
-  userId String
+  userId    String
   /// SHA-256 of the token that was handed out, never the token itself — the
   /// same rule `PasswordResetToken` follows and for the same reason: a leaked
   /// database must not be a drawer full of working sessions.
@@ -134,12 +137,12 @@ model RefreshToken {
   /// run on every refresh.
   tokenHash String @unique
 
-  expiresAt DateTime
+  expiresAt  DateTime
   /// Set when this token is spent or the session is ended. Rotation sets it on
   /// the old row as the replacement is created, so a refresh token is
   /// single-use — and a *second* use of an already-spent token is therefore
   /// visible rather than silent.
-  revokedAt DateTime?
+  revokedAt  DateTime?
   /// Moved on every successful refresh. Not used for anything yet; it is what a
   /// "your sessions" screen would list, and recording it now costs one column.
   lastUsedAt DateTime?
@@ -278,8 +281,11 @@ model Conversation {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  participants ConversationParticipant[]
-  messages     Message[]
+  participants   ConversationParticipant[]
+  messages       Message[]
+  attachments    Attachment[]
+  links          MessageLink[]
+  pinnedMessages PinnedMessage[]
 }
 
 /// Who may kick and rename inside a group.
@@ -329,11 +335,19 @@ model ConversationParticipant {
   /// catches up only when they read something new — a receipt caused by an
   /// action, which is what a receipt is supposed to be.
   lastSharedReadMessageId String?
+  /// Per-participant list organisation. None of these values may be broadcast
+  /// with conversation:updated because each viewer sees a different value.
+  archivedAt              DateTime?
+  /// A timestamp gives pinned conversations a stable, intentional order.
+  pinnedAt                DateTime?
+  /// Null is audible; a far-future timestamp represents "mute forever".
+  mutedUntil              DateTime?
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([conversationId, userId])
+  @@index([userId, archivedAt])
 }
 
 /// Who wrote a message — a person, or the app itself.
@@ -415,34 +429,41 @@ model Message {
   /// schema can: a foreign key cannot say "and the same conversationId", so that
   /// rule lives in `sendMessage` and is tested there. Without it, a reply could
   /// quote a message out of a conversation the sender is not in.
-  replyToId      String?
+  replyToId String?
 
-  conversation Conversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   // SetNull, not Cascade. Cascade would delete every message a departing user
   // ever wrote — gutting other people's conversations, and hard-deleting rows
   // that read markers and paging cursors point at without a foreign key to
   // protect them. See `authorId` above and `deletedAt` below.
-  author       User?              @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  author       User?        @relation(fields: [authorId], references: [id], onDelete: SetNull)
   /// True when this message is a sticker rather than a photograph.
   ///
   /// A column rather than something inferred from "one image and no text": that
   /// shape is also a picture sent without a caption, and the two render nothing
   /// alike — a sticker is drawn bare and large, a photo sits in a bubble.
-  isSticker    Boolean            @default(false)
+  isSticker    Boolean      @default(false)
+  /// A copy made from another message. The source is deliberately not retained:
+  /// forwarded content outlives deletion in the source conversation.
+  isForwarded  Boolean      @default(false)
 
   /// A list since phase 22. It was `Attachment?` only because
   /// `Attachment.messageId` carried a unique — the relation was always
   /// one-to-many underneath, and dropping that unique is what let a message
   /// carry a gallery.
-  attachments  Attachment[]
-  edits        MessageEdit[]
-  hiddenFor    MessageHiddenFor[]
-  reactions    MessageReaction[]
+  attachments Attachment[]
+  edits       MessageEdit[]
+  hiddenFor   MessageHiddenFor[]
+  reactions   MessageReaction[]
+  links       MessageLink[]
+  stars       MessageStar[]
+  mentions    MessageMention[]
+  pinnedIn    PinnedMessage[]
   // SetNull, not Cascade: a reply outlives the message it answers. Messages are
   // never hard-deleted anyway (see `deletedAt`), so this only fires when a whole
   // conversation goes — and then the reply is going with it regardless.
-  replyTo      Message?           @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
-  replies      Message[]          @relation("MessageReplies")
+  replyTo     Message?           @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies     Message[]          @relation("MessageReplies")
   // The GIN index on `searchVector` lives in the phase 12 migration: Prisma
   // cannot express an index method, and an `@@index` here would create a second,
   // useless btree one alongside it.
@@ -451,33 +472,33 @@ model Message {
   @@index([replyToId])
 }
 
-/// The fixed set of things a message can be marked with.
+/// One person's reaction to one message. At most one.
 ///
-/// An enum rather than a free `String` of emoji, for the same reason `MessageKind`
-/// is one: the set is small, closed, and the client draws each of these from the
-/// icon set in ink rather than rendering a glyph from whatever emoji font the
-/// reader's OS happens to ship. A free column would also make "the same reaction"
-/// undecidable — U+2764 and U+2764 U+FE0F are different strings and one heart.
-enum ReactionKind {
-  HEART
-  THUMBS_UP
-  LAUGH
-  FROWN
-  ANGRY
-}
-
-/// One person marking one message, once per kind.
+/// The primary key *is* the rule: `(messageId, userId)` and no emoji in it, so
+/// the database cannot hold two reactions from the same person on the same
+/// message however the service is called. Picking a second emoji is an update,
+/// not an insert, which is what Messenger, Instagram and Telegram all do — and
+/// with an open emoji set it is the only version that stays bounded.
 ///
-/// The composite primary key *is* the toggle: reacting twice with the same kind
-/// is a delete, and the database refuses the duplicate rather than the service
-/// having to check for one first. One person may leave several different kinds
-/// on the same message, which is why `kind` is part of the key rather than a
-/// unique on `(messageId, userId)` alone.
+/// It used to include `kind`, back when the set was five names. The count of
+/// chips under a message was five at worst then; it is unbounded now.
+///
+/// The column was a closed `ReactionKind` enum until the phase 29 migration, and
+/// the argument that made it one is worth keeping in view: a free string makes
+/// "the same reaction" undecidable, because U+2764 and U+2764 U+FE0F are two
+/// strings and one heart. That is now settled at the boundary instead of in the
+/// type — `toggleReactionSchema` admits a single fully-qualified RGI emoji and
+/// nothing else, so exactly one spelling of each reaction can reach this column.
+///
+/// `VarChar(64)`, not `Text`: the longest RGI sequence in the standard is a
+/// four-person family with skin tones, which is 10 code points and around 35
+/// bytes. 64 is that with room, and it is a second, cruder guard on a column
+/// whose whole risk is that it accepts a string.
 model MessageReaction {
   messageId String
   userId    String
-  kind      ReactionKind
-  createdAt DateTime     @default(now())
+  emoji     String   @db.VarChar(64)
+  createdAt DateTime @default(now())
 
   message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
   // Cascade, unlike everything else pointing at a User here. A reaction carries
@@ -487,7 +508,7 @@ model MessageReaction {
   // is neither.
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@id([messageId, userId, kind])
+  @@id([messageId, userId])
   @@index([messageId])
 }
 
@@ -514,37 +535,47 @@ model MessageHiddenFor {
   @@index([userId])
 }
 
-/// An image sent with a message.
-///
-/// One per message, enforced by the unique on `messageId`. Several would need a
-/// gallery in the message list and a decision about what a mixed
-/// caption-plus-many-images looks like; dropping the unique later relaxes this
-/// without moving any data, whereas going the other way would not.
-///
-/// There is no mime type or original filename column. Every upload is decoded
-/// and re-encoded to WebP before anything is written (lib/attachment-storage.ts),
-/// so the type is known and constant, and the name the uploader chose is a
-/// string from a stranger that nothing here needs.
+enum AttachmentKind {
+  IMAGE
+  FILE
+  AUDIO
+}
+
+/// A file carried by a message. Images and voice notes are re-encoded by this
+/// server; ordinary files keep their bytes and are served only as downloads.
 model Attachment {
-  id        String @id @default(cuid())
-  messageId String
-  /// Where this image sits among the message's others, from 0.
+  id             String         @id @default(cuid())
+  messageId      String
+  /// Denormalised from Message so the vault can page with one index scan. A
+  /// message never changes conversation and both rows are written together.
+  conversationId String
+  kind           AttachmentKind @default(IMAGE)
+  /// Decided from the bytes by the server, never trusted from the upload header.
+  mediaType      String
+  /// Display/download name only. It is never used to construct a storage path.
+  fileName       String?
+  /// Where this attachment sits among the message's others, from 0.
   ///
   /// Stored rather than derived from `createdAt`, because the images of one
   /// message are written inside a single transaction and share a timestamp to
   /// the millisecond — ordering by it would shuffle a gallery between reads.
   /// The order is the one the sender picked in the composer, and a gallery that
   /// reorders itself on reload is a gallery nobody can point at.
-  position  Int
-  // Stored so the message list can reserve the right space before the image
-  // has loaded. Without them every arriving picture shoves the conversation
-  // around as it decodes.
-  width     Int
-  height    Int
-  byteSize  Int
-  createdAt DateTime @default(now())
+  position       Int
+  // Null for non-images. Images keep them so the thread reserves space before
+  // bytes arrive instead of jumping during decode.
+  width          Int?
+  height         Int?
+  byteSize       Int
+  /// Null unless AUDIO. The waveform is always 64 RMS buckets in the range 0-100.
+  durationMs     Int?
+  waveform       Int[]          @default([])
+  /// Null on legacy images; clients fall back to the full-size URL.
+  hasThumbnail   Boolean        @default(false)
+  createdAt      DateTime       @default(now())
 
-  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  message      Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   /// Replaces the unique on `messageId` alone, which is what limited a message
   /// to one picture. Kept unique on the pair rather than dropped entirely: two
@@ -552,4 +583,64 @@ model Attachment {
   /// the reader discovers.
   @@unique([messageId, position])
   @@index([messageId])
+  @@index([conversationId, kind, createdAt])
+}
+
+/// A URL extracted when a message is written. It is indexed rather than found
+/// by scanning message text, and is never fetched by the server.
+model MessageLink {
+  id             String   @id @default(cuid())
+  messageId      String
+  conversationId String
+  url            String
+  position       Int
+  createdAt      DateTime @default(now())
+
+  message      Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, position])
+  @@index([conversationId, createdAt])
+}
+
+/// A private bookmark. It never rides on broadcast MessageDTO payloads.
+model MessageStar {
+  messageId String
+  userId    String
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([messageId, userId])
+  @@index([userId, createdAt])
+}
+
+/// A participant explicitly named by a group message. Stored by id so renames
+/// do not silently break notification semantics.
+model MessageMention {
+  messageId String
+  userId    String
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([messageId, userId])
+  @@index([userId, createdAt])
+}
+
+/// One of at most three messages participants have pinned in a conversation.
+model PinnedMessage {
+  conversationId String
+  messageId      String
+  pinnedById     String
+  pinnedAt       DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  message      Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  pinnedBy     User         @relation(fields: [pinnedById], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, messageId])
+  @@index([conversationId, pinnedAt])
 }

@@ -1,5 +1,5 @@
-import type { MessageDTO, MessageReplyDTO, ReactionDTO, ReactionKind } from "@chatty/shared-types";
-import type { MessageKind, ReactionKind as PrismaReactionKind } from "@prisma/client";
+import type { MessageDTO, MessageReplyDTO, ReactionDTO, ReactionEmoji } from "@chatty/shared-types";
+import type { AttachmentKind as PrismaAttachmentKind, MessageKind } from "@prisma/client";
 import { buildAttachmentUrl } from "../../lib/attachment-storage.js";
 import { toUserDTO, userSelect, type UserRow } from "../users/users.mapper.js";
 import { MESSAGE_AUTHOR_ACTION_WINDOW_MS } from "./messages.constants.js";
@@ -26,14 +26,20 @@ import { MESSAGE_AUTHOR_ACTION_WINDOW_MS } from "./messages.constants.js";
 
 interface AttachmentRow {
 	id: string;
-	width: number;
-	height: number;
+	kind: PrismaAttachmentKind;
+	mediaType: string;
+	fileName: string | null;
+	width: number | null;
+	height: number | null;
 	byteSize: number;
+	durationMs: number | null;
+	waveform: number[];
+	hasThumbnail: boolean;
 }
 
 interface ReactionRow {
 	userId: string;
-	kind: PrismaReactionKind;
+	emoji: string;
 }
 
 /**
@@ -53,22 +59,6 @@ interface ReplyParentRow {
 	attachments: { id: string }[];
 }
 
-/**
- * The database spelling of a reaction, and the wire spelling.
- *
- * Two vocabularies on purpose, the same split `MessageKind` already makes: the
- * enum is SHOUTING_SNAKE because that is what Postgres enums look like, and the
- * DTO is kebab-case because that is what the rest of the client's types look
- * like. Mapping in one place is what stops `THUMBS_UP` leaking into a className.
- */
-const REACTION_KIND_TO_DTO: Record<PrismaReactionKind, ReactionKind> = {
-	HEART: "heart",
-	THUMBS_UP: "thumbs-up",
-	LAUGH: "laugh",
-	FROWN: "frown",
-	ANGRY: "angry",
-};
-
 export interface MessageRow {
 	id: string;
 	conversationId: string;
@@ -80,8 +70,10 @@ export interface MessageRow {
 	editedAt: Date | null;
 	deletedAt: Date | null;
 	isSticker: boolean;
+	isForwarded: boolean;
 	attachments: AttachmentRow[];
 	reactions: ReactionRow[];
+	mentions: { userId: string }[];
 	replyTo: ReplyParentRow | null;
 }
 
@@ -99,19 +91,32 @@ export const messageSelect = {
 	editedAt: true,
 	deletedAt: true,
 	isSticker: true,
+	isForwarded: true,
 	// Ordered by the column the sender's choice was written to, not by
 	// `createdAt`: a message's images are inserted in one transaction and share a
 	// timestamp to the millisecond, so ordering by time would let a gallery
 	// shuffle itself between two reads of the same message.
 	attachments: {
-		select: { id: true, width: true, height: true, byteSize: true },
+		select: {
+			id: true,
+			kind: true,
+			mediaType: true,
+			fileName: true,
+			width: true,
+			height: true,
+			byteSize: true,
+			durationMs: true,
+			waveform: true,
+			hasThumbnail: true,
+		},
 		orderBy: { position: "asc" },
 	},
 	// Oldest first, which is what makes the chip order stable: a kind holds the
 	// position it was first used in rather than hopping about as counts change
 	// under it. Grouping happens in `toReactionDTOs`, not in SQL — the rows are a
 	// handful per message and a groupBy per message would be a second query.
-	reactions: { select: { userId: true, kind: true }, orderBy: { createdAt: "asc" } },
+	reactions: { select: { userId: true, emoji: true }, orderBy: { createdAt: "asc" } },
+	mentions: { select: { userId: true } },
 	// One level deep. See `ReplyParentRow`.
 	replyTo: {
 		select: {
@@ -121,27 +126,33 @@ export const messageSelect = {
 			author: { select: { displayName: true } },
 			// Only the first, and only to draw a thumbnail beside the quote. A
 			// reply points at a message; it does not re-show the whole gallery.
-			attachments: { select: { id: true }, orderBy: { position: "asc" }, take: 1 },
+			attachments: {
+				where: { kind: "IMAGE" },
+				select: { id: true },
+				orderBy: { position: "asc" },
+				take: 1,
+			},
 		},
 	},
 } as const;
 
 /**
- * Rolls the reaction rows up into one entry per kind.
+ * Rolls the reaction rows up into one entry per emoji.
  *
  * A `Map` rather than an object literal because insertion order is the contract
- * here — the rows arrive oldest-first and the chips render in that order.
+ * here — the rows arrive oldest-first and the chips render in that order, so a
+ * chip does not jump sideways when somebody else reacts. An object literal would
+ * also reorder any emoji that happened to look like an array index to V8.
  */
 function toReactionDTOs(rows: ReactionRow[]): ReactionDTO[] {
-	const byKind = new Map<ReactionKind, string[]>();
+	const byEmoji = new Map<ReactionEmoji, string[]>();
 	for (const row of rows) {
-		const kind = REACTION_KIND_TO_DTO[row.kind];
-		const userIds = byKind.get(kind);
+		const userIds = byEmoji.get(row.emoji);
 		if (userIds) userIds.push(row.userId);
-		else byKind.set(kind, [row.userId]);
+		else byEmoji.set(row.emoji, [row.userId]);
 	}
 
-	return [...byKind].map(([kind, userIds]) => ({ kind, userIds }));
+	return [...byEmoji].map(([emoji, userIds]) => ({ emoji, userIds }));
 }
 
 /**
@@ -175,12 +186,23 @@ export function toMessageDTO(row: MessageRow): MessageDTO {
 		// The URLs are built per response rather than stored: each carries a signed
 		// token that expires, so a cached copy would rot.
 		isSticker: row.isSticker,
+		isForwarded: row.isForwarded,
+		mentionedUserIds: row.mentions.map((mention) => mention.userId),
 		attachments: row.attachments.map((attachment) => ({
 			id: attachment.id,
+			kind: attachment.kind === "IMAGE" ? "image" : attachment.kind === "FILE" ? "file" : "audio",
 			url: buildAttachmentUrl(attachment.id),
+			thumbUrl:
+				attachment.kind === "IMAGE" && attachment.hasThumbnail
+					? buildAttachmentUrl(attachment.id, "thumb")
+					: null,
 			width: attachment.width,
 			height: attachment.height,
 			byteSize: attachment.byteSize,
+			fileName: attachment.fileName,
+			mediaType: attachment.mediaType,
+			durationMs: attachment.durationMs,
+			waveform: attachment.waveform,
 		})),
 		createdAt: row.createdAt.toISOString(),
 		authorActionExpiresAt:
