@@ -36,10 +36,13 @@ interface ReactionBarProps {
  */
 export function ReactionBar({ myEmoji, onPick, align }: ReactionBarProps) {
 	const [isBrowsingAll, setIsBrowsingAll] = useState(false);
-	const anchor = cn("absolute bottom-full z-30 mb-2", align === "end" ? "right-0" : "left-0");
+	const anchor = cn(
+		"absolute bottom-full z-30 mb-2",
+		align === "end" ? "right-0 origin-bottom-right" : "left-0 origin-bottom-left",
+	);
 
 	if (isBrowsingAll) {
-		return <EmojiPicker onPick={onPick} onClose={() => setIsBrowsingAll(false)} className={anchor} />;
+		return <EmojiPicker onPick={onPick} onClose={() => setIsBrowsingAll(false)} anchor={anchor} />;
 	}
 
 	return (

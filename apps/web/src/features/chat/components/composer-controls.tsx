@@ -54,7 +54,18 @@ export function ComposerControls({
 }: ComposerControlsProps) {
 	return (
 		<div className="relative flex min-w-0 items-center gap-1.5">
-			{isEmojiPickerOpen && <EmojiPicker onPick={onInsertEmoji} onClose={onCloseEmojiPicker} />}
+			{/* Right-anchored: the trigger is the Smile button at the end of the text
+			    well, and a 320px panel opening from the left edge of the row lands
+			    under the attachment button instead — a composer's width from the thing
+			    that opened it. The sticker tray below stays left because its trigger,
+			    the attachment menu, really is on the left. */}
+			{isEmojiPickerOpen && (
+				<EmojiPicker
+					onPick={onInsertEmoji}
+					onClose={onCloseEmojiPicker}
+					anchor="absolute bottom-full right-0 mb-2 origin-bottom-right"
+				/>
+			)}
 			{isStickerTrayOpen && <StickerTray onPick={onPickSticker} onClose={onCloseStickerTray} />}
 
 			{!isVoiceActive && (

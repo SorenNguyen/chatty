@@ -368,6 +368,12 @@
  * Composer surfaces rise from their trigger instead of appearing a frame later.
  * Kept as one utility so attachments, emoji and stickers share the same motion;
  * the motion preference removes it everywhere at once.
+ *
+ * It deliberately does *not* set `transform-origin`. It used to pin it to
+ * `bottom left`, which is a second, invisible statement about which side the
+ * surface hangs off — and one of the four callers hangs off the right, so the
+ * panel grew away from the button that opened it. The origin belongs beside the
+ * `left-0` / `right-0` that decides it, so each caller states both or neither.
  */
 @keyframes popover-enter {
 	from {
@@ -382,7 +388,6 @@
 }
 
 @utility popover-enter {
-	transform-origin: bottom left;
 	animation: popover-enter 120ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 

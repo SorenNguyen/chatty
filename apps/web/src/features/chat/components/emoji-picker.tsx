@@ -10,11 +10,16 @@ interface EmojiPickerProps {
 	onPick: (char: string) => void;
 	onClose: () => void;
 	/**
-	 * Where the panel hangs. Defaults to above-left, which is what the composer
-	 * needs; the reaction bar passes its own so the panel opens over the message
-	 * rather than off the bottom of the thread.
+	 * Where the panel hangs, transform origin included.
+	 *
+	 * Required, and that is the fix rather than the inconvenience: it used to
+	 * default to `left-0` "which is what the composer needs", and the composer's
+	 * trigger is at the *right* end of the text well — so the one call site the
+	 * default was written for was the one it was wrong for, and the panel opened
+	 * a composer's width away from the button that opened it. A default here can
+	 * only ever be right for one of the two sides a popover can hang off.
 	 */
-	className?: string;
+	anchor: string;
 }
 
 /**
@@ -34,7 +39,7 @@ interface EmojiPickerProps {
  * other. The set is open now and this panel is what `+` on the reaction bar
  * opens, which is why it takes an anchor.
  */
-export function EmojiPicker({ onPick, onClose, className }: EmojiPickerProps) {
+export function EmojiPicker({ onPick, onClose, anchor }: EmojiPickerProps) {
 	const [query, setQuery] = useState("");
 	const [activeCategoryId, setActiveCategoryId] = useState(EMOJI_CATEGORIES[0]!.id);
 	const { recent, remember } = useRecentEmoji();
@@ -81,7 +86,7 @@ export function EmojiPicker({ onPick, onClose, className }: EmojiPickerProps) {
 				"popover-enter z-40 w-[min(320px,calc(100vw-24px))] rounded-panel border border-rule bg-paper-raised shadow-lift",
 				// The app declares one shadow and this used to reach for Tailwind's
 				// `shadow-lg`, which is a neutral grey drop on warm paper.
-				className ?? "absolute bottom-full left-0 mb-2",
+				anchor,
 			)}
 		>
 			<div className="flex items-center gap-2.5 border-b border-rule-soft px-3.5 py-2.5">

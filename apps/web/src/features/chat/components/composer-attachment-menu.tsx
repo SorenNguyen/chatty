@@ -112,7 +112,7 @@ export function ComposerAttachmentMenu({
 				<div
 					role="menu"
 					aria-label="Choose an attachment"
-					className="popover-enter absolute bottom-full left-0 z-50 mb-2 w-48 overflow-hidden rounded-panel border border-rule bg-paper-raised p-1.5 shadow-lift"
+					className="popover-enter origin-bottom-left absolute bottom-full left-0 z-50 mb-2 w-48 overflow-hidden rounded-panel border border-rule bg-paper-raised p-1.5 shadow-lift"
 				>
 					<Button
 						variant="ghost"
