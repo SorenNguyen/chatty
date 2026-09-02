@@ -46,7 +46,11 @@ describe("the full-text search index", () => {
 		const offenders = readdirSync(MIGRATIONS_DIR, { withFileTypes: true })
 			.filter((entry) => entry.isDirectory())
 			.filter((entry) => {
-				const sql = readFileSync(join(MIGRATIONS_DIR, entry.name, "migration.sql"), "utf8");
+				const sql = readFileSync(join(MIGRATIONS_DIR, entry.name, "migration.sql"), "utf8")
+					// Comments first, or this flags the migrations that explain in prose
+					// why the line was removed — which is exactly what a migration that
+					// did the right thing looks like.
+					.replace(/--[^\n]*/g, "");
 
 				// Only a DROP counts. The two migrations that legitimately CREATE the
 				// index name it too, and re-creating it is how it got here.

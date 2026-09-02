@@ -11,6 +11,7 @@ import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from ".
 import { prisma } from "../../lib/prisma.js";
 import { getIO, userRoom } from "../../lib/socket-bus.js";
 import { messageSelect, toMessageDTO, type MessageRow } from "../messages/messages.mapper.js";
+import { assertNotBlocked } from "../blocks/blocks.service.js";
 import { toUserDTO, userSelect, type UserRow } from "../users/users.mapper.js";
 import type {
 	AddParticipantInput,
@@ -371,6 +372,11 @@ export async function createConversation(
 	const isGroup = otherUserIds.length > 1;
 
 	if (!isGroup) {
+		// Before the lookup, so a block refuses the request rather than quietly
+		// handing back the conversation the two of them already had. Groups are
+		// deliberately exempt — see `blocks.service`.
+		await assertNotBlocked(currentUserId, otherUserIds[0]!);
+
 		const existingId = await findExistingDirectConversation(currentUserId, otherUserIds[0]!);
 
 		if (existingId) {

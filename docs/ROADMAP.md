@@ -1240,6 +1240,11 @@ under-describes what works is the same class of lie as one that over-describes i
   first. See [ADR 0008](adr/0008-group-owner-role.md).
 - **Any member can still add a stranger to a group.** Deliberate (inviting is how a group grows), and
   the owner can undo it. Every add is now named in the log, which is what makes that acceptable.
+- **Blocking does not reach into a group.** Phase 32 added blocking for direct conversations; a group
+  both people are in is deliberately untouched, which is the line WhatsApp, Messenger and Telegram
+  draw. Combined with the item above, it means a member can add somebody you have blocked to a group
+  you are in, and you will see their messages there. Recorded so it is a decision rather than a
+  surprise.
 
 ## Phase 17 — the grammar of a message cluster — `done`
 
@@ -2177,6 +2182,54 @@ mattered on the way back from the grid, but it is the same omission and got the 
 
 Every other `outline-none` in the app was checked and is correct: they are dialog containers taking
 programmatic focus, or fields whose wrapper already carries `focus-within`.
+
+## Phase 32 — the safety gap nothing had written down — `done`
+
+Every "Known gap" in this file was a decision somebody had made and recorded. This one was not on any
+list: **anyone could find anyone by handle and open a conversation, and the person on the other end
+had no way to stop it.** For a messaging app that is a more consequential hole than most of what the
+roadmap was tracking, and it had gone unnoticed because nothing in the code looks wrong — the feature
+was simply absent.
+
+| # | Item | Status |
+| --- | --- | --- |
+| 101 | Blocking, enforced where it can actually be enforced | Done |
+
+### Where the check has to live
+
+Refusing to *create* a direct conversation is the obvious place and is not enough on its own. Two
+people who have been talking for months already have their conversation, so a block that only guarded
+creation would stop nothing at all for exactly the people most likely to need it. The enforcing check
+is therefore in `sendMessage`, **inside the locked transaction**, next to the membership re-check and
+for the same reason: a send racing a block resolves in one honest order.
+
+Three places in total — create a direct conversation, send to one, and user search — and search is
+filtered **in both directions**. Hiding only the people you blocked would leave you visible to them,
+so they could still find you, be refused, and learn precisely what had happened. Both refusals say the
+same sentence about the conversation rather than about either person, for the same reason.
+
+### What a block does not do
+
+**Groups are untouched.** WhatsApp, Messenger and Telegram all leave a blocked person's messages
+visible in a group both people are in; hiding them behind a placeholder is Discord's answer, and it
+makes paging, unread counts and read markers resolve differently for two people reading one thread.
+The confirmation dialog says so out loud, because "blocked" reads as total and finding the exception
+out later, in a group, is the bad way to learn it.
+
+The row is **directed** — it records who blocked whom — while the effect is symmetric. Two rows would
+make that question unanswerable, and unblocking is not something the blocked person can do.
+
+`UserBlock_not_self` is a check constraint rather than a service guard, on the phase 7 principle: a
+rule the code checks is a rule until somebody writes a second code path.
+
+### The trap, sprung on schedule
+
+Prisma's draft of this migration opened with `DROP INDEX "Message_searchVector_idx"` — exactly what
+[item 98](#item-98-the-line-prisma-writes-every-time-that-only-fails-silently) said it would do to the
+next migration touching this schema, written one phase earlier. The guard caught it, then caught its
+own false positive: the first version of the check read the migration's *prose* explaining why the
+line had been removed. It strips SQL comments now, and is tested both ways — a comment mentioning the
+line passes, real SQL fails.
 
 ## Verification bar
 

@@ -61,6 +61,36 @@ model User {
   starredMessages     MessageStar[]
   mentions            MessageMention[]
   pinnedMessages      PinnedMessage[]
+  blocksMade          UserBlock[]               @relation("BlocksMade")
+  blocksReceived      UserBlock[]               @relation("BlocksReceived")
+}
+
+/// One person refusing contact from another. Directed: the row says who did it.
+///
+/// The *effect* is symmetric even though the row is not — a block stops direct
+/// messages in both directions, and hides each from the other's search — which
+/// is what every messenger does and what people expect. Storing it as one
+/// directed row rather than two is what keeps "who blocked whom" answerable, and
+/// only the blocker's own row can be deleted; unblocking is not something the
+/// blocked person can do.
+///
+/// Groups are deliberately untouched. WhatsApp, Messenger and Telegram all leave
+/// a blocked person's messages visible in a group both people are in, and the
+/// alternative — a placeholder in a shared room — is Discord's, and makes paging
+/// and unread counts answer differently for two people looking at one thread.
+model UserBlock {
+  id        String   @id @default(cuid())
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  blocker User @relation("BlocksMade", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("BlocksReceived", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  // "Does anyone block me?" is asked on every direct send, from the other side
+  // of the pair the unique above serves.
+  @@index([blockedId])
 }
 
 enum PresenceVisibility {

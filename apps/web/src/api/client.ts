@@ -384,6 +384,21 @@ export const api = {
 		return get<UserDTO[]>(`/users?query=${encodeURIComponent(query)}`);
 	},
 
+	/** Everyone you have blocked. Not everyone who has blocked you — that is not yours to see. */
+	listBlockedUsers(): Promise<UserDTO[]> {
+		return get<UserDTO[]>("/blocks");
+	},
+
+	// PUT, so blocking somebody already blocked is the same request twice and
+	// answers the same way — the client never has to know which it is sending.
+	blockUser(userId: string): Promise<void> {
+		return request<void>(`/blocks/${userId}`, { method: "PUT" });
+	},
+
+	unblockUser(userId: string): Promise<void> {
+		return request<void>(`/blocks/${userId}`, { method: "DELETE" });
+	},
+
 	listConversations(isArchived = false): Promise<ConversationDTO[]> {
 		return get<ConversationDTO[]>(`/conversations${isArchived ? "?archived=true" : ""}`);
 	},

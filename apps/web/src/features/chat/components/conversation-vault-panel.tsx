@@ -9,6 +9,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/api/client";
 import { Button } from "@/components/button";
 import { VAULT_TABS, type VaultTab } from "../constants/vault";
+import { getDirectPeer } from "../utils";
+import { ConversationBlockControl } from "./conversation-block-control";
 import { ConversationDetailsIdentity } from "./conversation-details-identity";
 import { GroupMembersPanel } from "./group-members-panel";
 import { VaultTabContent } from "./vault-tab-content";
@@ -39,6 +41,7 @@ export function ConversationVaultPanel({
 	const [nextCursor, setNextCursor] = useState<string | undefined>();
 	const requestSequence = useRef(0);
 	const loadMoreRef = useRef<HTMLDivElement>(null);
+	const blockablePeer = conversation.isGroup ? null : getDirectPeer(conversation, currentUserId);
 
 	const loadPage = useCallback(
 		async (before?: string, replace = false) => {
@@ -126,6 +129,10 @@ export function ConversationVaultPanel({
 					currentUserId={currentUserId}
 					onlineUserIds={onlineUserIds}
 				/>
+
+				{/* Direct conversations only: a block is between two people, and it
+				    deliberately does not reach into a group they share. */}
+				{blockablePeer && <ConversationBlockControl peer={blockablePeer} />}
 
 				{/* `flex-1` with `min-w-fit` rather than a fixed width apiece: the tabs
 				    share the panel evenly when it is 448px wide, and the strip scrolls

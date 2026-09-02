@@ -7,6 +7,7 @@ import { checkReadiness } from "./lib/readiness.js";
 import { attachmentsRouter } from "./modules/attachments/attachments.routes.js";
 import { stickersRouter } from "./modules/stickers/stickers.routes.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
+import { blocksRouter } from "./modules/blocks/blocks.routes.js";
 import { conversationsRouter } from "./modules/conversations/conversations.routes.js";
 import { messagesRouter } from "./modules/messages/messages.routes.js";
 import { searchRouter } from "./modules/search/search.routes.js";
@@ -70,6 +71,7 @@ export function createApp() {
 	app.use("/stickers", stickersRouter);
 	app.use("/users", usersRouter);
 	app.use("/search", searchRouter);
+	app.use("/blocks", blocksRouter);
 	app.use("/conversations", conversationsRouter);
 	app.use("/conversations/:conversationId", conversationVaultRouter);
 	app.use("/conversations/:conversationId/messages", messagesRouter);

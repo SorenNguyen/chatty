@@ -16,6 +16,7 @@ import { logger } from "../../lib/logger.js";
 import { prisma } from "../../lib/prisma.js";
 import { readOwnedStickerPath } from "../stickers/stickers.service.js";
 import { getIO, userRoom } from "../../lib/socket-bus.js";
+import { assertNotBlocked } from "../blocks/blocks.service.js";
 import { assertParticipant } from "../conversations/conversations.service.js";
 import { messageSelect, toMessageDTO, type MessageRow } from "./messages.mapper.js";
 import { MESSAGE_AUTHOR_ACTION_WINDOW_MS } from "./messages.constants.js";
@@ -275,6 +276,19 @@ export async function sendMessage(
 			select: { isGroup: true, participants: { select: { userId: true } } },
 		});
 		const participantIds = new Set(conversation.participants.map((participant) => participant.userId));
+
+		// The check that actually enforces blocking. Refusing to *create* a direct
+		// conversation is not enough on its own: two people who have been talking
+		// for months already have one, so a block that only guarded creation would
+		// stop nothing. Inside the transaction, after the lock, for the same reason
+		// the membership re-check is — a send racing a block gets one honest order.
+		//
+		// Groups are exempt on purpose; see `blocks.service`.
+		if (!conversation.isGroup) {
+			const otherId = [...participantIds].find((id) => id !== currentUserId);
+			if (otherId) await assertNotBlocked(currentUserId, otherId);
+		}
+
 		const mentionedUserIds = [...new Set(input.mentionedUserIds ?? [])];
 		if (mentionedUserIds.length > 0 && !conversation.isGroup) {
 			throw new ValidationError("Mentions are only available in group conversations");

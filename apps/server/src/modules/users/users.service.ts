@@ -5,6 +5,7 @@ import { logger } from "../../lib/logger.js";
 import { prisma } from "../../lib/prisma.js";
 import { getIO, userRoom } from "../../lib/socket-bus.js";
 import { assertPasswordMatches } from "../auth/auth.service.js";
+import { listBlockedUserIds } from "../blocks/blocks.service.js";
 import {
 	announceDepartures,
 	clearSharedReadMarkers,
@@ -107,9 +108,15 @@ export async function updateProfile(userId: string, input: UpdateProfileInput): 
  * results and you cannot tell which one to message.
  */
 export async function searchUsers(currentUserId: string, query: SearchUsersQuery): Promise<UserDTO[]> {
+	// Both directions. Hiding only the people you blocked would leave you visible
+	// to them — they could still find you, open a conversation and be refused
+	// with no idea why, which is a worse experience than not being found and
+	// tells them exactly what happened.
+	const hidden = await listBlockedUserIds(currentUserId);
+
 	const users = await prisma.user.findMany({
 		where: {
-			id: { not: currentUserId },
+			id: { not: currentUserId, notIn: hidden },
 			OR: [
 				{ handle: { contains: query.query, mode: "insensitive" } },
 				{ displayName: { contains: query.query, mode: "insensitive" } },
