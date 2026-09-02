@@ -353,6 +353,17 @@ export interface MessageDTO {
 	reactions: ReactionDTO[];
 	/** The message this one answers, or null. */
 	replyTo: MessageReplyDTO | null;
+	/**
+	 * The `clientId` the sender asked for, echoed straight back — see
+	 * `SendMessageRequest.clientId`. Present only on the message that has just
+	 * been sent, and only for whoever sent it; absent on every message read back
+	 * from the database, because nothing stores it.
+	 *
+	 * Every other participant receives it too, and for them it names nothing.
+	 * That is the cost of one broadcast to the room rather than one emit per
+	 * recipient, and it is cheaper than the alternative.
+	 */
+	clientId?: string;
 }
 
 export interface MessageContextDTO {
@@ -619,6 +630,19 @@ export interface SendMessageRequest {
 	replyToId?: string | undefined;
 	forwardOfMessageId?: string | undefined;
 	mentionedUserIds?: string[] | undefined;
+	/**
+	 * The id the sender's optimistic copy is already drawn under.
+	 *
+	 * Echoed back on the `message:new` broadcast so the sender can recognise its
+	 * own draft in the event. Without it the sender briefly renders the message
+	 * twice: the broadcast and the HTTP response leave the server together, and
+	 * whenever the socket wins the draft and the saved message sit in the thread
+	 * side by side until the response arrives to clear the draft away.
+	 *
+	 * Optional because it is a client convenience, not part of what a message is.
+	 * The server neither stores it nor interprets it.
+	 */
+	clientId?: string | undefined;
 }
 
 export interface ConversationArchiveRequest {

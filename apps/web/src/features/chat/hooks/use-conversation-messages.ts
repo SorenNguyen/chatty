@@ -293,9 +293,13 @@ export function useConversationMessages(
 				draft.conversationId,
 				draft.content,
 				pendingUploadsRef.current.get(draft.id)?.files,
-				undefined,
 				draft.replyTo?.id,
 				draft.mentionedUserIds,
+				// The draft's own id goes with the send, and comes back on the
+				// broadcast. Whichever of the two arrives first can then retire the
+				// draft, instead of the socket appending a second copy that only the
+				// response knows how to remove.
+				draft.id,
 			);
 
 			releaseUpload(pendingUploadsRef.current, draft.id);
@@ -440,11 +444,19 @@ export function useConversationMessages(
 		useCallback(
 			(message: MessageDTO) => {
 				if (message.conversationId === conversationId) {
-					// Guard against duplicates: a reconnect can replay an event that
-					// is already on screen.
-					setMessages((current) =>
-						current.some((existing) => existing.id === message.id) ? current : [...current, message],
-					);
+					setMessages((current) => {
+						// Two different duplicates to refuse. `id` catches a reconnect
+						// replaying an event already on screen; `clientId` catches this
+						// reader's own optimistic draft, which is drawn under an id the
+						// server has never heard of and would otherwise sit beside the
+						// real message until the HTTP response arrived to clear it.
+						if (current.some((existing) => existing.id === message.id)) return current;
+						const withoutDraft = message.clientId
+							? current.filter((existing) => existing.id !== message.clientId)
+							: current;
+
+						return [...withoutDraft, message];
+					});
 				}
 			},
 			[conversationId],

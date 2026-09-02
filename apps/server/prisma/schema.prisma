@@ -30,14 +30,14 @@ model User {
   // rewriting every row to move the files to S3, or keeping the old picture
   // cached in browsers after an upload — the same reason Mattermost stores
   // `last_picture_update` and Rocket.Chat an avatar etag.
-  avatarUpdatedAt     DateTime?
+  avatarUpdatedAt     DateTime?          @db.Timestamptz(3)
   /// When the password was last replaced, or null if it never has been.
   ///
   /// Read by `requireAuth` and by the socket handshake on every request: a JWT
   /// issued before this moment is refused. Without it, changing or resetting a
   /// password would leave every session opened beforehand working until the
   /// token expired — which is exactly the case a reset is reached for.
-  passwordChangedAt   DateTime?
+  passwordChangedAt   DateTime?          @db.Timestamptz(3)
   /// Whether other people may see how far this user has read.
   ///
   /// Symmetric by design: turning it off also hides everyone else's markers from
@@ -46,9 +46,9 @@ model User {
   /// marker never leaves the process rather than being filtered out of a response
   /// somebody could still ask for.
   readReceiptsEnabled Boolean            @default(true)
-  lastSeenAt          DateTime?
+  lastSeenAt          DateTime?          @db.Timestamptz(3)
   presenceVisibility  PresenceVisibility @default(CONTACTS)
-  createdAt           DateTime           @default(now())
+  createdAt           DateTime           @default(now()) @db.Timestamptz(3)
 
   participants        ConversationParticipant[]
   messages            Message[]
@@ -93,12 +93,12 @@ model EmailChangeToken {
   /// `User.email`'s own unique index.
   newEmail  String
   tokenHash String    @unique
-  expiresAt DateTime
+  expiresAt DateTime  @db.Timestamptz(3)
   /// Set when the link is opened. Kept rather than deleted, the same way a spent
   /// reset token is: a second click can then be told apart from a made-up token
   /// in the logs, while both answer the caller identically.
-  usedAt    DateTime?
-  createdAt DateTime  @default(now())
+  usedAt    DateTime? @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -137,16 +137,16 @@ model RefreshToken {
   /// run on every refresh.
   tokenHash String @unique
 
-  expiresAt  DateTime
+  expiresAt  DateTime  @db.Timestamptz(3)
   /// Set when this token is spent or the session is ended. Rotation sets it on
   /// the old row as the replacement is created, so a refresh token is
   /// single-use — and a *second* use of an already-spent token is therefore
   /// visible rather than silent.
-  revokedAt  DateTime?
+  revokedAt  DateTime? @db.Timestamptz(3)
   /// Moved on every successful refresh. Not used for anything yet; it is what a
   /// "your sessions" screen would list, and recording it now costs one column.
-  lastUsedAt DateTime?
-  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime? @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -174,7 +174,7 @@ model Sticker {
   height   Int
   byteSize Int
 
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -186,12 +186,12 @@ model PasswordResetToken {
   id        String    @id @default(cuid())
   userId    String
   tokenHash String    @unique
-  expiresAt DateTime
+  expiresAt DateTime  @db.Timestamptz(3)
   /// Set the moment the token is redeemed. A used token is kept rather than
   /// deleted so that a second attempt can be told apart from a made-up one in
   /// the logs — both still answer the same thing to the caller.
-  usedAt    DateTime?
-  createdAt DateTime  @default(now())
+  usedAt    DateTime? @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -257,12 +257,12 @@ model OutboxMessage {
   /// Everything that is *compared* against the database clock is therefore
   /// written by the database. `createdAt` and `sentAt` are only ever read by
   /// people, so they stay ordinary.
-  nextAttemptAt DateTime     @default(dbgenerated("CURRENT_TIMESTAMP"))
+  nextAttemptAt DateTime     @default(dbgenerated("CURRENT_TIMESTAMP")) @db.Timestamptz(3)
   /// Why the last attempt failed, kept for the person reading the table at 3am.
   /// Never contains the body, so it is safe to log and to keep after redaction.
   lastError     String?
-  sentAt        DateTime?
-  createdAt     DateTime     @default(now())
+  sentAt        DateTime?    @db.Timestamptz(3)
+  createdAt     DateTime     @default(now()) @db.Timestamptz(3)
 
   // The worker's only query: due PENDING rows, oldest first. Ordering the index
   // this way means it serves both the filter and the sort.
@@ -278,8 +278,8 @@ model Conversation {
   // display name for group chats; null for 1-1 (client derives a name from
   // the other participant)
   name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   participants   ConversationParticipant[]
   messages       Message[]
@@ -311,7 +311,7 @@ model ConversationParticipant {
   /// migration adds an OWNER-only unique index plus a deferred constraint
   /// trigger, so a non-empty group has exactly one owner at commit time.
   role                    ConversationRole @default(MEMBER)
-  joinedAt                DateTime         @default(now())
+  joinedAt                DateTime         @default(now()) @db.Timestamptz(3)
   // Newest message this participant has read. Per-participant, so it belongs
   // here and not on Message: "read" is a fact about a person, and a group of
   // ten has ten different answers for the same message.
@@ -337,11 +337,11 @@ model ConversationParticipant {
   lastSharedReadMessageId String?
   /// Per-participant list organisation. None of these values may be broadcast
   /// with conversation:updated because each viewer sees a different value.
-  archivedAt              DateTime?
+  archivedAt              DateTime?        @db.Timestamptz(3)
   /// A timestamp gives pinned conversations a stable, intentional order.
-  pinnedAt                DateTime?
+  pinnedAt                DateTime?        @db.Timestamptz(3)
   /// Null is audible; a far-future timestamp represents "mute forever".
-  mutedUntil              DateTime?
+  mutedUntil              DateTime?        @db.Timestamptz(3)
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -383,12 +383,12 @@ model Message {
   // ("An added Binh"). The names in it are a snapshot of who people were when
   // it happened, deliberately — see ADR 0009.
   content        String
-  createdAt      DateTime                 @default(now())
+  createdAt      DateTime                 @default(now()) @db.Timestamptz(3)
   /// When the author last replaced `content`, or null if they never have.
   ///
   /// A timestamp rather than a boolean because the UI eventually wants to say
   /// *when*, and because "edited" is derivable from it while the reverse is not.
-  editedAt       DateTime?
+  editedAt       DateTime?                @db.Timestamptz(3)
   /// When the author deleted this message, or null while it stands.
   ///
   /// A tombstone, not a `DELETE`. Two things in this schema point at a message
@@ -404,7 +404,7 @@ model Message {
   /// `content` is emptied in the same write, and the check constraint below
   /// makes that the database's rule rather than the service's promise — a
   /// deleted message must not still be carrying its text.
-  deletedAt      DateTime?
+  deletedAt      DateTime?                @db.Timestamptz(3)
   /// What search matches against: `to_tsvector('simple', content)`, maintained
   /// by PostgreSQL as a GENERATED column.
   ///
@@ -498,7 +498,7 @@ model MessageReaction {
   messageId String
   userId    String
   emoji     String   @db.VarChar(64)
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
 
   message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
   // Cascade, unlike everything else pointing at a User here. A reaction carries
@@ -516,7 +516,7 @@ model MessageEdit {
   id        String   @id @default(cuid())
   messageId String
   content   String
-  editedAt  DateTime @default(now())
+  editedAt  DateTime @default(now()) @db.Timestamptz(3)
 
   message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
 
@@ -526,7 +526,7 @@ model MessageEdit {
 model MessageHiddenFor {
   messageId String
   userId    String
-  hiddenAt  DateTime @default(now())
+  hiddenAt  DateTime @default(now()) @db.Timestamptz(3)
 
   message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -572,7 +572,7 @@ model Attachment {
   waveform       Int[]          @default([])
   /// Null on legacy images; clients fall back to the full-size URL.
   hasThumbnail   Boolean        @default(false)
-  createdAt      DateTime       @default(now())
+  createdAt      DateTime       @default(now()) @db.Timestamptz(3)
 
   message      Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -594,7 +594,7 @@ model MessageLink {
   conversationId String
   url            String
   position       Int
-  createdAt      DateTime @default(now())
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
 
   message      Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -607,7 +607,7 @@ model MessageLink {
 model MessageStar {
   messageId String
   userId    String
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
 
   message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -621,7 +621,7 @@ model MessageStar {
 model MessageMention {
   messageId String
   userId    String
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
 
   message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -635,7 +635,7 @@ model PinnedMessage {
   conversationId String
   messageId      String
   pinnedById     String
-  pinnedAt       DateTime @default(now())
+  pinnedAt       DateTime @default(now()) @db.Timestamptz(3)
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   message      Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)

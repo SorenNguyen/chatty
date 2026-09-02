@@ -449,14 +449,20 @@ export const api = {
 	 * Same endpoint either way — JSON when it is only text, multipart when there
 	 * are files. One write path rather than two, so there is one place where
 	 * membership is checked and one broadcast everyone renders from.
+	 *
+	 * There is no `onProgress` here, where `sendFile` and `sendVoice` both have
+	 * one. Phase 29 traded the progress bar for the picture itself, held at 60%
+	 * until the server has it, so the only caller had been passing `undefined`
+	 * ever since — a hole in the argument list that every future parameter would
+	 * have had to be counted past.
 	 */
 	sendMessage(
 		conversationId: string,
 		content: string,
 		attachments: File[] = [],
-		onProgress?: (percent: number) => void,
 		replyToId?: string,
 		mentionedUserIds: string[] = [],
+		clientId?: string,
 	): Promise<MessageDTO> {
 		const path = `/conversations/${conversationId}/messages`;
 		if (attachments.length === 0) {
@@ -464,6 +470,7 @@ export const api = {
 				content,
 				...(replyToId ? { replyToId } : {}),
 				...(mentionedUserIds.length > 0 ? { mentionedUserIds } : {}),
+				...(clientId ? { clientId } : {}),
 			});
 		}
 
@@ -478,6 +485,7 @@ export const api = {
 		// this whether the message arrived as JSON or as multipart.
 		if (replyToId) body.append("replyToId", replyToId);
 		if (mentionedUserIds.length > 0) body.append("mentionedUserIds", JSON.stringify(mentionedUserIds));
+		if (clientId) body.append("clientId", clientId);
 
 		return new Promise<MessageDTO>((resolve, reject) => {
 			const upload = new XMLHttpRequest();
@@ -485,9 +493,6 @@ export const api = {
 			const token = getStoredToken();
 
 			if (token) upload.setRequestHeader("Authorization", `Bearer ${token}`);
-			upload.upload.addEventListener("progress", (event) => {
-				if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100));
-			});
 			upload.addEventListener("load", () => {
 				if (upload.status >= 200 && upload.status < 300) {
 					resolve(JSON.parse(upload.responseText) as MessageDTO);

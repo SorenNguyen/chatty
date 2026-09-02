@@ -60,6 +60,7 @@ export async function sendMessageController(req: Request, res: Response): Promis
 		...(input.stickerId ? { stickerId: input.stickerId } : {}),
 		...(input.forwardOfMessageId ? { forwardOfMessageId: input.forwardOfMessageId } : {}),
 		...(input.mentionedUserIds ? { mentionedUserIds: input.mentionedUserIds } : {}),
+		...(input.clientId ? { clientId: input.clientId } : {}),
 		...(images.length > 0 ? { attachments: images.map((image) => image.buffer) } : {}),
 		...(file ? { file: { buffer: file.buffer, fileName: file.originalname } } : {}),
 		...(voice ? { voice: voice.buffer } : {}),

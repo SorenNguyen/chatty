@@ -1588,7 +1588,7 @@ pins it so it is a decision rather than a surprise.
 | # | Item | Status |
 | --- | --- | --- |
 | 79 | Refresh tokens: short-lived access, revocable sessions, a logout that means it | Done |
-| 80 | Conversation list pagination | `planned` — see below; it is a redesign, not a patch |
+| 80 | Conversation list pagination | `planned` — see below; the redesign it was blocked on landed in phase 27, so what remains is the cursor |
 | 81 | Object storage for uploads | `blocked` — needs the host chosen; ADRs 0004/0007 already isolate the swap to two modules |
 | 82 | Mail provider, verified domain, SPF/DKIM/DMARC | `blocked` — paperwork, not code |
 | 83 | Error tracking / observability provider | `blocked` — needs an account and a DSN, same class as item 82 |
@@ -1641,15 +1641,19 @@ cascades.
 
 ### Item 80, and why it is `planned` rather than done
 
-The server's conversation list is unbounded, which is a real thing to fix. Pagination alone does not
-fix it, though, because of how the client uses it: `ChatPage` re-lists the whole sidebar on **every
-incoming message**, which is what keeps ordering, previews and unread counts true. Add a cursor
-underneath that and every message resets the sidebar to page one, discarding whatever the reader had
-scrolled to.
+The server's conversation list is unbounded, which is a real thing to fix. Pagination alone did not
+fix it, because of how the client used it: `ChatPage` re-listed the whole sidebar on **every incoming
+message**, which is what kept ordering, previews and unread counts true. Add a cursor underneath that
+and every message resets the sidebar to page one, discarding whatever the reader had scrolled to.
 
-Closing this properly means replacing "re-list everything on every change" with incremental patching
-of the row that changed — which is a redesign of the most delicate live-update code in the app, not a
-parameter on a query. Recorded as one item so it is picked up as one piece of work.
+**That blocker is gone.** Phase 27 replaced "re-list everything on every change" with incremental
+patching: `useConversationList` now owns eight socket handlers that each patch the row that changed,
+and `refresh()` is called on mount, on the archived toggle, and in one fallback branch — not on every
+message. The redesign this item was waiting for has happened.
+
+What is left is the query itself: `listConversationsForUser` still reads every membership row with no
+`take` and no cursor. That is now the ordinary piece of work it originally looked like, and the
+reason the item is still open rather than the reason it was hard.
 
 ## Phase 22 — a message can carry a gallery, and emoji are first-class — `done`
 
@@ -2059,6 +2063,77 @@ Four new specs, and each one asserts something no unit test in this repo can rea
   measured — enough that scrolling up does not immediately re-fetch what was dropped. The phase 19
   note asked for a measurement first and this is still not one; what changed is that the cost is now
   bounded either way.
+
+## Phase 30 — two things that were only ever correct by accident — `done`
+
+Not asked for: found by checking whether the previous twenty-nine phases were actually finished. Both
+items had passed every run of `verify` and both were real.
+
+| # | Item | Status |
+| --- | --- | --- |
+| 96 | Every timestamp column becomes `timestamptz` | Done |
+| 97 | The sender stops briefly seeing its own message twice | Done |
+| 98 | A guard on the search index Prisma keeps trying to drop | Done |
+
+### Item 96: the database was keeping two kinds of time in one column
+
+Found by accident, which is the part worth recording. A contributor setup on a machine without Docker
+ran Postgres directly, and `initdb` took the timezone from the machine — `Asia/Ho_Chi_Minh`. Four
+server tests failed immediately. The same suite is green on every CI run and on every developer's
+machine, because `docker-compose.yml` pins no timezone and the `postgres` image defaults to UTC.
+
+The columns were naive `timestamp`, and two writers disagreed about what they meant: the database
+clock wrote local time, Prisma wrote UTC. Under UTC those are the same value, so nothing ever showed.
+Under any other zone the outbox read a five-minute backoff as seven hours overdue and stopped backing
+off at all, and the keyset pagination in search and in the vault handed out the cursor row twice.
+
+[ADR 0015](adr/0015-timestamps-are-instants.md) has the full argument, including why pinning the
+session timezone was rejected in favour of changing the column type. The regression test asserts the
+*type* rather than any query's behaviour — `information_schema` must report no
+`timestamp without time zone` column — because that is what catches the next `DateTime` field added
+without `@db.Timestamptz(3)`, which is how this would come back.
+
+**The proof is the environment, not the assertion.** The suite now passes with the database running
+in `Asia/Ho_Chi_Minh`, which is the configuration that produced the four failures.
+
+### Item 97: the broadcast and the response were racing
+
+Phase 19 gave the sender an optimistic copy of its own message; the server has broadcast
+`message:new` to the whole room including the sender since long before that. Nothing tied the two
+together: the socket handler de-duplicated on the server's `id`, the draft was drawn under a
+client-generated one, and only the HTTP response knew they were the same message. Whenever the
+broadcast beat the response — they leave the server together, so it is a coin toss — the thread held
+both copies until the response arrived.
+
+The fix is a `clientId`: the draft's own id travels with the send and comes back on the broadcast, so
+whichever of the two arrives first retires the draft. It is deliberately not stored and not
+interpreted by the server, which only echoes it.
+
+**A browser found this and no unit test could have.** It surfaced as a Playwright strict-mode
+violation — one message text matching two elements — in a full-suite run, and passed three times out
+of three when that spec was run alone. The window is milliseconds on an idle machine and widens under
+load, which is the definition of the bug a green suite hides. The regression test settles the mocked
+response *after* emitting the event, so the losing order is the one that is asserted rather than the
+one that has to be got lucky.
+
+### Item 98: the line Prisma writes every time, that only fails silently
+
+Item 96 was generated by `prisma migrate dev` like any other migration, and the draft opened with
+`DROP INDEX "Message_searchVector_idx"` — the phase 12 GIN index behind every search in the app. It
+was removed by hand. Nothing would have caught it if it had not been.
+
+Prisma re-arms this every time. `searchVector` is `Unsupported("tsvector")`, so Prisma sees an index
+it has no record of and drafts its removal, and it will do exactly this again for the next change to
+the `Message` table. The `DROP DEFAULT` it emits alongside is harmless — Postgres refuses it on a
+generated column, so that migration dies loudly. The `DROP INDEX` succeeds, and afterwards **search
+still returns the right rows**, by sequential scan. There is no wrong answer to assert on; the cost is
+latency that grows with the table.
+
+So the guard asserts two different things, because either alone has a hole: that the index exists and
+is still GIN (the invariant), and that no committed migration contains a `DROP INDEX` naming it (the
+line, caught before it is ever applied). Proving it works meant writing a migration that drops the
+index and watching both go red — which also dropped the index from the test database for real, and is
+its own small argument for the guard existing.
 
 ## Verification bar
 

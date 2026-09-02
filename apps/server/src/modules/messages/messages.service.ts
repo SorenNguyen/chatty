@@ -43,6 +43,8 @@ export interface SendMessageArgs {
 	replyToId?: string | undefined;
 	forwardOfMessageId?: string | undefined;
 	mentionedUserIds?: string[] | undefined;
+	/** Echoed to the room so the sender recognises its own optimistic copy. */
+	clientId?: string | undefined;
 }
 
 interface StoredMessageAttachment {
@@ -317,13 +319,20 @@ export async function sendMessage(
 	});
 
 	const messageDTO = toMessageDTO(message);
+	// Carried on the broadcast, not just the response, and that is the whole
+	// point of it. The sender has drawn this message optimistically since phase
+	// 19, so it needs to recognise its own draft in an event that otherwise
+	// arrives looking like anybody else's message. Reconciling on the response
+	// alone leaves the thread showing both copies for however long the response
+	// trails the broadcast — which is usually milliseconds and, under load, was
+	// long enough for a browser to catch it.
+	const withClientId = input.clientId ? { ...messageDTO, clientId: input.clientId } : messageDTO;
 
 	// Broadcast to the room, which every participant's socket joined on connect.
-	// The sender receives this too — their UI renders from the event, not from
-	// this function's return value, so everyone runs the same code path.
-	getIO().to(conversationId).emit("message:new", messageDTO);
+	// The sender receives this too, so everyone runs the same code path.
+	getIO().to(conversationId).emit("message:new", withClientId);
 
-	return messageDTO;
+	return withClientId;
 }
 
 export async function listMessages(
