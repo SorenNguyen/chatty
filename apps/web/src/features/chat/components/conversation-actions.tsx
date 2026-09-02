@@ -1,25 +1,44 @@
 import type { ConversationDTO } from "@chatty/shared-types";
-import { Archive, ArrowLeft, BellOff, Check, Clock, MoreHorizontal, Pin } from "lucide-react";
+import { Archive, ArrowLeft, Ban, BellOff, Check, Clock, MoreHorizontal, Pin } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "@/api/client";
 import { Button } from "@/components/button";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { cn } from "@/utils/cn";
 import { CONVERSATION_MUTE_OPTIONS } from "../constants/conversation-actions";
+import { useBlockedUsers } from "../hooks/use-blocked-users";
+import { getDirectPeer } from "../utils";
 
 interface ConversationActionsProps {
 	conversation: ConversationDTO;
+	/** Needed only to find the other person in a direct conversation. */
+	currentUserId: string;
 }
 
-export function ConversationActions({ conversation }: ConversationActionsProps) {
+export function ConversationActions({ conversation, currentUserId }: ConversationActionsProps) {
+	// Blocking is between two people, so it is offered on direct rows only —
+	// the same line the details panel draws.
+	const peer = conversation.isGroup ? null : getDirectPeer(conversation, currentUserId);
+	const isBlocked = useBlockedUsers((state) => Boolean(peer && state.blockedIds.has(peer.id)));
+	const loadBlocked = useBlockedUsers((state) => state.load);
+	const blockUser = useBlockedUsers((state) => state.block);
+	const unblockUser = useBlockedUsers((state) => state.unblock);
 	const [isOpen, setIsOpen] = useState(false);
 	const [isChoosingMute, setIsChoosingMute] = useState(false);
+	const [isConfirmingBlock, setIsConfirmingBlock] = useState(false);
 	const [isSaving, setIsSaving] = useState(false);
 	const [error, setError] = useState("");
 	const rootRef = useRef<HTMLDivElement>(null);
 	const menuRef = useRef<HTMLDivElement>(null);
 	const [menuPosition, setMenuPosition] = useState({ left: 8, top: 8 });
 	const isMuted = Boolean(conversation.mutedUntil && Date.parse(conversation.mutedUntil) > Date.now());
+
+	useEffect(() => {
+		// On open rather than on mount: the sidebar renders one of these per row
+		// and only ever opens one, so mounting is the wrong moment to ask.
+		if (isOpen && peer) void loadBlocked();
+	}, [isOpen, loadBlocked, peer]);
 
 	useEffect(() => {
 		if (!isOpen) return;
@@ -213,6 +232,31 @@ export function ConversationActions({ conversation }: ConversationActionsProps) 
 									<BellOff className={cn("size-4", isMuted ? "text-signal" : "text-ink-faint")} />
 									{isMuted ? "Muted" : "Mute"}
 								</Button>
+								{peer && (
+									<Button
+										variant="ghost"
+										role="menuitem"
+										disabled={isSaving}
+										// Blocking asks; unblocking does not. Same rule the
+										// details panel follows — one of them is the decision,
+										// and confirming the way back out of it only punishes
+										// changing your mind.
+										onClick={() => {
+											if (isBlocked) void update(() => unblockUser(peer.id));
+											else {
+												setIsOpen(false);
+												setIsConfirmingBlock(true);
+											}
+										}}
+										// Separated and in signal ink: the three above are
+										// housekeeping you undo by clicking again, this one ends
+										// contact with a person.
+										className="w-full justify-start border-t border-rule-soft px-2.5 py-2 text-signal"
+									>
+										<Ban className="size-4" />
+										{isBlocked ? "Unblock" : "Block"}
+									</Button>
+								)}
 							</>
 						)}
 						{error && (
@@ -223,6 +267,19 @@ export function ConversationActions({ conversation }: ConversationActionsProps) 
 					</div>,
 					document.body,
 				)}
+
+			{isConfirmingBlock && peer && (
+				<ConfirmDialog
+					title={`Block ${peer.displayName}?`}
+					body={`Neither of you will be able to message the other, and you will stop appearing in each other's search. Messages you have already exchanged stay, and groups you are both in are not affected.`}
+					confirmLabel="Block"
+					onConfirm={() => {
+						setIsConfirmingBlock(false);
+						void update(() => blockUser(peer.id));
+					}}
+					onCancel={() => setIsConfirmingBlock(false)}
+				/>
+			)}
 		</div>
 	);
 }

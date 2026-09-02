@@ -139,7 +139,7 @@ export function ConversationList({
 								)}
 							</span>
 						</Button>
-						<ConversationActions conversation={conversation} />
+						<ConversationActions conversation={conversation} currentUserId={currentUserId} />
 					</li>
 				);
 			})}

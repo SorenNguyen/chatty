@@ -2220,6 +2220,25 @@ make that question unanswerable, and unblocking is not something the blocked per
 `UserBlock_not_self` is a check constraint rather than a service guard, on the phase 7 principle: a
 rule the code checks is a rule until somebody writes a second code path.
 
+### Where the action lives, corrected after the fact
+
+It shipped with one entry point, at the top of the conversation details panel, and the first person to
+use it could not find it — the panel is opened by a header icon labelled "Conversation storage and
+details", which is not where anybody looks for blocking. It was also the loudest thing on that panel,
+directly under the person's name, which is the opposite of what `Button`'s outlined `danger` variant
+exists to achieve.
+
+Both were fixed by moving it: **the row's own actions menu**, beside pin, archive and mute, which is
+where every messenger puts it and where people actually reach; and the **foot** of the details panel
+rather than its head. Two surfaces reading one `useBlockedUsers` store, so blocking in one changes
+what the other offers — a per-row fetch would have been one request per conversation to answer a
+question whose answer is a handful of ids.
+
+Adding the second entry point introduced its own bug, caught the same way: the menu blocked
+**immediately** while the panel asked first. Two doors to one decision have to behave the same, so the
+menu now raises the same confirmation. Unblocking still does not ask, from either — one of them is
+the decision, and confirming the way back out only punishes changing your mind.
+
 ### The trap, sprung on schedule
 
 Prisma's draft of this migration opened with `DROP INDEX "Message_searchVector_idx"` — exactly what

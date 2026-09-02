@@ -28,7 +28,7 @@ beforeEach(() => {
 
 describe("ConversationActions", () => {
 	it("keeps row actions behind one compact trigger", async () => {
-		render(<ConversationActions conversation={makeConversation()} />);
+		render(<ConversationActions conversation={makeConversation()} currentUserId="minh" />);
 
 		expect(screen.getByRole("button", { name: "Conversation actions" })).toBeInTheDocument();
 		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
@@ -43,7 +43,7 @@ describe("ConversationActions", () => {
 
 	it("uses an in-app mute submenu instead of a native dropdown", async () => {
 		const user = userEvent.setup();
-		render(<ConversationActions conversation={makeConversation()} />);
+		render(<ConversationActions conversation={makeConversation()} currentUserId="minh" />);
 
 		await user.click(screen.getByRole("button", { name: "Conversation actions" }));
 		await user.click(screen.getByRole("menuitem", { name: "Mute" }));
@@ -68,6 +68,7 @@ describe("ConversationActions", () => {
 					isArchived: true,
 					mutedUntil: "9999-12-31T23:59:59.999Z",
 				})}
+				currentUserId="minh"
 			/>,
 		);
 

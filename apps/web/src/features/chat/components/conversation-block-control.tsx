@@ -1,56 +1,44 @@
 import type { UserDTO } from "@chatty/shared-types";
 import { Ban } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api } from "@/api/client";
 import { Button } from "@/components/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { useBlockedUsers } from "../hooks/use-blocked-users";
 
 interface ConversationBlockControlProps {
 	peer: UserDTO;
 }
 
 /**
- * Blocking, from the one place you already went to find out who you are talking
- * to.
+ * Blocking, at the foot of the panel about the person.
  *
- * Direct conversations only. A block stops messages both ways and takes each
- * person out of the other's search, but it leaves a group they share alone —
- * the same line WhatsApp, Messenger and Telegram draw, and the reason the
- * control is here rather than on a group's member list.
+ * **Placement is the decision here.** This sat directly under the name to begin
+ * with, which made a red-outlined button the loudest thing on a panel whose job
+ * is to show what a conversation holds — and `Button`'s `danger` variant is
+ * outlined precisely so it does not invite the click. Every messenger puts block
+ * at the bottom, after the content, and that is where it belongs: reachable
+ * deliberately, not encountered on the way to the photos.
  *
- * Blocking asks first and unblocking does not. That asymmetry is the point:
- * one of them is the decision, and making somebody confirm the way back out of
- * it just punishes changing your mind.
+ * Blocking asks first and unblocking does not. One of them is the decision;
+ * making somebody confirm the way back out of it only punishes changing
+ * their mind.
  */
 export function ConversationBlockControl({ peer }: ConversationBlockControlProps) {
-	const [isBlocked, setIsBlocked] = useState(false);
+	const isBlocked = useBlockedUsers((state) => state.blockedIds.has(peer.id));
+	const load = useBlockedUsers((state) => state.load);
+	const block = useBlockedUsers((state) => state.block);
+	const unblock = useBlockedUsers((state) => state.unblock);
 	const [isAsking, setIsAsking] = useState(false);
 	const [isSaving, setIsSaving] = useState(false);
 
 	useEffect(() => {
-		let isCurrent = true;
-		void api
-			.listBlockedUsers()
-			.then((blocked) => {
-				if (isCurrent) setIsBlocked(blocked.some((user) => user.id === peer.id));
-			})
-			.catch(() => {
-				// Leaves the control reading "Block", which is the safe way to be
-				// wrong: the button is then a no-op the server refuses, rather than an
-				// "Unblock" that quietly reopens contact somebody asked to end.
-			});
-
-		return () => {
-			isCurrent = false;
-		};
-	}, [peer.id]);
+		void load();
+	}, [load]);
 
 	async function apply(shouldBlock: boolean) {
 		setIsSaving(true);
 		try {
-			if (shouldBlock) await api.blockUser(peer.id);
-			else await api.unblockUser(peer.id);
-			setIsBlocked(shouldBlock);
+			await (shouldBlock ? block(peer.id) : unblock(peer.id));
 		} finally {
 			setIsSaving(false);
 			setIsAsking(false);
@@ -58,7 +46,7 @@ export function ConversationBlockControl({ peer }: ConversationBlockControlProps
 	}
 
 	return (
-		<div className="shrink-0 border-b border-rule px-6 py-4">
+		<div className="shrink-0 border-t border-rule px-6 py-4">
 			<Button
 				variant={isBlocked ? "outline" : "danger"}
 				disabled={isSaving}
@@ -72,9 +60,9 @@ export function ConversationBlockControl({ peer }: ConversationBlockControlProps
 			{isAsking && (
 				<ConfirmDialog
 					title={`Block ${peer.displayName}?`}
-					// Says what it does *and* what it does not. "Blocked" reads as
-					// total, and somebody who shares a group with this person would
-					// otherwise find the exception out at the worst moment.
+					// Says what it does *and* what it does not. "Blocked" reads as total,
+					// and somebody who shares a group with this person would otherwise
+					// find the exception out at the worst moment.
 					body={`Neither of you will be able to message the other, and you will stop appearing in each other's search. Messages you have already exchanged stay, and groups you are both in are not affected.`}
 					confirmLabel="Block"
 					onConfirm={() => void apply(true)}

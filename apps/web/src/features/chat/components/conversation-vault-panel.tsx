@@ -119,10 +119,6 @@ export function ConversationVaultPanel({
 					onlineUserIds={onlineUserIds}
 				/>
 
-				{/* Direct conversations only: a block is between two people, and it
-				    deliberately does not reach into a group they share. */}
-				{blockablePeer && <ConversationBlockControl peer={blockablePeer} />}
-
 				{/* `flex-1` with `min-w-fit` rather than a fixed width apiece: the tabs
 				    share the panel evenly when it is 448px wide, and the strip scrolls
 				    instead of clipping a label once the panel is a phone. */}
@@ -171,6 +167,10 @@ export function ConversationVaultPanel({
 						/>
 					)}
 				</div>
+
+				{/* Last, not first. Direct conversations only: a block is between two
+				    people and deliberately does not reach into a group they share. */}
+				{blockablePeer && <ConversationBlockControl peer={blockablePeer} />}
 			</aside>
 		</>
 	);
