@@ -1,5 +1,6 @@
 import type {
 	ConversationDTO,
+	ConversationPageDTO,
 	ConversationReadEvent,
 	ConversationSelfUpdatedEvent,
 	ConversationUpdatedEvent,
@@ -25,6 +26,15 @@ import type {
 } from "./conversations.schema.js";
 
 const MAX_PINNED_CONVERSATIONS = 5;
+
+/**
+ * How many unpinned rows a page of the sidebar carries.
+ *
+ * Enough that the first screen is full on any ordinary display without a second
+ * request, and small enough that somebody with hundreds of conversations is not
+ * paying for all of them on every reconnect.
+ */
+const DEFAULT_CONVERSATION_PAGE_SIZE = 30;
 
 /** Shape returned by every query below, so one mapper can serve all of them. */
 const conversationInclude = {
@@ -424,25 +434,111 @@ export async function createConversation(
 	return conversationDTO;
 }
 
-export async function listConversationsForUser(userId: string, isArchived = false): Promise<ConversationDTO[]> {
-	const memberships = await prisma.conversationParticipant.findMany({
-		where: { userId, ...(isArchived ? { archivedAt: { not: null } } : { archivedAt: null }) },
-		// Ordered by the viewer's own membership row, so the database—not each
-		// client—defines the stable pin order. Nulls last keeps every ordinary row
-		// below all pinned rows before activity breaks ties.
-		orderBy: [{ pinnedAt: { sort: "desc", nulls: "last" } }, { conversation: { updatedAt: "desc" } }],
+/**
+ * A page of the sidebar, newest first, pinned rows above everything.
+ *
+ * **The pinned rows are never paged, and that is what makes the rest simple.**
+ * `MAX_PINNED_CONVERSATIONS` caps them at five per person, so "fetch all of
+ * them" is bounded work by construction and the first page can carry the whole
+ * set. What is left to page is the ordinary tail, in one order — `updatedAt`
+ * descending — which is an ordinary two-column keyset with `id` breaking ties.
+ *
+ * The alternative was a cursor over `(pinnedAt NULLS LAST, updatedAt, id)`,
+ * which needs raw SQL: a row-value comparison cannot express NULLS LAST, and
+ * Prisma cannot express the comparison at all. Leaning on the cap instead costs
+ * one bounded query and keeps this readable.
+ *
+ * `id` is the tiebreaker rather than nothing, because `updatedAt` collides:
+ * conversations created in the same request, or a seed, share a millisecond,
+ * and a cursor over a non-unique column silently skips or repeats rows at the
+ * page boundary — the shape of bug phase 12's search paging already had.
+ */
+export async function listConversationsForUser(
+	userId: string,
+	query: { isArchived?: boolean; limit?: number; before?: string } = {},
+): Promise<ConversationPageDTO> {
+	const isArchived = query.isArchived ?? false;
+	const limit = query.limit ?? DEFAULT_CONVERSATION_PAGE_SIZE;
+	const viewerScope = { userId, ...(isArchived ? { archivedAt: { not: null } } : { archivedAt: null }) };
+
+	// Only on the first page. Later pages are walking the unpinned tail, and
+	// repeating the pinned block on each of them would duplicate rows the client
+	// already has.
+	const pinnedMemberships = query.before
+		? []
+		: await prisma.conversationParticipant.findMany({
+				where: { ...viewerScope, pinnedAt: { not: null } },
+				orderBy: [{ pinnedAt: "desc" }, { conversationId: "desc" }],
+				select: { conversation: { include: conversationIncludeForUser(userId) } },
+			});
+
+	const cursor = query.before
+		? await prisma.conversation.findUnique({
+				where: { id: query.before },
+				select: { id: true, updatedAt: true },
+			})
+		: null;
+	if (query.before && !cursor) throw new NotFoundError("Conversation not found");
+
+	// One more than asked for, so `hasMore` is answered without a second count.
+	const unpinnedMemberships = await prisma.conversationParticipant.findMany({
+		where: {
+			...viewerScope,
+			pinnedAt: null,
+			...(cursor
+				? {
+						conversation: {
+							OR: [
+								{ updatedAt: { lt: cursor.updatedAt } },
+								{ updatedAt: cursor.updatedAt, id: { lt: cursor.id } },
+							],
+						},
+					}
+				: {}),
+		},
+		orderBy: [{ conversation: { updatedAt: "desc" } }, { conversationId: "desc" }],
+		take: limit + 1,
 		select: { conversation: { include: conversationIncludeForUser(userId) } },
 	});
-	const conversations = memberships.map((membership) => membership.conversation);
+
+	const hasMore = unpinnedMemberships.length > limit;
+	const conversations = [
+		...pinnedMemberships.map((membership) => membership.conversation),
+		...unpinnedMemberships.slice(0, limit).map((membership) => membership.conversation),
+	];
 
 	const unreadCounts = await countUnreadByConversation(
 		userId,
 		conversations.map((conversation) => conversation.id),
 	);
 
-	return conversations.map((conversation) =>
-		toConversationDTO(conversation, unreadCounts.get(conversation.id) ?? 0, userId),
-	);
+	return {
+		items: conversations.map((conversation) =>
+			toConversationDTO(conversation, unreadCounts.get(conversation.id) ?? 0, userId),
+		),
+		hasMore,
+	};
+}
+
+/**
+ * One conversation, as the sidebar would draw it.
+ *
+ * Exists for the case pagination creates: a message arrives for a conversation
+ * far enough down the list that the client has not loaded it, so there is no row
+ * to patch. Re-listing would throw away the reader's scroll position, which is
+ * the objection that kept item 80 shut for four phases; fetching the one row and
+ * putting it on top is what the sidebar would have shown anyway.
+ */
+export async function getConversationForUser(userId: string, conversationId: string): Promise<ConversationDTO> {
+	await assertParticipant(userId, conversationId);
+
+	const conversation = await prisma.conversation.findUniqueOrThrow({
+		where: { id: conversationId },
+		include: conversationIncludeForUser(userId),
+	});
+	const unreadCounts = await countUnreadByConversation(userId, [conversationId]);
+
+	return toConversationDTO(conversation, unreadCounts.get(conversationId) ?? 0, userId);
 }
 
 function toConversationSelfUpdatedEvent(row: {

@@ -144,7 +144,7 @@ describe("deleteAccount", () => {
 
 		await deleteAccount(minhId, { currentPassword: PASSWORD });
 
-		const seenByAn = await listConversationsForUser(anId);
+		const seenByAn = (await listConversationsForUser(anId)).items;
 		expect(seenByAn[0]!.unreadCount).toBe(1);
 	});
 

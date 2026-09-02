@@ -4,6 +4,7 @@ import { Archive, ArrowLeft, LogOut, Settings } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { Button } from "@/components/button";
 import { cn } from "@/utils/cn";
+import type { ConversationPaging } from "../types/conversation-paging";
 import { ConversationList } from "./conversation-list";
 import { NewConversationPanel } from "./new-conversation-panel";
 
@@ -18,6 +19,7 @@ interface ConversationSidebarProps {
 	isShowingArchived: boolean;
 	onToggleArchived: () => void;
 	typingByConversation: Record<string, string[]>;
+	paging: ConversationPaging;
 	className?: string;
 }
 
@@ -40,6 +42,7 @@ export function ConversationSidebar({
 	isShowingArchived,
 	onToggleArchived,
 	typingByConversation,
+	paging,
 	className,
 }: ConversationSidebarProps) {
 	return (
@@ -71,6 +74,7 @@ export function ConversationSidebar({
 					onlineUserIds={onlineUserIds}
 					onSelect={onSelect}
 					typingByConversation={typingByConversation}
+					paging={paging}
 				/>
 			</div>
 

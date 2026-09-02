@@ -7,6 +7,7 @@ import type {
 	ChangePasswordResponse,
 	ConfirmEmailChangeRequest,
 	ConversationDTO,
+	ConversationPageDTO,
 	ConversationSelfUpdatedEvent,
 	ConversationReadEvent,
 	CurrentUserDTO,
@@ -399,8 +400,22 @@ export const api = {
 		return request<void>(`/blocks/${userId}`, { method: "DELETE" });
 	},
 
-	listConversations(isArchived = false): Promise<ConversationDTO[]> {
-		return get<ConversationDTO[]>(`/conversations${isArchived ? "?archived=true" : ""}`);
+	/**
+	 * A page of the sidebar. Pinned rows are capped server-side and all arrive on
+	 * the first page, so `before` is always the id of the last *unpinned* row.
+	 */
+	listConversations(isArchived = false, before?: string): Promise<ConversationPageDTO> {
+		const params = new URLSearchParams();
+		if (isArchived) params.set("archived", "true");
+		if (before) params.set("before", before);
+		const query = params.toString();
+
+		return get<ConversationPageDTO>(`/conversations${query ? `?${query}` : ""}`);
+	},
+
+	/** One row, for a conversation that got activity before the sidebar paged to it. */
+	getConversation(conversationId: string): Promise<ConversationDTO> {
+		return get<ConversationDTO>(`/conversations/${conversationId}`);
 	},
 
 	setConversationArchived(conversationId: string, archived: boolean): Promise<ConversationSelfUpdatedEvent> {

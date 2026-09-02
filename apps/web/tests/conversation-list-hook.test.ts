@@ -8,7 +8,7 @@ import { makeConversation, makeMessage, makeParticipant } from "./factories";
 type SocketHandler = (payload: unknown) => void;
 const { socketHandlers } = vi.hoisted(() => ({ socketHandlers: new Map<string, SocketHandler>() }));
 
-vi.mock("@/api/client", () => ({ api: { listConversations: vi.fn() } }));
+vi.mock("@/api/client", () => ({ api: { listConversations: vi.fn(), getConversation: vi.fn() } }));
 vi.mock("@/features/chat/hooks/use-socket-event", () => ({
 	useSocketEvent: (eventName: string, handler: SocketHandler) => socketHandlers.set(eventName, handler),
 }));
@@ -38,7 +38,7 @@ function emit<EventName extends keyof ServerToClientEvents>(
 }
 
 async function renderConversationList(rows: ConversationDTO[] = [second, first]) {
-	vi.mocked(api.listConversations).mockResolvedValue(rows);
+	vi.mocked(api.listConversations).mockResolvedValue({ items: rows, hasMore: false });
 	const onLeft = vi.fn();
 	const view = renderHook(() => useConversationList("minh", onLeft));
 	await waitFor(() => expect(view.result.current.conversations).toHaveLength(rows.length));

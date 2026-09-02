@@ -41,7 +41,12 @@ export const listConversationsQuerySchema = z.object({
 		.enum(["true", "false"])
 		.optional()
 		.transform((value) => value === "true"),
+	limit: z.coerce.number().int().min(1).max(100).optional(),
+	// The id of the last *unpinned* row already held. Pinned rows are capped and
+	// always sent whole, so a cursor never points at one — see the service.
+	before: z.string().min(1).max(64).optional(),
 });
+export type ListConversationsQuery = z.infer<typeof listConversationsQuerySchema>;
 
 export const archiveConversationSchema = z.object({ archived: z.boolean() });
 export type ArchiveConversationInput = z.infer<typeof archiveConversationSchema>;

@@ -4,6 +4,7 @@ import {
 	addParticipantController,
 	archiveConversationController,
 	createConversationController,
+	getConversationController,
 	listConversationsController,
 	markReadController,
 	muteConversationController,
@@ -18,6 +19,9 @@ export const conversationsRouter = Router();
 conversationsRouter.use(requireAuth);
 conversationsRouter.get("/", listConversationsController);
 conversationsRouter.post("/", createConversationController);
+// One row, for the case pagination creates: a message arrives for a conversation
+// the client has not loaded, so there is nothing in the sidebar to patch.
+conversationsRouter.get("/:conversationId", getConversationController);
 // POST, not PUT: this advances a marker rather than replacing a resource, and
 // the server may keep the marker where it is when the client asks to move it
 // backwards — so the request is not idempotent in the way PUT promises.

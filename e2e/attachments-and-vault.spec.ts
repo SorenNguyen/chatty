@@ -69,15 +69,16 @@ test("files, voice, links, thumbnails and the conversation vault work across two
 	const voiceStatus = await senderPage.evaluate(
 		async ({ apiUrl, waveBase64 }) => {
 			const token = localStorage.getItem("chatty:token");
+			// A page, not an array, since conversation paging landed.
 			const conversations = (await (
 				await fetch(`${apiUrl}/conversations`, { headers: { Authorization: `Bearer ${token}` } })
-			).json()) as { id: string }[];
+			).json()) as { items: { id: string }[] };
 			const bytes = Uint8Array.from(atob(waveBase64), (character) => character.charCodeAt(0));
 			const body = new FormData();
 			body.append("voice", new Blob([bytes], { type: "audio/wav" }), "voice.wav");
 
 			return (
-				await fetch(`${apiUrl}/conversations/${conversations[0]!.id}/messages`, {
+				await fetch(`${apiUrl}/conversations/${conversations.items[0]!.id}/messages`, {
 					method: "POST",
 					headers: { Authorization: `Bearer ${token}` },
 					body,

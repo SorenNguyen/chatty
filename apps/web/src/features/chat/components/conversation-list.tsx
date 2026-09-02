@@ -5,6 +5,8 @@ import { MAX_UNREAD_BADGE_COUNT } from "../constants/conversation-list";
 import { EMPTY_CONVERSATION_TEXT } from "../constants/message";
 import { formatConversationTime, getConversationPreview, getConversationTitle } from "../utils";
 import { ConversationAvatar } from "./conversation-avatar";
+import { useInfiniteScroll } from "../hooks/use-infinite-scroll";
+import type { ConversationPaging } from "../types/conversation-paging";
 import { ConversationActions } from "./conversation-actions";
 
 interface ConversationListProps {
@@ -14,6 +16,7 @@ interface ConversationListProps {
 	onlineUserIds: Set<string>;
 	onSelect: (conversationId: string) => void;
 	typingByConversation: Record<string, string[]>;
+	paging: ConversationPaging;
 }
 
 export function ConversationList({
@@ -23,7 +26,10 @@ export function ConversationList({
 	onlineUserIds,
 	onSelect,
 	typingByConversation,
+	paging,
 }: ConversationListProps) {
+	const loadMoreRef = useInfiniteScroll<HTMLLIElement>(paging.hasMore, paging.isLoadingMore, paging.loadMore);
+
 	if (conversations.length === 0) {
 		return (
 			<p className="px-5 py-6 text-[13px] text-ink-faint">
@@ -137,6 +143,14 @@ export function ConversationList({
 					</li>
 				);
 			})}
+
+			{/* The sentinel sits inside the list rather than after it, so the
+			    sidebar's own scroll container is what it is measured against. */}
+			{paging.hasMore && (
+				<li ref={loadMoreRef} aria-hidden="true" className="py-3 text-center">
+					<span className="meta text-ink-faint">{paging.isLoadingMore ? "Loading…" : ""}</span>
+				</li>
+			)}
 		</ul>
 	);
 }

@@ -22,8 +22,17 @@ export async function createConversationController(req: Request, res: Response):
 
 export async function listConversationsController(req: Request, res: Response): Promise<void> {
 	const query = listConversationsQuerySchema.parse(req.query);
-	const conversations = await conversationsService.listConversationsForUser(req.userId!, query.archived);
-	res.status(200).json(conversations);
+	const page = await conversationsService.listConversationsForUser(req.userId!, {
+		isArchived: query.archived,
+		...(query.limit === undefined ? {} : { limit: query.limit }),
+		...(query.before === undefined ? {} : { before: query.before }),
+	});
+	res.status(200).json(page);
+}
+
+export async function getConversationController(req: Request, res: Response): Promise<void> {
+	const conversationId = req.params.conversationId as string;
+	res.status(200).json(await conversationsService.getConversationForUser(req.userId!, conversationId));
 }
 
 export async function archiveConversationController(req: Request, res: Response): Promise<void> {

@@ -51,7 +51,7 @@ async function createUser(name: string): Promise<string> {
 
 /** Finds one conversation in a user's list, so assertions can read its per-viewer fields. */
 async function conversationAsSeenBy(userId: string, conversationId: string) {
-	const conversations = await listConversationsForUser(userId);
+	const conversations = (await listConversationsForUser(userId)).items;
 	const conversation = conversations.find((candidate) => candidate.id === conversationId);
 	if (!conversation) throw new Error("conversation not in the user's list");
 

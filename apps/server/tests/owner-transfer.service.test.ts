@@ -65,7 +65,7 @@ describe("transferGroupOwnership", () => {
 		await transferGroupOwnership(minhId, group.id, { userId: anId });
 
 		expect(await ownerIdsOf(group.id)).toEqual([anId]);
-		const seenByMinh = await listConversationsForUser(minhId);
+		const seenByMinh = (await listConversationsForUser(minhId)).items;
 		const roles = seenByMinh[0]!.participants.map((participant) => [participant.id, participant.role]);
 		expect(roles).toEqual(expect.arrayContaining([[minhId, "member"] as const, [anId, "owner"] as const]));
 	});

@@ -67,10 +67,10 @@ describe("message lifecycle", () => {
 		expect((await listMessages(authorId, conversationId, { limit: 50 })).map((message) => message.id)).toContain(
 			sent.id,
 		);
-		const [peerConversation] = await listConversationsForUser(peerId);
+		const [peerConversation] = (await listConversationsForUser(peerId)).items;
 		expect(peerConversation!.lastMessage).toBeNull();
 		expect(peerConversation!.unreadCount).toBe(0);
-		const [authorConversation] = await listConversationsForUser(authorId);
+		const [authorConversation] = (await listConversationsForUser(authorId)).items;
 		expect(authorConversation!.lastMessage?.id).toBe(sent.id);
 	});
 
@@ -81,7 +81,7 @@ describe("message lifecycle", () => {
 
 		await hideMessageForUser(peerId, conversationId, newest.id);
 
-		const [conversation] = await listConversationsForUser(peerId);
+		const [conversation] = (await listConversationsForUser(peerId)).items;
 		expect(conversation!.lastMessage?.id).toBe(first.id);
 		expect(conversation!.unreadCount).toBe(1);
 	});
@@ -108,7 +108,7 @@ describe("message lifecycle", () => {
 		const [earlierId] = sent.map((message) => message.id).sort();
 		await markConversationRead(peerId, conversationId, { messageId: earlierId! });
 
-		const [conversation] = await listConversationsForUser(peerId);
+		const [conversation] = (await listConversationsForUser(peerId)).items;
 		expect(conversation!.unreadCount).toBe(1);
 	});
 
@@ -369,7 +369,7 @@ describe("deleteMessage", () => {
 
 		await deleteMessage(authorId, conversationId, newest.id);
 
-		const [conversation] = await listConversationsForUser(peerId);
+		const [conversation] = (await listConversationsForUser(peerId)).items;
 		expect(conversation!.unreadCount).toBe(0);
 	});
 
@@ -377,12 +377,12 @@ describe("deleteMessage", () => {
 		const { conversationId, authorId, peerId } = await makeConversation();
 		const sent = await sendMessage(authorId, conversationId, { content: "never mind" });
 
-		const [before] = await listConversationsForUser(peerId);
+		const [before] = (await listConversationsForUser(peerId)).items;
 		expect(before!.unreadCount).toBe(1);
 
 		await deleteMessage(authorId, conversationId, sent.id);
 
-		const [after] = await listConversationsForUser(peerId);
+		const [after] = (await listConversationsForUser(peerId)).items;
 		expect(after!.unreadCount).toBe(0);
 	});
 

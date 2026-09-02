@@ -1593,7 +1593,7 @@ pins it so it is a decision rather than a surprise.
 | # | Item | Status |
 | --- | --- | --- |
 | 79 | Refresh tokens: short-lived access, revocable sessions, a logout that means it | Done |
-| 80 | Conversation list pagination | `planned` — see below; the redesign it was blocked on landed in phase 27, so what remains is the cursor |
+| 80 | Conversation list pagination | **Done in phase 33** — see below for why it stayed open for twelve phases |
 | 81 | Object storage for uploads | `blocked` — needs the host chosen; ADRs 0004/0007 already isolate the swap to two modules |
 | 82 | Mail provider, verified domain, SPF/DKIM/DMARC | `blocked` — paperwork, not code |
 | 83 | Error tracking / observability provider | `blocked` — needs an account and a DSN, same class as item 82 |
@@ -1644,7 +1644,7 @@ cascades.
   after the first renewal. It also asks for a renewal itself on `connect_error`: a tab left open
   overnight has no HTTP request for the refresh to piggyback on.
 
-### Item 80, and why it is `planned` rather than done
+### Item 80, and why it stayed open
 
 The server's conversation list is unbounded, which is a real thing to fix. Pagination alone did not
 fix it, because of how the client used it: `ChatPage` re-listed the whole sidebar on **every incoming
@@ -1656,9 +1656,7 @@ patching: `useConversationList` now owns eight socket handlers that each patch t
 and `refresh()` is called on mount, on the archived toggle, and in one fallback branch — not on every
 message. The redesign this item was waiting for has happened.
 
-What is left is the query itself: `listConversationsForUser` still reads every membership row with no
-`take` and no cursor. That is now the ordinary piece of work it originally looked like, and the
-reason the item is still open rather than the reason it was hard.
+What was left was the query itself, and phase 33 closed it.
 
 ## Phase 22 — a message can carry a gallery, and emoji are first-class — `done`
 
@@ -2230,6 +2228,58 @@ next migration touching this schema, written one phase earlier. The guard caught
 own false positive: the first version of the check read the migration's *prose* explaining why the
 line had been removed. It strips SQL comments now, and is tested both ways — a comment mentioning the
 line passes, real SQL fails.
+
+## Phase 33 — the last unbounded query — `done`
+
+Item 80 was opened in phase 21 and stayed open through twelve phases. It is the last thing on this
+file that was `planned` rather than `blocked`, and closing it means the app no longer asks the
+database for an unbounded set anywhere.
+
+| # | Item | Status |
+| --- | --- | --- |
+| 80 | Conversation list pagination | Done |
+
+### The cap was the design
+
+The hard part was never the query. It was that the sidebar sorts `pinnedAt DESC NULLS LAST, then
+updatedAt DESC`, and a keyset cursor over that tuple cannot be written in Prisma — a row-value
+comparison cannot express NULLS LAST, so it means raw SQL for the one query in the app that everybody
+reads on every reconnect.
+
+**`MAX_PINNED_CONVERSATIONS` is five**, which makes the whole problem go away: the pinned set is
+bounded by construction, so the first page carries all of it and every later page is walking the
+ordinary tail in one order. That is a plain two-column keyset — `updatedAt` with `id` breaking ties —
+and it fits in the query builder. An invariant that already existed for a product reason turned out
+to be the thing that made the engineering simple.
+
+`id` is the tiebreaker rather than nothing, and that is not defensive: conversations created inside
+one request share a millisecond, and a cursor over a non-unique column silently repeats or skips rows
+at the page boundary. There is a test that writes four conversations to the same instant and walks
+them.
+
+### The case paging created
+
+Phase 27's incremental patching was the prerequisite, and it is also what made the remaining bug
+possible. Every socket handler patches *a row it already holds* — and once the list is a page,
+a message can arrive for a conversation that is not in it. Patching finds nothing and the row never
+moves; re-listing would fix it and throw away the reader's scroll position, which is the objection
+that kept this item shut in the first place.
+
+So `GET /conversations/:id` returns one row, and the handler fetches just that conversation and lifts
+it. Two Playwright specs cover the halves that no service test can reach: that scrolling actually
+fetches the next page, and that a message lifts a conversation from below the loaded window.
+Removing the fetch-one branch turns the second red.
+
+### What it cost elsewhere
+
+The response shape changed from `ConversationDTO[]` to `{ items, hasMore }`, which the type checker
+found every consumer of — including one Playwright spec calling the endpoint directly through
+`fetch`. Threading `hasMore`/`isLoadingMore`/`loadMore` through page → sidebar → list pushed
+`chat-page.tsx` over the 300-line audit line, so the three became one `ConversationPaging` object and
+the composer's reply target moved into `useReplyTarget` — two pieces of state that only make sense
+together, plus the effect resolving one into the other, which was never really the page's business.
+The sidebar is the second pager in this feature, so the vault's IntersectionObserver effect became
+`useInfiniteScroll` and both now read it.
 
 ## Verification bar
 

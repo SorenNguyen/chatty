@@ -645,6 +645,18 @@ export interface SendMessageRequest {
 	clientId?: string | undefined;
 }
 
+/**
+ * A page of the sidebar.
+ *
+ * Pinned conversations are not paged: they are capped per person, so the first
+ * page carries all of them and every later page is walking the ordinary tail.
+ * A caller therefore pages by the id of the last **unpinned** row it holds.
+ */
+export interface ConversationPageDTO {
+	items: ConversationDTO[];
+	hasMore: boolean;
+}
+
 export interface ConversationArchiveRequest {
 	archived: boolean;
 }

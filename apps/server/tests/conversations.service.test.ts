@@ -27,9 +27,9 @@ describe("per-participant conversation organisation", () => {
 
 		await setConversationArchived(minhId, conversation.id, { archived: true });
 
-		await expect(listConversationsForUser(minhId)).resolves.toEqual([]);
-		expect((await listConversationsForUser(minhId, true))[0]?.id).toBe(conversation.id);
-		expect((await listConversationsForUser(anId))[0]?.isArchived).toBe(false);
+		await expect(listConversationsForUser(minhId)).resolves.toEqual({ items: [], hasMore: false });
+		expect((await listConversationsForUser(minhId, { isArchived: true })).items[0]?.id).toBe(conversation.id);
+		expect((await listConversationsForUser(anId)).items[0]?.isArchived).toBe(false);
 		expect(fakeIO.emits).toContainEqual({
 			room: userRoom(minhId),
 			event: "conversation:self-updated",
@@ -47,7 +47,7 @@ describe("per-participant conversation organisation", () => {
 		const event = await setConversationPinned(minhId, conversation.id, { pinned: true });
 
 		expect(event).toMatchObject({ isPinned: true, isArchived: false });
-		expect((await listConversationsForUser(minhId))[0]?.id).toBe(conversation.id);
+		expect((await listConversationsForUser(minhId)).items[0]?.id).toBe(conversation.id);
 	});
 
 	it("refuses a sixth pinned conversation", async () => {
@@ -73,8 +73,8 @@ describe("per-participant conversation organisation", () => {
 
 		await setConversationMuted(minhId, conversation.id, { until });
 
-		expect((await listConversationsForUser(minhId))[0]?.mutedUntil).toBe(until);
-		expect((await listConversationsForUser(anId))[0]?.mutedUntil).toBeNull();
+		expect((await listConversationsForUser(minhId)).items[0]?.mutedUntil).toBe(until);
+		expect((await listConversationsForUser(anId)).items[0]?.mutedUntil).toBeNull();
 	});
 
 	it("orders pinned rows first, then leaves ordinary rows in activity order", async () => {
@@ -92,13 +92,13 @@ describe("per-participant conversation organisation", () => {
 			data: { updatedAt: new Date("2026-02-01T00:00:00.000Z") },
 		});
 
-		expect((await listConversationsForUser(minhId)).map((item) => item.id)).toEqual([
+		expect((await listConversationsForUser(minhId)).items.map((item) => item.id)).toEqual([
 			activeConversation.id,
 			oldConversation.id,
 		]);
 
 		await setConversationPinned(minhId, oldConversation.id, { pinned: true });
-		expect((await listConversationsForUser(minhId)).map((item) => item.id)).toEqual([
+		expect((await listConversationsForUser(minhId)).items.map((item) => item.id)).toEqual([
 			oldConversation.id,
 			activeConversation.id,
 		]);
@@ -256,7 +256,7 @@ describe("listConversationsForUser", () => {
 		const mine = await createConversation(minhId, { participantIds: [anId] });
 		await createConversation(anId, { participantIds: [binhId] });
 
-		const conversations = await listConversationsForUser(minhId);
+		const conversations = (await listConversationsForUser(minhId)).items;
 
 		expect(conversations.map((conversation) => conversation.id)).toEqual([mine.id]);
 	});
@@ -264,7 +264,7 @@ describe("listConversationsForUser", () => {
 	it("returns an empty list for a user with no conversations", async () => {
 		const minhId = await createUser("minh");
 
-		await expect(listConversationsForUser(minhId)).resolves.toEqual([]);
+		await expect(listConversationsForUser(minhId)).resolves.toEqual({ items: [], hasMore: false });
 	});
 
 	it("shows a contact's last seen when their privacy allows contacts", async () => {
@@ -274,7 +274,7 @@ describe("listConversationsForUser", () => {
 		await prisma.user.update({ where: { id: anId }, data: { lastSeenAt, presenceVisibility: "CONTACTS" } });
 		await createConversation(minhId, { participantIds: [anId] });
 
-		const [conversation] = await listConversationsForUser(minhId);
+		const [conversation] = (await listConversationsForUser(minhId)).items;
 		const an = conversation!.participants.find((participant) => participant.id === anId);
 		expect(an!.lastSeenAt).toBe(lastSeenAt.toISOString());
 	});
@@ -288,7 +288,7 @@ describe("listConversationsForUser", () => {
 		});
 		await createConversation(minhId, { participantIds: [anId] });
 
-		const [conversation] = await listConversationsForUser(minhId);
+		const [conversation] = (await listConversationsForUser(minhId)).items;
 		const an = conversation!.participants.find((participant) => participant.id === anId);
 		expect(an!.lastSeenAt).toBeNull();
 	});

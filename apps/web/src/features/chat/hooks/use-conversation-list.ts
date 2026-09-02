@@ -9,13 +9,16 @@ import type {
 } from "@chatty/shared-types";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/api/client";
+import type { ConversationPaging } from "../types/conversation-paging";
 import { usePresenceLastSeenSync } from "./use-presence-last-seen-sync";
 import { useSocketEvent } from "./use-socket-event";
 
 interface ConversationList {
 	conversations: ConversationDTO[];
-	/** Re-fetches the whole list. The sidebar's ordering and previews come from it. */
+	/** Re-fetches the first page. The sidebar's ordering and previews come from it. */
 	refresh: () => void;
+	/** Everything the sidebar needs to page, in one object so it travels as one prop. */
+	paging: ConversationPaging;
 	isShowingArchived: boolean;
 	setIsShowingArchived: (isShowing: boolean) => void;
 }
@@ -51,20 +54,69 @@ export function useConversationList(
 ) {
 	const [conversations, setConversations] = useState<ConversationDTO[]>([]);
 	const [isShowingArchived, setIsShowingArchived] = useState(false);
+	const [hasMore, setHasMore] = useState(false);
+	const [isLoadingMore, setIsLoadingMore] = useState(false);
 
 	usePresenceLastSeenSync(setConversations);
 
 	const refresh = useCallback(() => {
-		void api.listConversations(isShowingArchived).then(setConversations);
+		void api.listConversations(isShowingArchived).then((page) => {
+			setConversations(page.items);
+			setHasMore(page.hasMore);
+		});
 	}, [isShowingArchived]);
 
 	useEffect(refresh, [refresh]);
+
+	/**
+	 * The cursor is the last **unpinned** row, because pinned rows are not paged —
+	 * they are capped server-side and arrive whole on the first page. Sending a
+	 * pinned id would ask the server to continue from a row that is not in the
+	 * sequence being walked.
+	 */
+	const loadMore = useCallback(() => {
+		const cursor = [...conversations].reverse().find((conversation) => !conversation.isPinned);
+		if (!cursor || isLoadingMore) return;
+
+		setIsLoadingMore(true);
+		void api
+			.listConversations(isShowingArchived, cursor.id)
+			.then((page) => {
+				setConversations((current) => {
+					// De-duplicated by id rather than trusted: while this request was in
+					// flight a message could have moved one of these rows to the top,
+					// and appending it again would show it twice.
+					const held = new Set(current.map((conversation) => conversation.id));
+
+					return [...current, ...page.items.filter((conversation) => !held.has(conversation.id))];
+				});
+				setHasMore(page.hasMore);
+			})
+			.finally(() => setIsLoadingMore(false));
+	}, [conversations, isLoadingMore, isShowingArchived]);
 
 	useSocketEvent(
 		"message:new",
 		useCallback(
 			(message: MessageDTO) => {
 				setConversations((current) => {
+					// A conversation the sidebar has not paged to yet. Before paging this
+					// could not happen — the list held everything — and re-listing to
+					// find it would throw away the reader's scroll position, which is the
+					// objection that kept item 80 shut. Fetch the one row instead and put
+					// it where the activity says it belongs.
+					if (!current.some((conversation) => conversation.id === message.conversationId)) {
+						void api.getConversation(message.conversationId).then((row) => {
+							setConversations((latest) =>
+								latest.some((conversation) => conversation.id === row.id)
+									? latest
+									: orderConversationRows([row, ...latest]),
+							);
+						});
+
+						return current;
+					}
+
 					const next = current.map((conversation) => {
 						if (conversation.id !== message.conversationId) return conversation;
 						const shouldRaiseUnread = message.kind === "user" && message.author?.id !== currentUserId;
@@ -223,5 +275,11 @@ export function useConversationList(
 		),
 	);
 
-	return { conversations, refresh, isShowingArchived, setIsShowingArchived } satisfies ConversationList;
+	return {
+		conversations,
+		refresh,
+		paging: { hasMore, isLoadingMore, loadMore },
+		isShowingArchived,
+		setIsShowingArchived,
+	} satisfies ConversationList;
 }

@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/api/client";
 import { Button } from "@/components/button";
 import { VAULT_TABS, type VaultTab } from "../constants/vault";
+import { useInfiniteScroll } from "../hooks/use-infinite-scroll";
 import { getDirectPeer } from "../utils";
 import { ConversationBlockControl } from "./conversation-block-control";
 import { ConversationDetailsIdentity } from "./conversation-details-identity";
@@ -40,7 +41,9 @@ export function ConversationVaultPanel({
 	const [hasMore, setHasMore] = useState(false);
 	const [nextCursor, setNextCursor] = useState<string | undefined>();
 	const requestSequence = useRef(0);
-	const loadMoreRef = useRef<HTMLDivElement>(null);
+	const loadMoreRef = useInfiniteScroll<HTMLDivElement>(hasMore && Boolean(nextCursor), isLoading, () => {
+		if (nextCursor) void loadPage(nextCursor);
+	});
 	const blockablePeer = conversation.isGroup ? null : getDirectPeer(conversation, currentUserId);
 
 	const loadPage = useCallback(
@@ -90,20 +93,6 @@ export function ConversationVaultPanel({
 		setHasMore(false);
 		void loadPage(undefined, true);
 	}, [loadPage]);
-
-	useEffect(() => {
-		const target = loadMoreRef.current;
-		if (!target || !hasMore || isLoading || !nextCursor || typeof IntersectionObserver === "undefined") return;
-		const observer = new IntersectionObserver(
-			(entries) => {
-				if (entries.some((entry) => entry.isIntersecting)) void loadPage(nextCursor);
-			},
-			{ rootMargin: "240px" },
-		);
-		observer.observe(target);
-
-		return () => observer.disconnect();
-	}, [hasMore, isLoading, loadPage, nextCursor]);
 
 	return (
 		<>

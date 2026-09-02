@@ -17,6 +17,7 @@ function renderList(overrides: Partial<React.ComponentProps<typeof ConversationL
 			onlineUserIds={new Set()}
 			onSelect={() => undefined}
 			typingByConversation={{}}
+			paging={{ hasMore: false, isLoadingMore: false, loadMore: () => undefined }}
 			{...overrides}
 		/>,
 	);

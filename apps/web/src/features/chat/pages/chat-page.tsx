@@ -6,6 +6,7 @@ import { cn } from "@/utils/cn";
 import { ConnectionBanner, ChatConversationPane, ConversationSidebar, KeyboardShortcutsPanel } from "../components";
 import {
 	useConversationList,
+	useReplyTarget,
 	useConversationMessages,
 	useDocumentTitle,
 	useMarkRead,
@@ -27,8 +28,6 @@ export function ChatPage() {
 	// The reply target lives here rather than in the composer, because the message
 	// is picked in the list and answered in the composer — two siblings, so the
 	// state belongs to the parent that owns both.
-	const [replyTo, setReplyTo] = useState<MessageDTO | null>(null);
-	const [pendingDraftReplyId, setPendingDraftReplyId] = useState<string | null>(null);
 	const [requestedMessageId, setRequestedMessageId] = useState<string | null>(null);
 	const [isConversationSearchOpen, setIsConversationSearchOpen] = useState(false);
 	const [forwardingMessage, setForwardingMessage] = useState<MessageDTO | null>(null);
@@ -41,28 +40,11 @@ export function ChatPage() {
 	const { activeUserIds: typingUserIds, typingByConversation } = useTypingParticipants(selectedConversationId);
 	const hasOpenPanel =
 		isShortcutHelpOpen || Boolean(forwardingMessage) || isManagingGroup || isConversationSearchOpen;
-	useKeyboardShortcuts({
-		hasOpenPanel,
-		onClosePanel: () => {
-			if (isShortcutHelpOpen) setIsShortcutHelpOpen(false);
-			else if (forwardingMessage) setForwardingMessage(null);
-			else if (isManagingGroup) setIsManagingGroup(false);
-			else closeMessageSearch();
-		},
-		hasReply: Boolean(replyTo),
-		onCancelReply: () => setReplyTo(null),
-		isEditing: isEditingMessage,
-		onCancelEdit: () => setCancelEditRequest((current) => current + 1),
-		onEditLast: () => setEditLastRequest((current) => current + 1),
-		onOpenConversationSearch: () => {
-			if (selectedConversationId) setIsConversationSearchOpen(true);
-		},
-		onShowHelp: () => setIsShortcutHelpOpen(true),
-	});
 
 	const {
 		conversations,
 		refresh: refreshConversations,
+		paging: conversationPaging,
 		isShowingArchived,
 		setIsShowingArchived,
 	} = useConversationList(
@@ -102,6 +84,26 @@ export function ChatPage() {
 		hideMessage,
 		targetMessageId,
 	} = useConversationMessages(selectedConversationId, refreshConversations, requestedMessageId);
+	const { replyTo, setReplyTo, requestReplyTo, clearReply } = useReplyTarget(messages);
+
+	useKeyboardShortcuts({
+		hasOpenPanel,
+		onClosePanel: () => {
+			if (isShortcutHelpOpen) setIsShortcutHelpOpen(false);
+			else if (forwardingMessage) setForwardingMessage(null);
+			else if (isManagingGroup) setIsManagingGroup(false);
+			else closeMessageSearch();
+		},
+		hasReply: Boolean(replyTo),
+		onCancelReply: () => setReplyTo(null),
+		isEditing: isEditingMessage,
+		onCancelEdit: () => setCancelEditRequest((current) => current + 1),
+		onEditLast: () => setEditLastRequest((current) => current + 1),
+		onOpenConversationSearch: () => {
+			if (selectedConversationId) setIsConversationSearchOpen(true);
+		},
+		onShowHelp: () => setIsShortcutHelpOpen(true),
+	});
 
 	const isConnectionLost = useSocketConnection(
 		useCallback(() => {
@@ -114,18 +116,8 @@ export function ChatPage() {
 		setIsManagingGroup(false);
 		setIsConversationSearchOpen(false);
 		setForwardingMessage(null);
-		setReplyTo(null);
-		setPendingDraftReplyId(null);
-	}, [selectedConversationId]);
-
-	useEffect(() => {
-		if (!pendingDraftReplyId) return;
-		const target = messages.find((message) => message.id === pendingDraftReplyId);
-		if (target) {
-			setReplyTo(target);
-			setPendingDraftReplyId(null);
-		}
-	}, [messages, pendingDraftReplyId]);
+		clearReply();
+	}, [clearReply, selectedConversationId]);
 
 	// Reading is defined by what is on screen, so the marker follows the newest
 	// loaded message rather than the newest that exists. Loading older pages
@@ -188,6 +180,7 @@ export function ChatPage() {
 				<ConversationSidebar
 					currentUser={currentUser}
 					conversations={conversations}
+					paging={conversationPaging}
 					selectedConversationId={selectedConversationId}
 					onlineUserIds={onlineUserIds}
 					onSelect={handleConversationSelected}
@@ -282,7 +275,7 @@ export function ChatPage() {
 								onSendSticker: sendSticker,
 								onSendFile: sendFile,
 								onSendVoice: sendVoice,
-								onRestoreReply: setPendingDraftReplyId,
+								onRestoreReply: requestReplyTo,
 							}}
 						/>
 					) : (
