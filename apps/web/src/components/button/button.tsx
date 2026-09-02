@@ -34,6 +34,13 @@ export function Button({ variant = "primary", type = "button", className, childr
 			className={cn(
 				"inline-flex items-center justify-center gap-2 rounded-control px-4 py-2 text-[13px] transition",
 				"outline-none focus-visible:ring-3 focus-visible:ring-ink/15",
+				// Tailwind v3's Preflight set `cursor: pointer` on every button; v4's
+				// does not, so the upgrade silently gave the whole app an arrow
+				// cursor on everything clickable. Stated here rather than in a base
+				// layer because this component is the app's only <button>, and a
+				// caller that wants a different affordance — the gallery's
+				// `cursor-zoom-in` — still overrides it through cn().
+				"cursor-pointer",
 				"disabled:cursor-not-allowed disabled:opacity-[0.32]",
 				variant === "primary" && "bg-ink font-semibold text-paper hover:bg-ink/90",
 				variant === "outline" && "border border-ink font-semibold text-ink hover:bg-ink/5",

@@ -2135,6 +2135,49 @@ line, caught before it is ever applied). Proving it works meant writing a migrat
 index and watching both go red — which also dropped the index from the test database for real, and is
 its own small argument for the guard existing.
 
+## Phase 31 — the affordances the upgrade took away — `done`
+
+Reported by someone using the app: the buttons do not show a hand cursor. They had not for some time,
+and nothing in the repository could have said so.
+
+| # | Item | Status |
+| --- | --- | --- |
+| 99 | `cursor: pointer` on every button, and the guard that keeps it | Done |
+| 100 | Focus that is visible where an outline was styled away | Done |
+
+### Item 99: Preflight changed underneath the app
+
+Tailwind v3's Preflight set `cursor: pointer` on `button`. **v4's does not** — the reset now follows
+the browser default, which is an arrow. Upgrading therefore changed the feel of every clickable
+surface in the app without touching a line of markup, and `cursor-pointer` appears nowhere in this
+codebase because under v3 it never had to.
+
+The fix is one line in `components/button/button.tsx`, and that it is one line is the point: the
+discipline of "no raw `<button>`" — which had looked like bookkeeping — meant the app had exactly one
+`<button>` element to correct. A checkbox `<label>` and the one `<select>` in the app are the only
+controls outside it, and they were corrected too.
+
+The test is in a browser and asserts `getComputedStyle`, because nothing else can see this. jsdom
+applies no stylesheet, so the same assertion there would pass with the class missing, the CSS
+unbuilt, or Tailwind uninstalled. It also checks **every** visible enabled button rather than a named
+few: the regression was global, so the guarantee should be. Removing the fix turns it red with
+`"cursor": "default"` on four buttons at once, which is how it was verified.
+
+`disabled:cursor-not-allowed` had to keep winning, so that is asserted separately — twMerge keeps
+both because they are different variants, and a caller's own `cursor-zoom-in` (the gallery) still
+overrides the base, which is what `cn()` is for.
+
+### Item 100: an outline styled away and never given back
+
+Looking for more of the same class turned up two fields that removed their outline and had nothing in
+its place. The conversation search was the real one: tabbing into it moved focus somewhere with **no
+visible indicator at all** (WCAG 2.4.7). The emoji picker's field is focused on open, so it only
+mattered on the way back from the grid, but it is the same omission and got the same treatment — the
+`focus-within:border-ink` the group-members search bar was already using.
+
+Every other `outline-none` in the app was checked and is correct: they are dialog containers taking
+programmatic focus, or fields whose wrapper already carries `focus-within`.
+
 ## Verification bar
 
 Nothing is "done" here until this passes, **and** an end-to-end run against the real API exercises the

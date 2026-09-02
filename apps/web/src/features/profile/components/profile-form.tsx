@@ -113,7 +113,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
 			{/* A raw checkbox: the app declares a Button and a TextField and nothing
 			    else, and inventing a toggle primitive for its only use would be a
 			    component to maintain rather than a decision made. */}
-			<label className="flex items-start gap-3 text-sm text-ink">
+			<label className="flex cursor-pointer items-start gap-3 text-sm text-ink">
 				<input
 					type="checkbox"
 					checked={fields.readReceiptsEnabled}
@@ -149,7 +149,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
 							presenceVisibility: event.target.value as CurrentUserDTO["presenceVisibility"],
 						}));
 					}}
-					className="rounded-control border border-rule bg-paper-raised px-3 py-2.5 text-sm text-ink outline-none transition focus:border-ink focus:ring-3 focus:ring-ink/[0.07]"
+					className="cursor-pointer rounded-control border border-rule bg-paper-raised px-3 py-2.5 text-sm text-ink outline-none transition focus:border-ink focus:ring-3 focus:ring-ink/[0.07]"
 				>
 					<option value="everyone">Everyone</option>
 					<option value="contacts">People you chat with</option>

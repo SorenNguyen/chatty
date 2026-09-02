@@ -89,7 +89,10 @@ export function EmojiPicker({ onPick, onClose, anchor }: EmojiPickerProps) {
 				anchor,
 			)}
 		>
-			<div className="flex items-center gap-2.5 border-b border-rule-soft px-3.5 py-2.5">
+			{/* Focused on open, so this matters on the way *back* — after the arrow
+			    keys have moved into the grid, the field is otherwise the one place
+			    focus can return to without showing it. */}
+			<div className="flex items-center gap-2.5 border-b border-rule-soft px-3.5 py-2.5 transition-colors focus-within:border-ink">
 				<Search aria-hidden="true" className="size-[15px] shrink-0 text-ink-faint" />
 				<input
 					autoFocus

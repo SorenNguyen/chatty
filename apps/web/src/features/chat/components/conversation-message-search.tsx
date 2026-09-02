@@ -45,8 +45,12 @@ export function ConversationMessageSearch({
 		onSelectResult({ query: query.trim(), results, activeIndex: index });
 	}
 
+	// `focus-within` on the bar, because the field inside drops its own outline
+	// and carries no ring — without it, tabbing into the search lands on
+	// something with no visible focus at all. Same treatment the group-members
+	// search bar already gives its own bottom border.
 	return (
-		<div className="flex min-h-12 shrink-0 items-center gap-2 border-b border-rule bg-paper-raised px-7">
+		<div className="flex min-h-12 shrink-0 items-center gap-2 border-b border-rule bg-paper-raised px-7 transition-colors focus-within:border-ink">
 			<Search className="size-4 shrink-0 text-ink-faint" />
 			<input
 				ref={inputRef}
