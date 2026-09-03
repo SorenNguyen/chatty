@@ -9,9 +9,9 @@ import type { ListBlockedUsersQuery } from "./blocks.schema.js";
 
 type BlockReader = Pick<Prisma.TransactionClient, "userBlock">;
 
-type AdvisoryLockClient = Pick<Prisma.TransactionClient, "$queryRaw">;
+type AdvisoryLockClient = Pick<Prisma.TransactionClient, "$executeRaw">;
 
-type DirectConversationPolicyReader = Pick<Prisma.TransactionClient, "$queryRaw" | "conversation" | "userBlock">;
+type DirectConversationPolicyReader = Pick<Prisma.TransactionClient, "$executeRaw" | "conversation" | "userBlock">;
 
 /**
  * Serializes changes and direct writes for one pair of people across processes.
@@ -28,7 +28,13 @@ export async function lockDirectContactPair(
 	secondUserId: string,
 ): Promise<void> {
 	const pairKey = [firstUserId, secondUserId].sort().join(":");
-	await database.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${pairKey}, 0))`;
+	// `$executeRaw`, not `$queryRaw`, and this is not a style choice:
+	// `pg_advisory_xact_lock` returns `void`, and Prisma's row deserializer has no
+	// mapping for a void column — every call through `$queryRaw` failed with
+	// "Failed to deserialize column of type 'void'", which took every direct send
+	// and every direct conversation creation down with it. Nothing that mocks the
+	// database can see that; only a real Postgres can.
+	await database.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${pairKey}, 0))`;
 }
 
 /**

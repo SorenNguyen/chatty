@@ -678,7 +678,7 @@ export async function markConversationRead(
 	conversationId: string,
 	input: MarkReadInput,
 ): Promise<ConversationReadEvent> {
-	const { areReceiptsShared, event } = await prisma.$transaction(async (transaction) => {
+	const { areReceiptsShared, didMove, event } = await prisma.$transaction(async (transaction) => {
 		await assertParticipant(currentUserId, conversationId, transaction);
 		// A block still lets someone clear their *own* unread badge. What it may
 		// not do is advance a shared marker that becomes visible if contact is
@@ -714,6 +714,11 @@ export async function markConversationRead(
 			if (currentMarker && currentMarker.createdAt >= message.createdAt) {
 				return {
 					areReceiptsShared,
+					// Nothing was written, so nothing is announced. Scrolling up marks
+					// every older message the viewport passes, and an event apiece would
+					// have every client in the room patching state and re-rendering for a
+					// marker that did not move.
+					didMove: false,
 					event: { conversationId, userId: currentUserId, lastReadMessageId: participant.lastReadMessageId },
 				};
 			}
@@ -733,9 +738,12 @@ export async function markConversationRead(
 
 		return {
 			areReceiptsShared,
+			didMove: true,
 			event: { conversationId, userId: currentUserId, lastReadMessageId: message.id },
 		};
 	});
+
+	if (!didMove) return event;
 
 	if (areReceiptsShared) {
 		// To the room, so the author sees "Seen" appear without polling. The reader's
