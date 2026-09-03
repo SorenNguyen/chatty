@@ -140,12 +140,12 @@ the paging cursor still point at those rows. Read receipts can be turned off, an
 symmetric — hide yours and you stop seeing everyone else's, with nothing revealed retroactively when
 you turn them back on. See [docs/ROADMAP.md](docs/ROADMAP.md) phase 13.
 
-Verified by 431 server tests (against a real Postgres), 272 web tests, and 37 Playwright specs
+Verified by 434 server tests (against a real Postgres), 275 web tests, and 37 Playwright specs
 driving a real browser against a real server — plus typecheck, lint, the conventions audit, and a
 production image build. CI runs all of it except the browser suite on every push.
 
 **[docs/ROADMAP.md](docs/ROADMAP.md) is the current source of truth for what is done and what is
-next.** Phases 1 to 34 are complete. Phase 7 makes group and password-reset transitions safe under
+next.** Phases 1 to 36 are complete. Phase 7 makes group and password-reset transitions safe under
 concurrent requests: one conversation lock orders membership-sensitive writes, PostgreSQL enforces
 the owner/message invariants, and fault-injection tests prove partial writes do not escape. Phase 8
 adds editing and deleting your own messages, on the same lock, with the deletion kept as a tombstone
@@ -199,7 +199,8 @@ tray never blanks a picture out of somebody else's chat.
 
 Phases 24–28 complete the everyday messaging surface: arbitrary files are served as safe downloads,
 voice is normalized to AAC/MP4 with a shared waveform, and each conversation has a paged vault for
-media, files, voice, links and saved messages. Archive, pin and mute are per participant and sync only
+media, files, voice, links and saved messages — opened as a list of categories with their counts,
+each drilling into one list at a time under sticky month headings (phase 35). Archive, pin and mute are per participant and sync only
 to that person's devices; the sidebar patches socket events in place. Drafts survive navigation on
 the local device, and the thread adds unread navigation, drag/paste, links, forwarding, mentions,
 message pins, reply jumps, keyboard shortcuts, sidebar typing and group seen-by avatars.

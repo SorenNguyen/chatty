@@ -15,7 +15,12 @@ import {
 	sendMessage,
 	setMessagePinned,
 } from "../src/modules/messages/messages.service.js";
-import { listConversationLinks, listConversationMedia, listSavedMessages } from "../src/modules/vault/vault.service.js";
+import {
+	getConversationVaultSummary,
+	listConversationLinks,
+	listConversationMedia,
+	listSavedMessages,
+} from "../src/modules/vault/vault.service.js";
 import { installFakeIO, type FakeIO } from "./fake-io.js";
 
 let fakeIO: FakeIO;
@@ -153,6 +158,95 @@ describe("vault, forwarding, mentions, and pins", () => {
 
 		await expect(
 			sendMessage(outsiderId, targetConversation.id, { content: "", forwardOfMessageId: source.id }),
+		).rejects.toBeInstanceOf(NotFoundError);
+	});
+
+	/**
+	 * The panel's category rows are counts, and a row that says 2 and opens onto
+	 * 1 is worse than a row with no number — so every count here is asserted
+	 * against the list it sits in front of, hidden messages included.
+	 */
+	it("counts each category exactly as its own list would page it", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const conversation = await createConversation(minhId, { participantIds: [anId] });
+		const withLink = await sendMessage(minhId, conversation.id, { content: "read https://example.com/one" });
+		await sendMessage(minhId, conversation.id, { content: "and https://example.com/two" });
+		const saved = await sendMessage(minhId, conversation.id, { content: "keep this" });
+		await saveMessageForUser(anId, conversation.id, saved.id);
+
+		await expect(getConversationVaultSummary(anId, conversation.id)).resolves.toEqual({
+			media: 0,
+			files: 0,
+			voice: 0,
+			links: 2,
+			saved: 1,
+		});
+
+		// Removing a message from your own view has to remove it from your counts.
+		// The count and the list read the same MessageHiddenFor rows; a count that
+		// skipped them would promise a link this reader can no longer reach.
+		await hideMessageForUser(anId, conversation.id, withLink.id);
+
+		const summary = await getConversationVaultSummary(anId, conversation.id);
+		expect(summary.links).toBe(1);
+		expect((await listConversationLinks(anId, conversation.id, { limit: 20 })).items).toHaveLength(1);
+		// And it is one person's view, not the conversation's.
+		await expect(getConversationVaultSummary(minhId, conversation.id)).resolves.toMatchObject({ links: 2 });
+	});
+
+	it("refuses a summary for a conversation the caller is not in", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const outsiderId = await createUser("binh");
+		const conversation = await createConversation(minhId, { participantIds: [anId] });
+
+		await expect(getConversationVaultSummary(outsiderId, conversation.id)).rejects.toBeInstanceOf(NotFoundError);
+	});
+
+	/**
+	 * The panel used to ask for the account's saved messages and filter the page
+	 * in the browser, so somebody who saves things in several conversations opened
+	 * this list empty and had to scroll it into existence. The cursor has to page
+	 * the scoped set.
+	 */
+	it("scopes saved messages to one conversation, cursor included", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const here = await createConversation(minhId, { participantIds: [anId] });
+		// A group, because two `createConversation` calls for the same pair
+		// deliberately return the one direct conversation rather than a second.
+		const elsewhere = await createConversation(minhId, { participantIds: [anId, binhId] });
+		const first = await sendMessage(minhId, here.id, { content: "here one" });
+		const second = await sendMessage(minhId, here.id, { content: "here two" });
+		const other = await sendMessage(minhId, elsewhere.id, { content: "elsewhere" });
+		for (const message of [first, second, other]) {
+			await saveMessageForUser(anId, message.conversationId, message.id);
+		}
+
+		const scoped = await listSavedMessages(anId, { limit: 20, conversationId: here.id });
+		expect(scoped.results.map((item) => item.message.id)).toEqual([second.id, first.id]);
+		// Unscoped still means the whole account, so the parameter narrowed the
+		// query rather than replacing what the list is.
+		expect((await listSavedMessages(anId, { limit: 20 })).results).toHaveLength(3);
+
+		// A page of one, then its cursor: the second page must continue inside the
+		// scope rather than falling back to the account-wide list.
+		const firstPage = await listSavedMessages(anId, { limit: 1, conversationId: here.id });
+		expect(firstPage.results.map((item) => item.message.id)).toEqual([second.id]);
+		expect(firstPage.hasMore).toBe(true);
+		const secondPage = await listSavedMessages(anId, {
+			limit: 1,
+			conversationId: here.id,
+			before: second.id,
+		});
+		expect(secondPage.results.map((item) => item.message.id)).toEqual([first.id]);
+		expect(secondPage.hasMore).toBe(false);
+
+		// A cursor from another conversation is not a cursor into this one.
+		await expect(
+			listSavedMessages(anId, { limit: 1, conversationId: here.id, before: other.id }),
 		).rejects.toBeInstanceOf(NotFoundError);
 	});
 

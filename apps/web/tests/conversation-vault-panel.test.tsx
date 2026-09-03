@@ -7,6 +7,7 @@ import { makeAttachment, makeConversation, makeParticipant } from "./factories";
 
 vi.mock("@/api/client", () => ({
 	api: {
+		getConversationVaultSummary: vi.fn(),
 		listConversationMedia: vi.fn(),
 		listConversationLinks: vi.fn(),
 		listSavedMessages: vi.fn(),
@@ -24,6 +25,9 @@ const image = {
 };
 
 beforeEach(() => {
+	vi.mocked(api.getConversationVaultSummary)
+		.mockReset()
+		.mockResolvedValue({ media: 1, files: 0, voice: 0, links: 0, saved: 2 });
 	vi.mocked(api.listConversationMedia)
 		.mockReset()
 		.mockResolvedValue({ items: [image], hasMore: false });
@@ -54,26 +58,84 @@ function renderPanel(overrides: { isGroup?: boolean } = {}) {
 }
 
 describe("ConversationVaultPanel", () => {
+	/**
+	 * The counts are the reason this is a list and not a tab bar, and they have to
+	 * arrive before anything is opened — that is what answers "is there anything
+	 * in Files?" without a request and a spinner.
+	 */
+	it("opens on the categories and their counts, fetching no page yet", async () => {
+		renderPanel();
+
+		expect(await screen.findByRole("button", { name: "Media, 1" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Saved, 2" })).toBeInTheDocument();
+		expect(api.listConversationMedia).not.toHaveBeenCalled();
+	});
+
 	it("groups media by month and opens the loaded set in the shared lightbox", async () => {
 		const user = userEvent.setup();
 		const onOpenMessage = renderPanel();
 
+		await user.click(await screen.findByRole("button", { name: "Media, 1" }));
+
 		expect(await screen.findByText("August 2026")).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Shared by An" }));
-
 		expect(screen.getByRole("dialog", { name: "Image preview" })).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "View in conversation" }));
 		expect(onOpenMessage).toHaveBeenCalledWith("message-1");
 	});
 
-	it("keeps the shared tab bar available while managing group members", async () => {
+	it("scopes saved messages to this conversation rather than filtering a page of them", async () => {
+		const user = userEvent.setup();
+		renderPanel();
+
+		await user.click(await screen.findByRole("button", { name: "Saved, 2" }));
+
+		expect(api.listSavedMessages).toHaveBeenCalledWith(40, undefined, "conversation-1");
+	});
+
+	/**
+	 * Every other dismissible surface in this feature closes on a press outside
+	 * it, and this one — the largest of them, sitting over the conversation —
+	 * used to be the exception: the X or Escape, or nothing.
+	 */
+	it("closes on a press outside it, and not on one inside", async () => {
+		const user = userEvent.setup();
+		const onClose = vi.fn();
+		render(
+			<>
+				<button type="button">somewhere else</button>
+				<ConversationVaultPanel
+					conversation={makeConversation({
+						participants: [makeParticipant("minh", "Minh"), makeParticipant("an", "An")],
+					})}
+					currentUserId="minh"
+					onlineUserIds={new Set()}
+					onClose={onClose}
+					onOpenMessage={vi.fn()}
+				/>
+			</>,
+		);
+
+		await user.click(await screen.findByRole("button", { name: "Media, 1" }));
+		expect(onClose).not.toHaveBeenCalled();
+
+		await user.click(screen.getByRole("button", { name: "somewhere else" }));
+		expect(onClose).toHaveBeenCalledTimes(1);
+	});
+
+	/**
+	 * The header button that opens this panel is labelled "Group members" for a
+	 * group, so that is what a group has to land on. The categories are one Back
+	 * away rather than one tap in front.
+	 */
+	it("lands a group on its members, with the categories one step back", async () => {
 		const user = userEvent.setup();
 		renderPanel({ isGroup: true });
 
-		await user.click(screen.getByRole("button", { name: "Members" }));
+		expect(await screen.findByText("Group name")).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Back to conversation details" }));
 
-		expect(screen.getByText("Group name")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Media" })).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Files" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Members, 2" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Media, 1" })).toBeInTheDocument();
 	});
 });

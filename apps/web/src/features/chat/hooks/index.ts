@@ -1,5 +1,6 @@
 export { useBlockedUsersSync } from "./use-blocked-users-sync";
 export { useConversationList } from "./use-conversation-list";
+export { useConversationVault } from "./use-conversation-vault";
 export { useReplyTarget } from "./use-reply-target";
 export { useConversationMessages } from "./use-conversation-messages";
 export { useDocumentTitle } from "./use-document-title";

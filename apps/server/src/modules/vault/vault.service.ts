@@ -1,5 +1,6 @@
 import type {
 	AttachmentPageDTO,
+	ConversationVaultSummaryDTO,
 	MessageLinkPageDTO,
 	MessageSearchResultDTO,
 	SavedMessagePageDTO,
@@ -146,30 +147,26 @@ export async function listConversationLinks(
 }
 
 export async function listSavedMessages(userId: string, query: ListSavedQuery): Promise<SavedMessagePageDTO> {
+	if (query.conversationId) await assertParticipant(userId, query.conversationId);
+	// One filter object for the cursor lookup and the page, so a cursor can never
+	// validate against a wider set than the page it is paging — which is how a
+	// scoped list ends up 404ing on a row it would have returned.
+	const messageFilter = {
+		deletedAt: null,
+		hiddenFor: { none: { userId } },
+		conversation: { participants: { some: { userId } } },
+		...(query.conversationId && { conversationId: query.conversationId }),
+	};
+
 	if (query.before) {
 		const cursor = await prisma.messageStar.findFirst({
-			where: {
-				messageId: query.before,
-				userId,
-				message: {
-					deletedAt: null,
-					hiddenFor: { none: { userId } },
-					conversation: { participants: { some: { userId } } },
-				},
-			},
+			where: { messageId: query.before, userId, message: messageFilter },
 			select: { messageId: true },
 		});
 		if (!cursor) throw new NotFoundError("Saved message not found");
 	}
 	const stars = await prisma.messageStar.findMany({
-		where: {
-			userId,
-			message: {
-				deletedAt: null,
-				hiddenFor: { none: { userId } },
-				conversation: { participants: { some: { userId } } },
-			},
-		},
+		where: { userId, message: messageFilter },
 		orderBy: [{ createdAt: "desc" }, { messageId: "desc" }],
 		take: query.limit + 1,
 		...(query.before ? { cursor: { messageId_userId: { messageId: query.before, userId } }, skip: 1 } : {}),
@@ -200,4 +197,82 @@ export async function listSavedMessages(userId: string, query: ListSavedQuery): 
 	}));
 
 	return { results, hasMore: stars.length > query.limit };
+}
+
+/**
+ * How much of each kind this conversation holds.
+ *
+ * One round trip rather than five parallel counts: the panel asks for this the
+ * moment it opens, and every subquery is a bounded scan of the same index its
+ * list pages with — `(conversationId, kind, createdAt)` on Attachment,
+ * `(conversationId, createdAt)` on MessageLink.
+ *
+ * `COUNT(*)::int` rather than a bare COUNT, because `$queryRaw` hands a
+ * PostgreSQL bigint back as a JavaScript BigInt, which `res.json()` refuses to
+ * serialise — a 500 on a response whose numbers are all small by construction.
+ *
+ * Every predicate is the one the matching list uses, `MessageHiddenFor`
+ * included. A count that ignored it would promise a file that the person asking
+ * has already removed from their own view.
+ */
+export async function getConversationVaultSummary(
+	userId: string,
+	conversationId: string,
+): Promise<ConversationVaultSummaryDTO> {
+	await assertParticipant(userId, conversationId);
+	const rows = await prisma.$queryRaw<ConversationVaultSummaryDTO[]>`
+		SELECT
+			(
+				SELECT COUNT(*)::int FROM "Attachment" attachment
+				WHERE attachment."conversationId" = ${conversationId}
+					AND attachment.kind = 'IMAGE'::"AttachmentKind"
+					AND NOT EXISTS (
+						SELECT 1 FROM "MessageHiddenFor" hidden
+						WHERE hidden."messageId" = attachment."messageId" AND hidden."userId" = ${userId}
+					)
+			) AS media,
+			(
+				SELECT COUNT(*)::int FROM "Attachment" attachment
+				WHERE attachment."conversationId" = ${conversationId}
+					AND attachment.kind = 'FILE'::"AttachmentKind"
+					AND NOT EXISTS (
+						SELECT 1 FROM "MessageHiddenFor" hidden
+						WHERE hidden."messageId" = attachment."messageId" AND hidden."userId" = ${userId}
+					)
+			) AS files,
+			(
+				SELECT COUNT(*)::int FROM "Attachment" attachment
+				WHERE attachment."conversationId" = ${conversationId}
+					AND attachment.kind = 'AUDIO'::"AttachmentKind"
+					AND NOT EXISTS (
+						SELECT 1 FROM "MessageHiddenFor" hidden
+						WHERE hidden."messageId" = attachment."messageId" AND hidden."userId" = ${userId}
+					)
+			) AS voice,
+			(
+				SELECT COUNT(*)::int FROM "MessageLink" link
+				JOIN "Message" message ON message.id = link."messageId"
+				WHERE link."conversationId" = ${conversationId}
+					AND message."deletedAt" IS NULL
+					AND NOT EXISTS (
+						SELECT 1 FROM "MessageHiddenFor" hidden
+						WHERE hidden."messageId" = link."messageId" AND hidden."userId" = ${userId}
+					)
+			) AS links,
+			(
+				SELECT COUNT(*)::int FROM "MessageStar" star
+				JOIN "Message" message ON message.id = star."messageId"
+				WHERE star."userId" = ${userId}
+					AND message."conversationId" = ${conversationId}
+					AND message."deletedAt" IS NULL
+					AND NOT EXISTS (
+						SELECT 1 FROM "MessageHiddenFor" hidden
+						WHERE hidden."messageId" = star."messageId" AND hidden."userId" = ${userId}
+					)
+			) AS saved
+	`;
+
+	// A scalar-subquery SELECT with no FROM always returns exactly one row; the
+	// fallback is here so the return type does not have to be optional.
+	return rows[0] ?? { media: 0, files: 0, voice: 0, links: 0, saved: 0 };
 }

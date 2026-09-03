@@ -46,7 +46,7 @@ export function EmojiPicker({ onPick, onClose, anchor }: EmojiPickerProps) {
 	const panelRef = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
-		function handlePointerDown(event: MouseEvent) {
+		function handlePointerDown(event: PointerEvent) {
 			// A picker that only closes on Escape leaves a panel hanging over the
 			// thread for anyone who reaches for the mouse instead.
 			if (!panelRef.current?.contains(event.target as Node)) onClose();
@@ -56,11 +56,11 @@ export function EmojiPicker({ onPick, onClose, anchor }: EmojiPickerProps) {
 			if (event.key === "Escape") onClose();
 		}
 
-		document.addEventListener("mousedown", handlePointerDown);
+		document.addEventListener("pointerdown", handlePointerDown);
 		document.addEventListener("keydown", handleKeyDown);
 
 		return () => {
-			document.removeEventListener("mousedown", handlePointerDown);
+			document.removeEventListener("pointerdown", handlePointerDown);
 			document.removeEventListener("keydown", handleKeyDown);
 		};
 	}, [onClose]);

@@ -3,13 +3,13 @@ import { getAttachmentDisplaySize } from "@/features/chat/utils";
 
 describe("getAttachmentDisplaySize", () => {
 	it("scales a wide image down to the width cap", () => {
-		expect(getAttachmentDisplaySize(1600, 800)).toEqual({ width: 320, height: 160 });
+		expect(getAttachmentDisplaySize(1600, 800)).toEqual({ width: 380, height: 190 });
 	});
 
 	it("scales a tall image down to the height cap instead", () => {
-		// 800x1600 hitting the width cap alone would be 320x640 — twice as tall as
+		// 800x1600 hitting the width cap alone would be 380x760 — well over twice as tall as
 		// the bubble allows, which is what pushes its own caption off screen.
-		expect(getAttachmentDisplaySize(800, 1600)).toEqual({ width: 200, height: 400 });
+		expect(getAttachmentDisplaySize(800, 1600)).toEqual({ width: 230, height: 460 });
 	});
 
 	it("leaves a small image alone rather than blowing it up", () => {

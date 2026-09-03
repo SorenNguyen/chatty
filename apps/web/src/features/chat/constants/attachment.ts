@@ -1,15 +1,25 @@
 /**
- * Widest an image is drawn in a bubble. Bubbles are capped at 70% of the
- * conversation, and a picture wider than this stops reading as part of the
- * exchange and starts being the whole view.
+ * Widest an image is *drawn* at, on a screen with room for it.
+ *
+ * A ceiling, not a width. The picture also carries `max-w-full`, so on a narrow
+ * screen it scales down inside the message row instead of being cut off by it —
+ * which is what used to happen: the row is `76vw` on a phone, so on a 390px
+ * screen every 320px photograph ran 24px past it and lost its right edge and
+ * both corners to `overflow-hidden`.
+ *
+ * 380 rather than the 320 it was: the row itself allows `min(62vw, 34rem)`, so
+ * 320 was spending barely half of what a picture is allowed, and a photograph
+ * drawn at thumbnail size in a conversation about it reads as a link to the
+ * picture rather than the picture. Still comfortably under the cap, which is
+ * what keeps an image part of the exchange rather than the whole view.
  */
-export const MAX_ATTACHMENT_DISPLAY_WIDTH = 320;
+export const MAX_ATTACHMENT_DISPLAY_WIDTH = 380;
 
 /**
  * Tallest, for the portrait photos that would otherwise take the entire column
  * and push the message that came with them off screen.
  */
-export const MAX_ATTACHMENT_DISPLAY_HEIGHT = 400;
+export const MAX_ATTACHMENT_DISPLAY_HEIGHT = 460;
 
 /** What the file picker offers. The server re-encodes whatever arrives anyway. */
 export const ACCEPTED_IMAGE_TYPES = "image/*";
@@ -117,3 +127,21 @@ export const STICKER_DISPLAY_SIZE = 128;
  * exactly as it does for a stored image the server could not measure.
  */
 export const IMAGE_MEASURE_TIMEOUT_MS = 1_500;
+
+/**
+ * The time, laid over a picture.
+ *
+ * A photograph is the one message that cannot state its time in the gutter. The
+ * gutter is centred on the bubble, so beside a 460px picture the number floats
+ * at its middle, level with nothing, belonging to nothing — which is what made
+ * an image message read as undesigned however carefully the picture itself was
+ * drawn.
+ *
+ * This is not a new idea imported from another app: the album count chip has
+ * been the answer to "a machine-produced value, laid over media" since phase 23,
+ * and this is that chip carrying the value that matters most. `scrim` is what
+ * keeps it legible over a white sky and a black jacket alike, and `meta` is
+ * tabular, so a minute ticking over does not shift the chip's width.
+ */
+export const MEDIA_TIME_CHIP_CLASS =
+	"meta pointer-events-none absolute bottom-2 right-2 rounded-badge bg-scrim/70 px-1.5 py-0.5 text-on-media";

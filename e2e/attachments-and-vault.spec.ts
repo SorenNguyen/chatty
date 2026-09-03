@@ -93,17 +93,29 @@ test("files, voice, links, thumbnails and the conversation vault work across two
 	});
 
 	await senderPage.getByRole("button", { name: "Conversation storage and details" }).click();
-	const vault = senderPage
-		.getByRole("complementary")
-		.filter({ has: senderPage.getByRole("heading", { name: "Conversation details" }) });
-	await expect(
-		vault.getByText(new Intl.DateTimeFormat("en", { month: "long", year: "numeric" }).format(new Date())),
-	).toBeVisible();
-	await vault.getByRole("button", { name: "Files" }).click();
+	// The sidebar is the page's other <aside>, and the panel's *heading* changes
+	// as you walk into a category — so the landmark's own name is what addresses
+	// it at every level.
+	const vault = senderPage.getByRole("complementary", { name: "Conversation details" });
+	const thisMonth = new Intl.DateTimeFormat("en", { month: "long", year: "numeric" }).format(new Date());
+
+	// The counts are the half of this panel no service test can check: they are
+	// four separate database predicates that have to agree with the four lists
+	// they sit in front of. A row that opens onto a different number is the bug
+	// this walk exists to catch.
+	await vault.getByRole("button", { name: /^Media, [1-9]/ }).click();
+	await expect(vault.getByText(thisMonth)).toBeVisible();
+
+	await vault.getByRole("button", { name: "Back to conversation details" }).click();
+	await vault.getByRole("button", { name: /^Files, [1-9]/ }).click();
 	await expect(vault.getByRole("link", { name: /Tài liệu\.pdf/u })).toBeVisible();
-	await vault.getByRole("button", { name: "Voice", exact: true }).click();
+
+	await vault.getByRole("button", { name: "Back to conversation details" }).click();
+	await vault.getByRole("button", { name: /^Voice, [1-9]/ }).click();
 	await expect(vault.getByRole("button", { name: "Play voice message" })).toBeVisible();
-	await vault.getByRole("button", { name: "Links" }).click();
+
+	await vault.getByRole("button", { name: "Back to conversation details" }).click();
+	await vault.getByRole("button", { name: /^Links, [1-9]/ }).click();
 	await expect(vault.getByText("https://example.com/chatty-vault")).toBeVisible();
 
 	await sender.close();

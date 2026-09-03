@@ -20,6 +20,12 @@ interface MessageMetaProps {
 	 * the message that ends a burst, and on the one carrying a receipt.
 	 */
 	isTimeAlwaysVisible: boolean;
+	/**
+	 * Whether the bubble states its own time. True for a picture, which carries
+	 * it in a chip on the image — the gutter is centred on the bubble, so beside
+	 * a tall photograph its number would sit level with nothing.
+	 */
+	hasTimeOnMedia: boolean;
 	receipt: ReadReceipt | null;
 	participants: ParticipantDTO[];
 	deliveryState: MessageDeliveryState | undefined;
@@ -47,6 +53,7 @@ export function MessageMeta({
 	isGroup,
 	isEdited,
 	isTimeAlwaysVisible,
+	hasTimeOnMedia,
 	receipt,
 	participants,
 	deliveryState,
@@ -67,7 +74,10 @@ export function MessageMeta({
 				"relative flex shrink-0 items-center gap-2",
 				"max-sm:absolute max-sm:top-full max-sm:mt-1",
 				isMine ? "max-sm:right-0" : "max-sm:left-10",
-				!isTimeAlwaysVisible && !isEdited && !deliveryState && "max-sm:hidden",
+				(hasTimeOnMedia || (!isTimeAlwaysVisible && !isEdited)) &&
+					!deliveryState &&
+					!receipt &&
+					"max-sm:hidden",
 			)}
 		>
 			{isEdited && (
@@ -84,7 +94,7 @@ export function MessageMeta({
 			    carries is this machine's guess, not the server's answer. */}
 			{deliveryState ? (
 				<MessageDeliveryStatus state={deliveryState} onRetry={onRetrySend} onDiscard={onDiscardDraft} />
-			) : (
+			) : hasTimeOnMedia ? null : (
 				<span
 					className={cn(
 						"meta text-ink-faint transition-opacity",

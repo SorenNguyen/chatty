@@ -120,6 +120,14 @@ export function MessageRow({
 	// message keeps its marker outright — a note saying "this is not what was
 	// sent" must not need to be discovered.
 	const isTimeAlwaysVisible = clusterPosition === "last" || clusterPosition === "solo" || Boolean(receipt);
+	// A picture states its own time, in a chip on the image. Only a picture: a
+	// file card and a voice player are rows of ink on paper like any other
+	// bubble, and the gutter is level with them.
+	const hasTimeOnMedia =
+		!isDeleted &&
+		!isEditing &&
+		!deliveryState &&
+		message.attachments.some((attachment) => attachment.kind === "image");
 	const hasImages = message.attachments.length > 0;
 	// A message that is nothing but a few emoji is drawn large and bare, the way
 	// every messenger worth using does it: at bubble size an emoji is a typo, and
@@ -267,6 +275,7 @@ export function MessageRow({
 
 				<MessageMeta
 					createdAt={message.createdAt}
+					hasTimeOnMedia={hasTimeOnMedia}
 					isMine={isMine}
 					isGroup={isGroup}
 					isEdited={isEdited}

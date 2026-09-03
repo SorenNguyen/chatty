@@ -39,27 +39,19 @@ export const INCOMING_BUBBLE_RADIUS: Record<ClusterPosition, string> = {
 };
 
 /**
- * The picture inside a bubble, whose corners have to follow the ones around it.
+ * A picture is the bubble now, so it reads the same table a sentence does.
  *
- * An image sits in 5px of padding, so each of its corners is the bubble's corner
- * *minus five*: the 10px outer becomes 5, and both the 4px seam and the 2px
- * notch go negative and clamp to 0. That arithmetic is why `first` and `solo`
- * share a value here while differing above, and why `middle` and `last` do —
- * the two tail radii are far enough below the padding to collapse to the same
- * square corner. It was a flat `rounded-[7px]` before, a number that matched
- * neither the bubble it sat in nor anything else in the app.
+ * The pair of tables that used to live here described a picture *inside* a
+ * bubble: 5px, the bubble's 10 minus the 5px of padding around it. Phase 29
+ * took that padding away — a photograph is already a rectangle of somebody
+ * else's content and a fill around it is a second frame — and the 5px stayed
+ * behind, so a bare picture sat at half the radius of every bubble beside it,
+ * with one corner squared against a caption that had moved out of its box.
+ *
+ * A captioned picture is one object again, and it is built from the table above
+ * with a single override at each end: the picture takes it plus `rounded-b-none`
+ * and the caption takes it plus `rounded-t-none`. The two squared edges meet, so
+ * the run's grammar — the unbroken side, the seam, the one notch — is drawn
+ * across the pair exactly as it would be across one bubble. `cn` is what makes
+ * that work: tailwind-merge drops the corner class a later side class covers.
  */
-export const OUTGOING_ATTACHMENT_RADIUS: Record<ClusterPosition, string> = {
-	solo: "rounded-[5px] rounded-br-none",
-	first: "rounded-[5px] rounded-br-none",
-	middle: "rounded-[5px] rounded-tr-none rounded-br-none",
-	last: "rounded-[5px] rounded-tr-none rounded-br-none",
-};
-
-/** Mirrored, as above. */
-export const INCOMING_ATTACHMENT_RADIUS: Record<ClusterPosition, string> = {
-	solo: "rounded-[5px] rounded-bl-none",
-	first: "rounded-[5px] rounded-bl-none",
-	middle: "rounded-[5px] rounded-tl-none rounded-bl-none",
-	last: "rounded-[5px] rounded-tl-none rounded-bl-none",
-};

@@ -2405,6 +2405,200 @@ hands a blocked person a tombstone channel into a thread the other person asked 
 8-hour author window is the only thing bounding it. Left as it is, deliberately, and recorded here so
 it is a decision rather than a surprise.
 
+## Phase 35 — the details panel stops being a tab bar — `done`
+
+Phase 26 built the vault and gave it six tabs. The tabs were the part that did not survive contact
+with the panel's width.
+
+| # | Item | Status |
+| --- | --- | --- |
+| 105 | Categories with counts, drilling into one list at a time | Done |
+| 106 | Saved messages are paged by the server for one conversation, not filtered in the browser | Done |
+
+### Why the tabs had to go
+
+The panel is 448px on a desktop and the width of a phone below that. Six tabs did not fit, so the
+strip carried `overflow-x-auto` — which is not a layout, it is an admission: half the categories sat
+behind a horizontal scroll gesture that nobody performs on a desktop, on the most valuable row of the
+panel, spending it on six words that say nothing about what is inside them.
+
+**A list has room for the thing a tab could never carry: the count.** "Files 0" is now answered
+before it is opened, rather than after a request, a spinner and an empty state. Opening the panel is
+also *cheaper* than it was: it used to fetch forty images and their thumbnails whether or not anybody
+wanted photos, and now it fetches five integers and fetches a page only once a category is picked.
+
+`GET /conversations/:id/vault-summary` is one round trip with five scalar subqueries rather than five
+parallel counts, and every predicate is copied from the list it summarises — `MessageHiddenFor`
+included. A row that says 9 and opens onto 8 is worse than a row with no number, and the count and
+the list read the same rows to make that impossible. `COUNT(*)::int`, because `$queryRaw` returns a
+PostgreSQL bigint as a JavaScript BigInt and `res.json()` refuses to serialise one.
+
+### What stayed a sheet, and why that is the decision
+
+The shape this borrows from is KakaoTalk's, which puts storage in a modal with a conversation rail
+down the left. That rail is wrong **here**: this app's main sidebar already selects the conversation,
+so a second list of conversations inside a modal is a parallel navigation with its own selection
+state to disagree with.
+
+More decisive: **tapping a photo jumps to the message it came from.** It works because the thread is
+right there behind the sheet. From a full-screen modal, that jump has to tear the modal down first —
+so the panel would have replaced the thing it exists to point at. A cross-conversation media browser
+is a genuinely different feature, and its left rail should be *filters* — kind, sender, date — rather
+than a copy of the sidebar. It is not built.
+
+A group still lands on its members, because the header button that opens the panel is labelled "Group
+members" for a group and has to show them. The categories are one Back away rather than one tap in
+front.
+
+### The bug the counts uncovered
+
+The Saved tab asked for the **account's** saved messages and filtered the page in the browser. So
+anybody who saves messages in more than one conversation opened this tab on an empty list and had to
+scroll it into existence, one page of somebody else's saved messages at a time — and the cursor paged
+the unscoped set, so the tab's own paging never described what it was showing. `GET /me/saved` takes
+a `conversationId` now, and one filter object serves both the cursor lookup and the page, so a cursor
+can never validate against a wider set than the page it belongs to.
+
+### Two things a screen reader found
+
+The category row renders its label and its count in adjacent elements with no whitespace between
+them, which is read out as "Saved2". The row carries an explicit `aria-label` — "Saved, 2".
+
+The panel's landmark is now named on the `<aside>` rather than left to the heading inside it: the
+heading becomes the open category's label, so a region named by it changes name as you navigate
+*inside* it, and cannot be addressed by name at all. The Playwright walk was the thing that noticed —
+its locator stopped matching the moment it drilled into a category.
+
+Every list now carries the same sticky month heading. Media had one from phase 26 and the other four
+did not, which is odd on its own; the heading is also what turns a hundred files, voice notes or
+links into somewhere a reader can aim, and one that scrolls away has stopped working exactly when the
+list is long enough to need it.
+
+## Phase 36 — three details that were each one decision short — `done`
+
+Not a feature between them. Each is a place where a decision was made correctly, its consequence was
+never re-examined, and the result was visible on screen.
+
+| # | Item | Status |
+| --- | --- | --- |
+| 107 | A captioned picture is one object again | Done |
+| 108 | The details panel closes on a press outside it | Done |
+| 109 | Every dismissible surface listens on the same gesture | Done |
+| 110 | A picture fits the screen it is on, and has an edge on pale ground | Done |
+| 111 | A photograph states its own time | Done |
+
+### Item 107: the caption had moved out and nothing brought it back
+
+[Item 90](#item-90-a-photograph-is-not-a-quotation) took the bubble off a picture, for a reason that
+still holds: a photograph is already a rectangle of somebody else's content, and a fill around it is a
+second frame — and the ink fill was the worst possible one, a dark border around every photograph
+anybody sent. The caption was moved *under* the picture, into its own box.
+
+What that produced was **two objects**: a bare photograph, a gap, and then a narrow pill of text
+pulled to the tail edge — which reads as a separate message sent after the picture rather than as the
+picture's caption. Nobody chose that; it fell out of `flex-col gap-1.5` with `items-end`.
+
+A captioned picture is now one rounded rectangle. The picture squares its bottom edge, the caption
+squares its top, the gap is zero and the caption is **the picture's width** — taken from the same
+pure function the gallery sizes itself with, so a long caption wraps inside the photograph rather than
+making the block wider than the thing it describes. The fill still never surrounds the photograph,
+which is all item 90 was protecting.
+
+Two dead tables went with it. `OUTGOING_ATTACHMENT_RADIUS` and its mirror described a picture *inside*
+a bubble — 5px, the bubble's 10 minus the 5px of padding around it — and item 90 removed that padding
+without removing them, so a bare picture had been sitting at half the radius of every bubble beside
+it, with one corner squared against a caption that was no longer in the box. The gallery's own comment
+said "all four corners, always" while the table it read squared two of them.
+
+There are no new tables. The picture takes the ordinary bubble table plus `rounded-b-none`, the caption
+takes it plus `rounded-t-none`, and the run's grammar — the unbroken side, the seam, the single notch —
+is drawn across the pair exactly as it would be across one bubble. `cn` is what makes that work:
+tailwind-merge drops the corner class that a later side class covers.
+
+**Albums are exempt**, and that is not laziness. An album is a fan of rotated cards, not a rectangle,
+so there is no edge for a caption to attach to; its caption keeps a box of its own.
+
+### Item 110: two things a phone and a white photograph each proved
+
+Both were found by running the app rather than by reading it, and neither is visible on a desktop
+with a colourful test image.
+
+**A picture was drawn at a fixed width and the row it sits in is a percentage.** The message row is
+`76vw` on a phone; a photograph was 320px whatever the screen. On a 390px device that is a 320px
+picture inside a 296px row, so every image ran 24px past its own row and lost its right edge and both
+corners to `overflow-hidden` — cut off against the side of the screen. The attributes stay, because
+they are what reserves the box before the bytes arrive; `max-w-full h-auto` beside them is what lets
+a narrow screen scale that box down proportionally instead of clipping it.
+
+With that in place the ceiling could go up. 320 was spending barely half of the `min(62vw, 34rem)` a
+message row already allows, and a photograph drawn at thumbnail size inside a conversation about it
+reads as a link to the picture rather than the picture. It is 380 now, and 460 tall.
+
+**A pale photograph had no edge at all.** Pictures are drawn bare on the paper — which is right, and
+item 90 explains why — but "bare" had come to mean "no boundary", and a near-white image rendered as
+a rectangle of nothing that could only be located by its caption. One with no caption was invisible.
+A hairline now sits over the picture, drawn in a pseudo-element rather than a border so it costs the
+layout nothing and inherits the corners the picture already has. It is a boundary, not the mount that
+item 90 removed: it does not surround the photograph with a fill, it ends it.
+
+### Item 111: the number that belonged to nothing
+
+Phase 17 moved every timestamp off the vertical and into the gutter beside the bubble, which is right
+for a sentence: the gutter is centred on the bubble, and a bubble is one or two lines tall.
+
+A photograph is 460px tall. The gutter put its time level with the middle of the picture, a hand's
+width away from anything it referred to, touching nothing — and that, more than any corner radius, is
+what made an image message read as undesigned. A picture drawn with care beside a number floating in
+empty space does not look like a decision anybody made.
+
+**The picture states its own time**, and the chip it does it in is not borrowed from another app:
+the album count has sat over media in exactly this chip since phase 23 — `scrim` behind it so it is
+legible over a white sky and a black jacket alike, `meta` on top so it is mono and tabular and does
+not shift width as a minute ticks over. This is that chip carrying the value that matters most, and
+the album's count moved to the opposite corner to make room. Two values, two corners, one chip.
+
+The gutter stops drawing a time when the bubble has one, so the number is never stated twice — but it
+keeps the edited marker, the read receipt, and the delivery status, because a message still on its way
+has no send time to state: the one it carries is this machine's guess rather than the server's answer.
+
+A captioned album now attaches too. It cannot share an *edge* with a fan of rotated cards, so the
+stack sits on its caption rather than being welded to it — the same width, no gap, the same squared
+join. The 6px between the front card and the caption is the room the rotated cards behind it dip
+into, not a gap in the layout.
+
+### Item 108: the largest dismissible surface in the app was the one exception
+
+The conversation details panel closed on its X or on Escape, and on nothing else — while the emoji
+picker, the sticker tray, the attachment menu, the row menu and the message menu all close on a press
+outside them. It is the biggest of them and it sits over the conversation, so it was the one most
+worth dismissing by pressing what you actually wanted.
+
+Three things make it correct rather than merely wired up:
+
+- **The panel is unmounted when closed**, so nothing has to ask whether it is open — and the press
+  that opened it landed before the listener existed, which is what stops the panel closing itself on
+  the way in.
+- **The confirmation dialogs and the image lightbox render inside the panel's own element**, so
+  `contains` already counts a press on either as inside. That is load-bearing: both cover the
+  viewport, and a panel that closed underneath its own "Block this person?" dialog would leave the
+  dialog standing over a conversation it no longer belonged to.
+- **Escape is deliberately not handled here.** `useKeyboardShortcuts` already closes this panel as
+  part of an ordered chain — help, then forwarding, then the panel — and a second listener would
+  close two surfaces with one key.
+
+### Item 109: two of the five were listening for a mouse
+
+Three surfaces dismissed on `pointerdown` and two — the sticker tray and the emoji picker — on
+`mousedown`, which is not a difference anybody chose. On touch they are not the same event: a press
+outside those two did not close them the way it closed the other three, so the same gesture had two
+outcomes depending on which panel was open. Both now listen on `pointerdown`.
+
+The five copies of that effect were left as five. Three of them are menu widgets whose dismissal is
+entangled with roving focus — arrow keys, Home/End, and the focus restore that Escape performs — and
+lifting the two shared lines out would separate Escape from the arrow keys that belong beside it. A
+shared hook is the right answer only once there is something to share that is not a fragment of a
+widget.
+
 ## Verification bar
 
 Nothing is "done" here until this passes, **and** an end-to-end run against the real API exercises the

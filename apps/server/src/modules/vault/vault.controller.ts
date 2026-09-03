@@ -14,6 +14,11 @@ export async function listConversationLinksController(req: Request, res: Respons
 	res.status(200).json(page);
 }
 
+export async function getConversationVaultSummaryController(req: Request, res: Response): Promise<void> {
+	const summary = await vaultService.getConversationVaultSummary(req.userId!, req.params.conversationId as string);
+	res.status(200).json(summary);
+}
+
 export async function listSavedMessagesController(req: Request, res: Response): Promise<void> {
 	const query = listSavedSchema.parse(req.query);
 	const page = await vaultService.listSavedMessages(req.userId!, query);

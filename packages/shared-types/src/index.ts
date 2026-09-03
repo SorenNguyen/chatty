@@ -45,6 +45,25 @@ export interface BlockStatusDTO {
 	isBlocked: boolean;
 }
 
+/** A bounded page of people the signed-in user has restricted. */
+export interface RestrictedUsersPageDTO {
+	items: UserDTO[];
+	/** Pass this to the next request; null means the final page. */
+	nextCursor: string | null;
+}
+
+/**
+ * The caller's own restriction state for one person.
+ *
+ * Never the reverse direction, and for a stronger reason than the block
+ * equivalent: a block is observable to the person blocked the moment they try to
+ * send, while a restriction is designed to be unobservable. Answering "has this
+ * person restricted me?" would hand back the one thing the feature withholds.
+ */
+export interface RestrictionStatusDTO {
+	isRestricted: boolean;
+}
+
 export type PresenceVisibility = "everyone" | "contacts" | "nobody";
 
 /**
@@ -183,6 +202,23 @@ export interface AttachmentWithMessageDTO extends AttachmentDTO {
 export interface AttachmentPageDTO {
 	items: AttachmentWithMessageDTO[];
 	hasMore: boolean;
+}
+
+/**
+ * How much of each kind a conversation holds, for the category rows in its
+ * details panel.
+ *
+ * Counted with exactly the filters the matching list pages with, hidden-for-me
+ * messages included: a row that says 9 and opens onto 8 files is worse than no
+ * number at all. `members` is absent because `ConversationDTO` already carries
+ * its participants, so the client can count them without asking.
+ */
+export interface ConversationVaultSummaryDTO {
+	media: number;
+	files: number;
+	voice: number;
+	links: number;
+	saved: number;
 }
 
 export interface MessageLinkDTO {
@@ -756,6 +792,21 @@ export interface BlockChangedEvent {
 	isBlocked: boolean;
 }
 
+/**
+ * The signed-in person restricted or unrestricted somebody, from one of their
+ * other sessions.
+ *
+ * Sent to the actor's own room and nowhere else, the rule `BlockChangedEvent`
+ * already follows — here it is not merely a privacy preference but the feature
+ * working at all: an event reaching the restricted person would be the only way
+ * they could learn of it, and its arrival would say so with any payload.
+ */
+export interface RestrictionChangedEvent {
+	/** The other person, not the actor — the actor is whoever the room belongs to. */
+	userId: string;
+	isRestricted: boolean;
+}
+
 /** Someone you share a conversation with connected or dropped their last connection. */
 export interface PresenceEvent {
 	userId: string;
@@ -855,6 +906,7 @@ export interface ServerToClientEvents {
 	"message:pins-updated": (event: { conversationId: string; pinnedMessages: PinnedMessageDTO[] }) => void;
 	"typing:update": (event: TypingEvent) => void;
 	"block:changed": (event: BlockChangedEvent) => void;
+	"restriction:changed": (event: RestrictionChangedEvent) => void;
 	"presence:update": (event: PresenceEvent) => void;
 	"presence:snapshot": (event: PresenceSnapshotEvent) => void;
 }

@@ -30,6 +30,7 @@ import type {
 	ResetPasswordRequest,
 	StickerDTO,
 	SavedMessagePageDTO,
+	ConversationVaultSummaryDTO,
 	ToggleReactionRequest,
 	TransferOwnershipRequest,
 	UpdateProfileRequest,
@@ -594,11 +595,24 @@ export const api = {
 		return get<MessageLinkPageDTO>(`/conversations/${conversationId}/links?${params.toString()}`);
 	},
 
-	listSavedMessages(limit = 40, before?: string): Promise<SavedMessagePageDTO> {
+	/**
+	 * Saved messages, account-wide or scoped to one conversation.
+	 *
+	 * The scope is a query parameter rather than a filter applied to the response:
+	 * the cursor pages the scoped set, so a conversation's saved messages arrive on
+	 * the first page instead of being scrolled out of an account-wide list.
+	 */
+	listSavedMessages(limit = 40, before?: string, conversationId?: string): Promise<SavedMessagePageDTO> {
 		const params = new URLSearchParams({ limit: String(limit) });
 		if (before) params.set("before", before);
+		if (conversationId) params.set("conversationId", conversationId);
 
 		return get<SavedMessagePageDTO>(`/me/saved?${params.toString()}`);
+	},
+
+	/** What each category in the details panel holds, before any of them is opened. */
+	getConversationVaultSummary(conversationId: string): Promise<ConversationVaultSummaryDTO> {
+		return get<ConversationVaultSummaryDTO>(`/conversations/${conversationId}/vault-summary`);
 	},
 
 	saveMessage(conversationId: string, messageId: string): Promise<void> {

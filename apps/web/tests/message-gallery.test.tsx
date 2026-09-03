@@ -41,8 +41,8 @@ describe("MessageGallery with one image", () => {
 		);
 
 		const image = screen.getByAltText("Image");
-		expect(image).toHaveAttribute("width", "320");
-		expect(image).toHaveAttribute("height", "160");
+		expect(image).toHaveAttribute("width", "380");
+		expect(image).toHaveAttribute("height", "190");
 	});
 
 	it("loads lazily, because most of a loaded page is off screen", () => {
