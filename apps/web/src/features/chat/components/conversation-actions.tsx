@@ -5,9 +5,9 @@ import { createPortal } from "react-dom";
 import { api } from "@/api/client";
 import { Button } from "@/components/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { useBlockedUsers } from "@/hooks/use-blocked-users";
 import { cn } from "@/utils/cn";
 import { CONVERSATION_MUTE_OPTIONS } from "../constants/conversation-actions";
-import { useBlockedUsers } from "../hooks/use-blocked-users";
 import { getDirectPeer } from "../utils";
 
 interface ConversationActionsProps {
@@ -17,8 +17,7 @@ interface ConversationActionsProps {
 }
 
 export function ConversationActions({ conversation, currentUserId }: ConversationActionsProps) {
-	// Blocking is between two people, so it is offered on direct rows only —
-	// the same line the details panel draws.
+	// Blocking is between two people, so it is offered on direct rows only.
 	const peer = conversation.isGroup ? null : getDirectPeer(conversation, currentUserId);
 	const isBlocked = useBlockedUsers((state) => Boolean(peer && state.blockedIds.has(peer.id)));
 	const loadBlocked = useBlockedUsers((state) => state.load);
@@ -37,7 +36,7 @@ export function ConversationActions({ conversation, currentUserId }: Conversatio
 	useEffect(() => {
 		// On open rather than on mount: the sidebar renders one of these per row
 		// and only ever opens one, so mounting is the wrong moment to ask.
-		if (isOpen && peer) void loadBlocked();
+		if (isOpen && peer) void loadBlocked(peer.id);
 	}, [isOpen, loadBlocked, peer]);
 
 	useEffect(() => {
@@ -120,6 +119,21 @@ export function ConversationActions({ conversation, currentUserId }: Conversatio
 		const until =
 			milliseconds === null ? "9999-12-31T23:59:59.999Z" : new Date(Date.now() + milliseconds).toISOString();
 		void update(() => api.setConversationMuted(conversation.id, until));
+	}
+
+	async function confirmBlock(): Promise<void> {
+		if (!peer || isSaving) return;
+		setIsSaving(true);
+		setError("");
+		try {
+			await blockUser(peer.id);
+			setIsConfirmingBlock(false);
+			close();
+		} catch (caught) {
+			setError(caught instanceof Error ? caught.message : "Could not update conversation");
+		} finally {
+			setIsSaving(false);
+		}
 	}
 
 	return (
@@ -237,10 +251,7 @@ export function ConversationActions({ conversation, currentUserId }: Conversatio
 										variant="ghost"
 										role="menuitem"
 										disabled={isSaving}
-										// Blocking asks; unblocking does not. Same rule the
-										// details panel follows — one of them is the decision,
-										// and confirming the way back out of it only punishes
-										// changing your mind.
+										// Blocking asks; unblocking does not.
 										onClick={() => {
 											if (isBlocked) void update(() => unblockUser(peer.id));
 											else {
@@ -248,9 +259,7 @@ export function ConversationActions({ conversation, currentUserId }: Conversatio
 												setIsConfirmingBlock(true);
 											}
 										}}
-										// Separated and in signal ink: the three above are
-										// housekeeping you undo by clicking again, this one ends
-										// contact with a person.
+										// Kept apart from reversible housekeeping actions.
 										className="w-full justify-start border-t border-rule-soft px-2.5 py-2 text-signal"
 									>
 										<Ban className="size-4" />
@@ -273,11 +282,13 @@ export function ConversationActions({ conversation, currentUserId }: Conversatio
 					title={`Block ${peer.displayName}?`}
 					body={`Neither of you will be able to message the other, and you will stop appearing in each other's search. Messages you have already exchanged stay, and groups you are both in are not affected.`}
 					confirmLabel="Block"
-					onConfirm={() => {
+					isConfirming={isSaving}
+					error={error}
+					onConfirm={() => void confirmBlock()}
+					onCancel={() => {
+						setError("");
 						setIsConfirmingBlock(false);
-						void update(() => blockUser(peer.id));
 					}}
-					onCancel={() => setIsConfirmingBlock(false)}
 				/>
 			)}
 		</div>

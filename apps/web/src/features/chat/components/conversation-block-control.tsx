@@ -3,7 +3,7 @@ import { Ban } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { useBlockedUsers } from "../hooks/use-blocked-users";
+import { useBlockedUsers } from "@/hooks/use-blocked-users";
 
 interface ConversationBlockControlProps {
 	peer: UserDTO;
@@ -30,18 +30,23 @@ export function ConversationBlockControl({ peer }: ConversationBlockControlProps
 	const unblock = useBlockedUsers((state) => state.unblock);
 	const [isAsking, setIsAsking] = useState(false);
 	const [isSaving, setIsSaving] = useState(false);
+	const [error, setError] = useState("");
 
 	useEffect(() => {
-		void load();
-	}, [load]);
+		void load(peer.id);
+	}, [load, peer.id]);
 
 	async function apply(shouldBlock: boolean) {
+		if (isSaving) return;
 		setIsSaving(true);
+		setError("");
 		try {
 			await (shouldBlock ? block(peer.id) : unblock(peer.id));
+			setIsAsking(false);
+		} catch (caught) {
+			setError(caught instanceof Error ? caught.message : "Could not update block settings");
 		} finally {
 			setIsSaving(false);
-			setIsAsking(false);
 		}
 	}
 
@@ -50,7 +55,11 @@ export function ConversationBlockControl({ peer }: ConversationBlockControlProps
 			<Button
 				variant={isBlocked ? "outline" : "danger"}
 				disabled={isSaving}
-				onClick={() => (isBlocked ? void apply(false) : setIsAsking(true))}
+				onClick={() => {
+					setError("");
+					if (isBlocked) void apply(false);
+					else setIsAsking(true);
+				}}
 				className="w-full"
 			>
 				<Ban className="size-4" />
@@ -65,9 +74,20 @@ export function ConversationBlockControl({ peer }: ConversationBlockControlProps
 					// find the exception out at the worst moment.
 					body={`Neither of you will be able to message the other, and you will stop appearing in each other's search. Messages you have already exchanged stay, and groups you are both in are not affected.`}
 					confirmLabel="Block"
+					isConfirming={isSaving}
+					error={error}
 					onConfirm={() => void apply(true)}
-					onCancel={() => setIsAsking(false)}
+					onCancel={() => {
+						setError("");
+						setIsAsking(false);
+					}}
 				/>
+			)}
+
+			{error && !isAsking && (
+				<p role="alert" className="mt-2 text-[13px] text-signal">
+					{error}
+				</p>
 			)}
 		</div>
 	);

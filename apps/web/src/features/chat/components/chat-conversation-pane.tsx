@@ -1,6 +1,9 @@
 import type { ConversationDTO, MessageDTO } from "@chatty/shared-types";
 import type { ComponentProps } from "react";
+import { useEffect } from "react";
+import { useBlockedUsers } from "@/hooks/use-blocked-users";
 import type { MessageSearchSession } from "../types/message-search";
+import { getDirectPeer } from "../utils";
 import { ConversationHeader } from "./conversation-header";
 import { ConversationMessageSearch } from "./conversation-message-search";
 import { ConversationVaultPanel } from "./conversation-vault-panel";
@@ -55,6 +58,14 @@ export function ChatConversationPane({
 	messageListProps,
 	messageInputProps,
 }: ChatConversationPaneProps) {
+	const peer = conversation.isGroup ? null : getDirectPeer(conversation, currentUserId);
+	const isBlocked = useBlockedUsers((state) => Boolean(peer && state.blockedIds.has(peer.id)));
+	const loadBlocked = useBlockedUsers((state) => state.load);
+
+	useEffect(() => {
+		if (peer) void loadBlocked(peer.id);
+	}, [loadBlocked, peer]);
+
 	return (
 		<>
 			{forwardingMessage && (
@@ -103,7 +114,7 @@ export function ChatConversationPane({
 					<MessageList {...messageListProps} />
 				)}
 			</div>
-			<MessageInput {...messageInputProps} />
+			<MessageInput {...messageInputProps} isDisabled={isBlocked} />
 		</>
 	);
 }

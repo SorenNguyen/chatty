@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
 import { prisma } from "../src/lib/prisma.js";
 import { register } from "../src/modules/auth/auth.service.js";
+import { blockUser } from "../src/modules/blocks/blocks.service.js";
 import { createConversation } from "../src/modules/conversations/conversations.service.js";
 import { initSockets } from "../src/sockets/index.js";
 
@@ -160,6 +161,20 @@ describe("typing over the socket", () => {
 		expect(await heard).toBeNull();
 	});
 
+	it("drops typing across a direct block even when both sockets connected first", async () => {
+		const minh = await createUser("minh");
+		const an = await createUser("an");
+		const conversation = await createConversation(minh.id, { participantIds: [an.id] });
+		const minhSocket = await connectAs(minh.token);
+		const anSocket = await connectAs(an.token);
+
+		await blockUser(an.id, minh.id);
+		const heard = nextEvent(anSocket, "typing:update");
+		minhSocket.emit("typing:start", { conversationId: conversation.id });
+
+		expect(await heard).toBeNull();
+	});
+
 	it("survives a malformed payload", async () => {
 		const minh = await createUser("minh");
 		const an = await createUser("an");
@@ -208,6 +223,19 @@ describe("personal conversation updates over the socket", () => {
 });
 
 describe("presence over the socket", () => {
+	it("does not announce presence through a blocked direct conversation after reconnecting", async () => {
+		const minh = await createUser("minh");
+		const an = await createUser("an");
+		await createConversation(minh.id, { participantIds: [an.id] });
+		await blockUser(minh.id, an.id);
+
+		const minhSocket = await connectAs(minh.token);
+		const heard = nextEvent(minhSocket, "presence:update");
+		await connectAs(an.token);
+
+		expect(await heard).toBeNull();
+	});
+
 	it("stores and announces last seen when the last connection closes", async () => {
 		const minh = await createUser("minh");
 		const an = await createUser("an");

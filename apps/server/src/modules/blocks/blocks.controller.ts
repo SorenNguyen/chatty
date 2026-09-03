@@ -1,9 +1,16 @@
 import type { Request, Response } from "express";
 import * as blocksService from "./blocks.service.js";
-import { blockParamsSchema } from "./blocks.schema.js";
+import { blockParamsSchema, listBlockedUsersQuerySchema } from "./blocks.schema.js";
 
 export async function listBlockedUsersController(req: Request, res: Response): Promise<void> {
-	res.status(200).json(await blocksService.listBlockedUsers(req.userId!));
+	const query = listBlockedUsersQuerySchema.parse(req.query);
+	res.status(200).json(await blocksService.listBlockedUsers(req.userId!, query));
+}
+
+/** Only answers whether the caller themselves blocked this person, never the reverse. */
+export async function getBlockStatusController(req: Request, res: Response): Promise<void> {
+	const params = blockParamsSchema.parse(req.params);
+	res.status(200).json(await blocksService.getBlockStatus(req.userId!, params.userId));
 }
 
 /**

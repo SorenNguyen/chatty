@@ -1,5 +1,5 @@
 import type { ChangeEvent, FormEvent } from "react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { MessageDTO, ParticipantDTO } from "@chatty/shared-types";
 import { cn } from "@/utils/cn";
 import { useTypingNotifier } from "../hooks";
@@ -15,22 +15,18 @@ interface MessageInputProps {
 	conversationId: string;
 	participants: ParticipantDTO[];
 	currentUserId: string;
-	/** The message being answered, or null for an ordinary send. Owned by the page. */
+	/** Only true for the caller's own direct block, never the reverse direction. */
+	isDisabled?: boolean;
+	/** The message being answered, or null for an ordinary send. */
 	replyTo: MessageDTO | null;
 	onCancelReply: () => void;
-	/**
-	 * Owned by the page, because a message appears in the thread before the
-	 * server has it and the thread is this component's sibling. Pictures included
-	 * as of phase 29 — see `useConversationMessages`, which measures them first so
-	 * the gallery reserves the right box.
-	 */
+	/** Owned by the page because the thread, including optimistic messages, is its sibling. */
 	onSend: (
 		content: string,
 		attachments: File[],
 		replyTo: MessageDTO | null,
 		mentionedUserIds?: string[],
 	) => Promise<void>;
-	/** Sends a saved sticker. Its own path because a sticker is the whole message. */
 	onSendSticker: (stickerId: string, replyTo: MessageDTO | null) => Promise<void>;
 	onSendFile: (
 		file: File,
@@ -46,6 +42,7 @@ export function MessageInput({
 	conversationId,
 	participants,
 	currentUserId,
+	isDisabled = false,
 	replyTo,
 	onCancelReply,
 	onSend,
@@ -107,7 +104,16 @@ export function MessageInput({
 	// A message is allowed to be pictures with nothing written on them.
 	const hasSomethingToSend = Boolean(content.trim()) || attachments.length > 0 || selectedFile !== null;
 
+	useEffect(() => {
+		if (!isDisabled) return;
+
+		stopTyping();
+		setIsEmojiPickerOpen(false);
+		setIsStickerTrayOpen(false);
+	}, [isDisabled, stopTyping]);
+
 	function handleChange(event: ChangeEvent<HTMLInputElement>) {
+		if (isDisabled) return;
 		setContent(event.target.value);
 		notifyTyping();
 	}
@@ -127,8 +133,7 @@ export function MessageInput({
 
 		setContent(next);
 		notifyTyping();
-		// After the render that applies `next`, or the caret is set against the old
-		// value and lands in the wrong place.
+		// Wait for the new value to render before placing the caret.
 		requestAnimationFrame(() => {
 			field?.focus();
 			field?.setSelectionRange(caret + char.length, caret + char.length);
@@ -136,8 +141,8 @@ export function MessageInput({
 	}
 
 	function sendSticker(stickerId: string) {
-		// Closed on send: a sticker is the whole message, so there is nothing left
-		// to compose and a tray still covering the thread hides what was just sent.
+		if (isDisabled) return;
+		// A sticker is the whole message, so its tray must not cover what was just sent.
 		setIsStickerTrayOpen(false);
 		stopTyping();
 		const target = replyTo;
@@ -149,7 +154,7 @@ export function MessageInput({
 
 	async function handleSubmit(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
-		if (!hasSomethingToSend) return;
+		if (isDisabled || !hasSomethingToSend) return;
 
 		// Retract before the request: a slow network must not leave "typing…" behind.
 		stopTyping();
@@ -165,10 +170,7 @@ export function MessageInput({
 			)
 			.map((participant) => participant.id);
 
-		// A text-only send empties the composer *before* the round trip, because
-		// the message is already in the thread by then — the whole point of the
-		// optimistic bubble is that writing the next one does not wait on the
-		// network. A failed send is reported on that bubble, not here.
+		// Empty text before the round trip; the optimistic bubble owns any failure.
 		if (selectedFile) {
 			setIsSending(true);
 			setUploadProgress(0);
@@ -205,11 +207,7 @@ export function MessageInput({
 			return;
 		}
 
-		// Pictures now empty the composer up front, exactly as text does. They
-		// used to be held here behind a progress bar until the upload landed,
-		// which meant the previews and the bubble were never on screen together —
-		// and it also meant a failed photo was reported in two places at once.
-		// It is reported on the bubble now, which is where the retry is.
+		// Pictures also empty optimistically; their bubble owns the retry state.
 		setContent("");
 		setAttachments([]);
 		clearDraft();
@@ -225,6 +223,11 @@ export function MessageInput({
 
 	return (
 		<div className="shrink-0 border-t border-rule-soft bg-paper-raised px-3 py-2.5 sm:px-4 md:px-5">
+			{isDisabled && (
+				<p role="status" className="mb-2 rounded-control bg-signal-soft px-3 py-2 text-[13px] text-signal">
+					You blocked this person. Unblock them to send a message.
+				</p>
+			)}
 			<form
 				onSubmit={handleSubmit}
 				className={cn(
@@ -250,6 +253,7 @@ export function MessageInput({
 				<ComposerMentionSuggestions participants={mentionSuggestions} onPick={insertMention} />
 
 				<ComposerControls
+					isDisabled={isDisabled}
 					isSending={isSending || isVoiceActive}
 					isVoiceActive={isVoiceActive}
 					isFull={isFull}
@@ -276,7 +280,7 @@ export function MessageInput({
 							value={content}
 							onChange={handleChange}
 							onPaste={handlePaste}
-							disabled={isVoiceActive}
+							disabled={isDisabled || isVoiceActive}
 							placeholder="Write a message"
 							aria-label="Message"
 							className="min-w-0 flex-1 bg-transparent px-2.5 py-2.5 text-sm text-ink outline-none placeholder:text-ink-faint"
@@ -284,7 +288,7 @@ export function MessageInput({
 					}
 					voiceRecorder={
 						<VoiceRecorder
-							isDisabled={isSending || hasSomethingToSend || replyTo !== null}
+							isDisabled={isDisabled || isSending || hasSomethingToSend || replyTo !== null}
 							onSend={onSendVoice}
 							onActiveChange={setIsVoiceActive}
 						/>

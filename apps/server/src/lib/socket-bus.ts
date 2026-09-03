@@ -51,3 +51,16 @@ export function getIO(): ChattyServer {
 
 	return io;
 }
+
+/**
+ * The transport is intentionally optional for committed account policy writes.
+ *
+ * A block must not answer 500 after its database transaction committed merely
+ * because an HTTP-only test server, a maintenance process or shutdown has no
+ * Socket.io instance left to reconcile. Callers that require delivery still use
+ * `getIO`; callers applying durable privacy policy may skip its best-effort
+ * realtime cleanup and reconnect through the database policy instead.
+ */
+export function getOptionalIO(): ChattyServer | undefined {
+	return io;
+}

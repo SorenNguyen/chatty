@@ -141,6 +141,26 @@ describe("createConversation", () => {
 		expect(second.id).toBe(first.id);
 	});
 
+	it("serializes simultaneous direct conversation creation", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+
+		const [first, second] = await Promise.all([
+			createConversation(minhId, { participantIds: [anId] }),
+			createConversation(anId, { participantIds: [minhId] }),
+		]);
+
+		expect(second.id).toBe(first.id);
+		await expect(
+			prisma.conversation.count({
+				where: {
+					isGroup: false,
+					AND: [{ participants: { some: { userId: minhId } } }, { participants: { some: { userId: anId } } }],
+				},
+			}),
+		).resolves.toBe(1);
+	});
+
 	it("creates a group when there is more than one other participant", async () => {
 		const minhId = await createUser("minh");
 		const anId = await createUser("an");

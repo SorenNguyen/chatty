@@ -7,7 +7,9 @@ export function usePresenceLastSeenSync(setConversations: Dispatch<SetStateActio
 		"presence:update",
 		useCallback(
 			(event: PresenceEvent) => {
-				if (event.isOnline || !event.lastSeenAt) return;
+				// `null` is meaningful: a privacy change (including a direct block)
+				// withdraws a timestamp already rendered on another open device.
+				if (event.isOnline) return;
 				setConversations((current) =>
 					current.map((conversation) => ({
 						...conversation,

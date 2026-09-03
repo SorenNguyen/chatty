@@ -16,7 +16,11 @@ import { logger } from "../../lib/logger.js";
 import { prisma } from "../../lib/prisma.js";
 import { readOwnedStickerPath } from "../stickers/stickers.service.js";
 import { getIO, userRoom } from "../../lib/socket-bus.js";
-import { assertNotBlocked } from "../blocks/blocks.service.js";
+import {
+	assertDirectContactAvailable,
+	assertDirectConversationAvailable,
+	isDirectConversationBlocked,
+} from "../blocks/blocks.service.js";
 import { assertParticipant } from "../conversations/conversations.service.js";
 import { messageSelect, toMessageDTO, type MessageRow } from "./messages.mapper.js";
 import { MESSAGE_AUTHOR_ACTION_WINDOW_MS } from "./messages.constants.js";
@@ -72,6 +76,13 @@ export async function sendMessage(
 	// case. This is only a cheap guard; the check inside the locked transaction
 	// below is the authority when membership changes concurrently.
 	await assertParticipant(currentUserId, conversationId);
+	// Give a blocked direct sender the cheap rejection before media decoding and
+	// disk writes. This snapshot is deliberately followed by the locked check in
+	// the transaction below: it improves resource use, but cannot be the policy
+	// authority when a block commits concurrently.
+	if (await isDirectConversationBlocked(currentUserId, conversationId)) {
+		throw new ForbiddenError("This conversation is unavailable");
+	}
 	let content = input.content;
 	let forwardedSource:
 		| {
@@ -286,7 +297,7 @@ export async function sendMessage(
 		// Groups are exempt on purpose; see `blocks.service`.
 		if (!conversation.isGroup) {
 			const otherId = [...participantIds].find((id) => id !== currentUserId);
-			if (otherId) await assertNotBlocked(currentUserId, otherId);
+			if (otherId) await assertDirectContactAvailable(currentUserId, otherId, transaction);
 		}
 
 		const mentionedUserIds = [...new Set(input.mentionedUserIds ?? [])];
@@ -430,6 +441,7 @@ export async function setMessagePinned(
 			SELECT id FROM "Conversation" WHERE id = ${conversationId} FOR UPDATE
 		`;
 		await assertParticipant(userId, conversationId, transaction);
+		await assertDirectConversationAvailable(userId, conversationId, transaction);
 		const message = await transaction.message.findFirst({
 			where: { id: messageId, conversationId, deletedAt: null },
 			select: { id: true },
@@ -574,6 +586,7 @@ async function loadEditableMessage(
 	`;
 
 	await assertParticipant(currentUserId, conversationId, transaction);
+	await assertDirectConversationAvailable(currentUserId, conversationId, transaction);
 
 	const message = await transaction.message.findUnique({
 		where: { id: messageId },
@@ -801,21 +814,6 @@ export async function toggleReaction(
 	messageId: string,
 	input: ToggleReactionInput,
 ): Promise<MessageDTO> {
-	await assertParticipant(currentUserId, conversationId);
-
-	const target = await prisma.message.findFirst({
-		// Scoped by conversation, so an id from a conversation the caller is not in
-		// is a 404 rather than a reaction landing somewhere they cannot see.
-		where: { id: messageId, conversationId },
-		select: { id: true, deletedAt: true, kind: true },
-	});
-	if (!target) throw new NotFoundError("Message not found");
-	// Both refusals are about there being nothing to react *to*. A tombstone has
-	// surrendered its content, and the mapper drops its reactions anyway — storing
-	// one would be a row nobody could ever see. A system line is the app talking.
-	if (target.deletedAt) throw new ValidationError("This message was deleted");
-	if (target.kind === "SYSTEM") throw new ValidationError("You cannot react to a system message");
-
 	// Three outcomes from one call, and the order is what makes them fall out
 	// without a read first: delete the caller's reaction if it is already this
 	// emoji, and otherwise write this one over whatever else they had. The upsert
@@ -826,23 +824,42 @@ export async function toggleReaction(
 	// In a transaction because the pair is a read-modify-write in disguise:
 	// double-tapping fires two of these, and without it both can see nothing to
 	// delete and race into the upsert.
-	await prisma.$transaction(async (tx) => {
-		const removed = await tx.messageReaction.deleteMany({
+	const message = await prisma.$transaction(async (transaction) => {
+		await transaction.$queryRaw`
+			SELECT id FROM "Conversation" WHERE id = ${conversationId} FOR UPDATE
+		`;
+		await assertParticipant(currentUserId, conversationId, transaction);
+		await assertDirectConversationAvailable(currentUserId, conversationId, transaction);
+		const target = await transaction.message.findFirst({
+			// Scoped by conversation, so an id from a conversation the caller is not in
+			// is a 404 rather than a reaction landing somewhere they cannot see.
+			where: { id: messageId, conversationId },
+			select: { id: true, deletedAt: true, kind: true },
+		});
+		if (!target) throw new NotFoundError("Message not found");
+		// Both refusals are about there being nothing to react *to*. A tombstone has
+		// surrendered its content, and the mapper drops its reactions anyway — storing
+		// one would be a row nobody could ever see. A system line is the app talking.
+		if (target.deletedAt) throw new ValidationError("This message was deleted");
+		if (target.kind === "SYSTEM") throw new ValidationError("You cannot react to a system message");
+
+		const removed = await transaction.messageReaction.deleteMany({
 			where: { messageId, userId: currentUserId, emoji: input.emoji },
 		});
-		if (removed.count > 0) return;
+		if (removed.count === 0) {
+			await transaction.messageReaction.upsert({
+				where: { messageId_userId: { messageId, userId: currentUserId } },
+				create: { messageId, userId: currentUserId, emoji: input.emoji },
+				// `createdAt` moves with the emoji. The mapper orders chips by it, so
+				// leaving it would put a reaction somebody just changed to in the
+				// position of the one they abandoned.
+				update: { emoji: input.emoji, createdAt: new Date() },
+			});
+		}
 
-		await tx.messageReaction.upsert({
-			where: { messageId_userId: { messageId, userId: currentUserId } },
-			create: { messageId, userId: currentUserId, emoji: input.emoji },
-			// `createdAt` moves with the emoji. The mapper orders chips by it, so
-			// leaving it would put a reaction somebody just changed to in the
-			// position of the one they abandoned.
-			update: { emoji: input.emoji, createdAt: new Date() },
-		});
+		return transaction.message.findUniqueOrThrow({ where: { id: messageId }, select: messageSelect });
 	});
 
-	const message = await prisma.message.findUniqueOrThrow({ where: { id: messageId }, select: messageSelect });
 	const messageDTO = toMessageDTO(message);
 
 	// `message:updated`, not an event of its own. The DTO carries the whole

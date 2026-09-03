@@ -7,6 +7,7 @@ import { EmojiPicker } from "./emoji-picker";
 import { StickerTray } from "./sticker-tray";
 
 interface ComposerControlsProps {
+	isDisabled: boolean;
 	isSending: boolean;
 	isVoiceActive: boolean;
 	/** True at the attachment cap: the picker is disabled rather than silently trimming. */
@@ -35,6 +36,7 @@ interface ComposerControlsProps {
  * file inputs because they only exist to support that trigger.
  */
 export function ComposerControls({
+	isDisabled,
 	isSending,
 	isVoiceActive,
 	isFull,
@@ -70,7 +72,7 @@ export function ComposerControls({
 
 			{!isVoiceActive && (
 				<ComposerAttachmentMenu
-					isDisabled={isSending}
+					isDisabled={isDisabled || isSending}
 					isFull={isFull}
 					onOpen={() => {
 						onCloseEmojiPicker();
@@ -93,7 +95,7 @@ export function ComposerControls({
 				<Button
 					variant="ghost"
 					onClick={onToggleEmojiPicker}
-					disabled={isSending}
+					disabled={isDisabled || isSending}
 					aria-label="Insert an emoji"
 					aria-expanded={isEmojiPickerOpen}
 					className="mr-1 size-8 shrink-0 rounded-bubble p-0 text-ink-faint hover:text-ink"
@@ -109,7 +111,7 @@ export function ComposerControls({
 			{!isVoiceActive && canSend && (
 				<Button
 					type="submit"
-					disabled={isSending}
+					disabled={isDisabled || isSending}
 					aria-label="Send message"
 					className="size-9 shrink-0 rounded-bubble p-0"
 				>

@@ -33,6 +33,18 @@ export interface UserDTO {
 	lastSeenAt: string | null;
 }
 
+/** A bounded page of people the signed-in user has blocked. */
+export interface BlockedUsersPageDTO {
+	items: UserDTO[];
+	/** Pass this to the next request; null means the final page. */
+	nextCursor: string | null;
+}
+
+/** The caller's own block state for one person. It never reveals the reverse direction. */
+export interface BlockStatusDTO {
+	isBlocked: boolean;
+}
+
 export type PresenceVisibility = "everyone" | "contacts" | "nobody";
 
 /**
@@ -723,6 +735,27 @@ export interface TypingEvent {
 	isTyping: boolean;
 }
 
+/**
+ * The signed-in person blocked or unblocked somebody, from one of their other
+ * sessions.
+ *
+ * Sent to the actor's own room and **nowhere else**. The payload is their own
+ * directed row, which is the one block fact they are already allowed to ask for
+ * over HTTP — so this adds no information, it only stops a second tab or a phone
+ * from offering "Block" for somebody already blocked, or leaving a composer
+ * disabled after the block was lifted elsewhere.
+ *
+ * Emitting the counterpart to the *other* person would be a leak even with
+ * `isBlocked: false` in it: the arrival of the event is itself the timing signal
+ * that someone just blocked them, which is exactly what `GET /blocks/:id/status`
+ * refuses to answer.
+ */
+export interface BlockChangedEvent {
+	/** The other person, not the actor — the actor is whoever the room belongs to. */
+	userId: string;
+	isBlocked: boolean;
+}
+
 /** Someone you share a conversation with connected or dropped their last connection. */
 export interface PresenceEvent {
 	userId: string;
@@ -821,6 +854,7 @@ export interface ServerToClientEvents {
 	"conversation:self-updated": (event: ConversationSelfUpdatedEvent) => void;
 	"message:pins-updated": (event: { conversationId: string; pinnedMessages: PinnedMessageDTO[] }) => void;
 	"typing:update": (event: TypingEvent) => void;
+	"block:changed": (event: BlockChangedEvent) => void;
 	"presence:update": (event: PresenceEvent) => void;
 	"presence:snapshot": (event: PresenceSnapshotEvent) => void;
 }

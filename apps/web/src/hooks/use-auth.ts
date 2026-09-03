@@ -1,6 +1,7 @@
 import type { CurrentUserDTO, RegisterRequest } from "@chatty/shared-types";
 import { create } from "zustand";
 import { api, clearStoredToken, getStoredRefreshToken, getStoredToken, storeSession } from "@/api/client";
+import { useBlockedUsers } from "@/hooks/use-blocked-users";
 import { closeSocket } from "@/lib/socket";
 
 interface AuthState {
@@ -53,12 +54,14 @@ export const useAuth = create<AuthState>((set) => ({
 	async login(email, password) {
 		const { token, refreshToken } = await api.login({ email, password });
 		storeSession(token, refreshToken);
+		useBlockedUsers.getState().reset();
 		set({ currentUser: await api.getCurrentUser() });
 	},
 
 	async register(input) {
 		const { token, refreshToken } = await api.register(input);
 		storeSession(token, refreshToken);
+		useBlockedUsers.getState().reset();
 		set({ currentUser: await api.getCurrentUser() });
 	},
 
@@ -84,6 +87,7 @@ export const useAuth = create<AuthState>((set) => ({
 		// session untouched.
 		clearStoredToken();
 		closeSocket();
+		useBlockedUsers.getState().reset();
 		set({ currentUser: null });
 	},
 
@@ -99,6 +103,7 @@ export const useAuth = create<AuthState>((set) => ({
 		// The socket authenticated with the old token; leaving it open would keep
 		// pushing the previous user's messages into the next user's session.
 		closeSocket();
+		useBlockedUsers.getState().reset();
 		set({ currentUser: null });
 	},
 
@@ -119,6 +124,7 @@ export const useAuth = create<AuthState>((set) => ({
 			// Expired or tampered token — drop it rather than leaving the app in a
 			// half-authenticated state where every request 401s.
 			clearStoredToken();
+			useBlockedUsers.getState().reset();
 			set({ currentUser: null, isRestoring: false });
 		}
 	},

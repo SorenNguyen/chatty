@@ -2201,10 +2201,11 @@ creation would stop nothing at all for exactly the people most likely to need it
 is therefore in `sendMessage`, **inside the locked transaction**, next to the membership re-check and
 for the same reason: a send racing a block resolves in one honest order.
 
-Three places in total — create a direct conversation, send to one, and user search — and search is
-filtered **in both directions**. Hiding only the people you blocked would leave you visible to them,
-so they could still find you, be refused, and learn precisely what had happened. Both refusals say the
-same sentence about the conversation rather than about either person, for the same reason.
+The initial delivery covered direct creation, sending and user search; this follow-up adds the realtime
+boundary and concurrency ordering they also need in production. Search is filtered **in both
+directions**. Hiding only the people you blocked would leave you visible to them, so they could still
+find you, be refused, and learn precisely what had happened. Both refusals say the same sentence about
+the conversation rather than about either person, for the same reason.
 
 ### What a block does not do
 
@@ -2247,6 +2248,43 @@ next migration touching this schema, written one phase earlier. The guard caught
 own false positive: the first version of the check read the migration's *prose* explaining why the
 line had been removed. It strips SQL comments now, and is tested both ways — a comment mentioning the
 line passes, real SQL fails.
+
+### Phase 32 follow-up — blocking, hardened for privacy and scale
+
+Phase 32 gave a direct conversation a block rule. This pass makes that rule
+hold at the boundaries where a production system leaks it if it is treated as a
+single `sendMessage` check.
+
+| # | Item | Status |
+| --- | --- | --- |
+| 102 | Cursor-paged block management, race-safe enforcement and realtime privacy | Done |
+
+**The privacy list is bounded.** `GET /blocks` is now keyset-paged by its own
+row, and the conversation UI asks the smaller question it actually needs —
+whether *I* blocked this one person. That answer is cached only for people the
+user makes actionable, never fetched as every id in the account's block list.
+The reverse direction is not exposed, so the status endpoint cannot become a
+"did they block me?" oracle. A new **Blocked users** entry in settings is the
+account-level way to review pages and unblock someone; a chat may be archived or
+far below the sidebar, so the chat menu cannot be the only door back out.
+
+**A block and a direct write are ordered together.** A missing `UserBlock` row
+cannot be protected with a row lock, so `block`, `unblock`, direct-conversation
+creation and direct sends share a PostgreSQL transaction advisory lock keyed by
+the unordered pair of users. This closes both races: block cannot lose to a
+send that read too early, and two tabs cannot create duplicate direct threads.
+The service passes its transaction into the policy check — a check that silently
+uses the global Prisma client from inside a transaction is not part of the
+transaction at all.
+
+**Realtime obeys the same policy.** Once a block commits, each person's live
+sockets leave every matching direct room; reconnects select only rooms that the
+database policy permits. The typing handler rechecks the database too, because
+a socket room is delivery bookkeeping rather than authorization and can be
+briefly stale. A direct-only pair has its cached presence withdrawn immediately;
+shared-group presence stays visible because that group remains a deliberate,
+shared context. This prevents a direct relationship from leaking typing, online
+state or read-receipt events while preserving the existing group policy.
 
 ## Phase 33 — the last unbounded query — `done`
 
@@ -2299,6 +2337,73 @@ the composer's reply target moved into `useReplyTarget` — two pieces of state 
 together, plus the effect resolving one into the other, which was never really the page's business.
 The sidebar is the second pager in this feature, so the vault's IntersectionObserver effect became
 `useInfiniteScroll` and both now read it.
+
+## Phase 34 — what enforcing a block left behind — `done`
+
+Item 102 made the block store ask one small question per person instead of downloading the account's
+whole list, and cache the answer for the session. That cache had nobody to invalidate it. The same
+pass put the block check on the busiest socket handler in the app without noticing what that cost.
+
+| # | Item | Status |
+| --- | --- | --- |
+| 103 | The blocker's other sessions learn about their own block | Done |
+| 104 | The typing handler stops querying the database per keystroke, and stops being able to crash | Done |
+
+**The bug.** Block somebody on the phone with the laptop still open, and the laptop keeps offering
+"Block" in the row menu and keeps its composer enabled — the send then fails with the deliberately
+vague "This conversation is unavailable", which is the right sentence for the *other* person and a
+lie to the one who pressed the button. Unblocking is the worse direction: the laptop holds "You
+blocked this person" over a dead composer until somebody reloads the page.
+
+**Only the actor's room, and that is the whole design.** `block:changed` carries the actor's own
+directed row — the same fact `GET /blocks/:id/status` already answers for them — to `user:<actor>`
+and nowhere else. Sending the counterpart to the other person would leak even with `isBlocked: false`
+in the payload, because the *arrival* of an event at the moment somebody blocks you is the timing
+signal the status endpoint exists to refuse. That is why this event is emitted separately from the
+symmetric `presence:update` withdrawal beside it, rather than as one loop over both people.
+
+It is read inside the same locked transaction that reconciles the socket rooms, and read separately
+from the symmetric `hasBlockBetween` — two tabs racing a block and an unblock settle on the last
+committed row rather than on whichever emit lands second. It is also emitted **before** the early
+return for a pair with no direct conversation, because unblocking from account settings is ordinary
+and there may be nothing left to reconcile.
+
+**The socket is not always up.** An event delivers nothing to a session that was offline when it
+fired, so the reconnect that already refreshes the sidebar and resyncs the thread now re-resolves the
+block statuses too. Bounded by what the session actually asked about, never by the size of the
+account's block list. Dropping the cache instead would re-resolve nothing: consumers call `load` on
+mount, not on every render.
+
+### The keystroke path paid for it
+
+Rechecking the block policy in the typing handler is right — a socket room is delivery bookkeeping
+rather than authorization — but it was written as a database read on **every** `typing:start` and
+`typing:stop`, which is a round trip several times a sentence per person, on the busiest handler in
+the app, to answer a question whose answer changes about once in the life of a relationship. That is
+the exact cost the handler's own comment said the room lookup existed to avoid, and the comment had
+stopped being true.
+
+The verdict is now cached per socket per conversation for five seconds. Staleness is harmless in both
+directions: a block prunes the socket's rooms synchronously, so the hash lookup refuses before the
+cache is consulted, and an unblock can hold a refusal for a few seconds, which costs an indicator
+that expires on its own.
+
+The same handler had been given an `async` listener. socket.io neither awaits a handler nor catches
+what it rejects with, and an unhandled rejection ends a Node process by default — so one database
+blip during one keystroke was a way to take down an API instance. The relay now catches, and the
+policy check fails **closed** and caches the refusal, so an outage suppresses typing instead of
+turning every keystroke into another failing query and another log line.
+
+### What a block still does not do
+
+Beyond the group exemption recorded in phase 32, one thing is worth naming because it looks like an
+oversight and is not: **a direct conversation with a block in it refuses every recipient-visible
+write in both directions, including deleting a message you wrote.** So somebody who sends something
+they regret and then blocks the recipient cannot retract it without unblocking, deleting, and
+blocking again. The alternative — exempting deletion, since it only ever *removes* content — also
+hands a blocked person a tombstone channel into a thread the other person asked to close, and the
+8-hour author window is the only thing bounding it. Left as it is, deliberately, and recorded here so
+it is a decision rather than a surprise.
 
 ## Verification bar
 

@@ -12,6 +12,7 @@ vi.mock("@/api/client", () => ({
 		listSavedMessages: vi.fn(),
 		removeSavedMessage: vi.fn(),
 		listBlockedUsers: vi.fn(),
+		getBlockStatus: vi.fn(),
 	},
 }));
 
@@ -29,8 +30,8 @@ beforeEach(() => {
 	vi.mocked(api.listConversationLinks).mockReset().mockResolvedValue({ items: [], hasMore: false });
 	vi.mocked(api.listSavedMessages).mockReset().mockResolvedValue({ results: [], hasMore: false });
 	vi.mocked(api.removeSavedMessage).mockReset().mockResolvedValue(undefined);
-	// The block control at the top of the panel asks who is blocked on mount.
-	vi.mocked(api.listBlockedUsers).mockReset().mockResolvedValue([]);
+	// Block state is looked up only when a person is actionable, not for every row.
+	vi.mocked(api.getBlockStatus).mockReset().mockResolvedValue({ isBlocked: false });
 });
 
 function renderPanel(overrides: { isGroup?: boolean } = {}) {

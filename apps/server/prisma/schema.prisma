@@ -90,7 +90,8 @@ model UserBlock {
   @@unique([blockerId, blockedId])
   // "Does anyone block me?" is asked on every direct send, from the other side
   // of the pair the unique above serves.
-  @@index([blockedId])
+  @@index([blockedId, blockerId])
+  @@index([blockerId, createdAt, id])
 }
 
 enum PresenceVisibility {

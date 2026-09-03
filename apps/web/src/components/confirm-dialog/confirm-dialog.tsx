@@ -8,6 +8,10 @@ interface ConfirmDialogProps {
 	body: string;
 	/** Names the action rather than agreeing — "Remove", not "OK". */
 	confirmLabel: string;
+	/** Keeps an irreversible action from being submitted twice while it is in flight. */
+	isConfirming?: boolean;
+	/** A request error belongs beside the action that caused it, not behind the dialog. */
+	error?: string;
 	onConfirm: () => void;
 	onCancel: () => void;
 }
@@ -27,7 +31,15 @@ interface ConfirmDialogProps {
  * exists to slow down. Cancel is the first control in the DOM, so the focus
  * trap's opening move is the harmless one.
  */
-export function ConfirmDialog({ title, body, confirmLabel, onConfirm, onCancel }: ConfirmDialogProps) {
+export function ConfirmDialog({
+	title,
+	body,
+	confirmLabel,
+	isConfirming = false,
+	error,
+	onConfirm,
+	onCancel,
+}: ConfirmDialogProps) {
 	// `useDialog` re-binds its listener whenever this identity changes, and the
 	// caller usually passes an inline arrow.
 	const handleCancel = useCallback(() => onCancel(), [onCancel]);
@@ -46,14 +58,19 @@ export function ConfirmDialog({ title, body, confirmLabel, onConfirm, onCancel }
 				<div className="flex flex-col gap-1.5">
 					<h2 className="font-display text-[19px] leading-tight tracking-tight">{title}</h2>
 					<p className="text-[13px] text-ink-soft">{body}</p>
+					{error && (
+						<p role="alert" className="text-[13px] text-signal">
+							{error}
+						</p>
+					)}
 				</div>
 
 				<div className="flex justify-end gap-2">
-					<Button variant="ghost" onClick={handleCancel}>
+					<Button variant="ghost" disabled={isConfirming} onClick={handleCancel}>
 						Cancel
 					</Button>
-					<Button variant="danger" onClick={onConfirm}>
-						{confirmLabel}
+					<Button variant="danger" disabled={isConfirming} onClick={onConfirm}>
+						{isConfirming ? `${confirmLabel}…` : confirmLabel}
 					</Button>
 				</div>
 			</div>

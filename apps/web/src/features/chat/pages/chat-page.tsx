@@ -5,6 +5,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/utils/cn";
 import { ConnectionBanner, ChatConversationPane, ConversationSidebar, KeyboardShortcutsPanel } from "../components";
 import {
+	useBlockedUsersSync,
 	useConversationList,
 	useReplyTarget,
 	useConversationMessages,
@@ -36,6 +37,7 @@ export function ChatPage() {
 	const [cancelEditRequest, setCancelEditRequest] = useState(0);
 	const [isShortcutHelpOpen, setIsShortcutHelpOpen] = useState(false);
 
+	const refreshBlockedUsers = useBlockedUsersSync();
 	const onlineUserIds = usePresence();
 	const { activeUserIds: typingUserIds, typingByConversation } = useTypingParticipants(selectedConversationId);
 	const hasOpenPanel =
@@ -109,7 +111,8 @@ export function ChatPage() {
 		useCallback(() => {
 			refreshConversations();
 			resync();
-		}, [refreshConversations, resync]),
+			void refreshBlockedUsers();
+		}, [refreshBlockedUsers, refreshConversations, resync]),
 	);
 
 	useEffect(() => {

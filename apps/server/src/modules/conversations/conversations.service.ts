@@ -12,7 +12,7 @@ import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from ".
 import { prisma } from "../../lib/prisma.js";
 import { getIO, userRoom } from "../../lib/socket-bus.js";
 import { messageSelect, toMessageDTO, type MessageRow } from "../messages/messages.mapper.js";
-import { assertNotBlocked } from "../blocks/blocks.service.js";
+import { assertDirectContactAvailable, isDirectConversationBlockedInTransaction } from "../blocks/blocks.service.js";
 import { toUserDTO, userSelect, type UserRow } from "../users/users.mapper.js";
 import type {
 	AddParticipantInput,
@@ -249,6 +249,7 @@ async function countUnreadByConversation(userId: string, conversationIds: string
  * conversation exists, which lets an outsider probe for valid ids.
  */
 type ParticipantReader = Pick<Prisma.TransactionClient, "conversationParticipant">;
+type DirectConversationReader = Pick<Prisma.TransactionClient, "conversation">;
 
 export async function assertParticipant(
 	userId: string,
@@ -270,8 +271,12 @@ export async function assertParticipant(
  * and splits the history in half. Group conversations are deliberately NOT
  * deduplicated — the same set of people may legitimately want several groups.
  */
-async function findExistingDirectConversation(userId: string, otherUserId: string): Promise<string | null> {
-	const candidates = await prisma.conversation.findMany({
+async function findExistingDirectConversation(
+	userId: string,
+	otherUserId: string,
+	database: DirectConversationReader = prisma,
+): Promise<string | null> {
+	const candidates = await database.conversation.findMany({
 		where: {
 			isGroup: false,
 			AND: [{ participants: { some: { userId } } }, { participants: { some: { userId: otherUserId } } }],
@@ -382,24 +387,42 @@ export async function createConversation(
 	const isGroup = otherUserIds.length > 1;
 
 	if (!isGroup) {
-		// Before the lookup, so a block refuses the request rather than quietly
-		// handing back the conversation the two of them already had. Groups are
-		// deliberately exempt — see `blocks.service`.
-		await assertNotBlocked(currentUserId, otherUserIds[0]!);
+		const otherUserId = otherUserIds[0]!;
+		const direct = await prisma.$transaction(async (transaction) => {
+			// The lock covers a missing UserBlock row too, so a direct creation and a
+			// block cannot both pass their independent reads and commit in the wrong
+			// order. It also makes the find-then-create deduplication safe across tabs.
+			await assertDirectContactAvailable(currentUserId, otherUserId, transaction);
 
-		const existingId = await findExistingDirectConversation(currentUserId, otherUserIds[0]!);
+			const existingId = await findExistingDirectConversation(currentUserId, otherUserId, transaction);
+			if (existingId) return { conversationId: existingId, isNew: false };
 
-		if (existingId) {
-			const existing = await prisma.conversation.findUniqueOrThrow({
-				where: { id: existingId },
-				include: conversationIncludeForUser(currentUserId),
+			const created = await transaction.conversation.create({
+				data: {
+					isGroup: false,
+					participants: { create: [currentUserId, otherUserId].map((userId) => ({ userId })) },
+				},
+				select: { id: true },
 			});
-			// This branch returns a thread that may have years of history, so the
-			// count is looked up rather than assumed to be zero the way it is below.
-			const unreadCounts = await countUnreadByConversation(currentUserId, [existing.id]);
 
-			return toConversationDTO(existing, unreadCounts.get(existing.id) ?? 0, currentUserId);
+			return { conversationId: created.id, isNew: true };
+		});
+
+		const conversation = await prisma.conversation.findUniqueOrThrow({
+			where: { id: direct.conversationId },
+			include: conversationIncludeForUser(currentUserId),
+		});
+		const unreadCounts = direct.isNew
+			? new Map<string, number>()
+			: await countUnreadByConversation(currentUserId, [conversation.id]);
+		const conversationDTO = toConversationDTO(conversation, unreadCounts.get(conversation.id) ?? 0, currentUserId);
+
+		if (direct.isNew) {
+			await subscribeParticipantsToRoom([currentUserId, otherUserId], conversation.id);
+			announceNewConversation([currentUserId, otherUserId], conversationDTO);
 		}
+
+		return conversationDTO;
 	}
 
 	const participantIds = [currentUserId, ...otherUserIds];
@@ -655,52 +678,64 @@ export async function markConversationRead(
 	conversationId: string,
 	input: MarkReadInput,
 ): Promise<ConversationReadEvent> {
-	await assertParticipant(currentUserId, conversationId);
+	const { areReceiptsShared, event } = await prisma.$transaction(async (transaction) => {
+		await assertParticipant(currentUserId, conversationId, transaction);
+		// A block still lets someone clear their *own* unread badge. What it may
+		// not do is advance a shared marker that becomes visible if contact is
+		// restored later, so the pair lock and policy check decide whether this
+		// read remains private.
+		const isBlocked = await isDirectConversationBlockedInTransaction(currentUserId, conversationId, transaction);
 
-	const message = await prisma.message.findUnique({
-		where: { id: input.messageId },
-		select: { id: true, conversationId: true, createdAt: true },
-	});
-
-	// Same error for "no such message" and "a message in someone else's
-	// conversation", so this cannot be used to test whether an id exists.
-	if (!message || message.conversationId !== conversationId) throw new NotFoundError("Message not found");
-
-	const participant = await prisma.conversationParticipant.findUniqueOrThrow({
-		where: { conversationId_userId: { conversationId, userId: currentUserId } },
-		select: { lastReadMessageId: true, user: { select: { readReceiptsEnabled: true } } },
-	});
-	const areReceiptsShared = participant.user.readReceiptsEnabled;
-
-	if (participant.lastReadMessageId) {
-		const currentMarker = await prisma.message.findUnique({
-			where: { id: participant.lastReadMessageId },
-			select: { createdAt: true },
+		const message = await transaction.message.findUnique({
+			where: { id: input.messageId },
+			select: { id: true, conversationId: true, createdAt: true },
 		});
 
-		// A marker only ever moves forward. Scrolling up loads older messages and
-		// the client marks what it sees, so without this the marker would follow
-		// the viewport backwards and a conversation someone had fully read would
-		// turn unread again the moment they looked at its history.
-		if (currentMarker && currentMarker.createdAt >= message.createdAt) {
-			return { conversationId, userId: currentUserId, lastReadMessageId: participant.lastReadMessageId };
+		// Same error for "no such message" and "a message in someone else's
+		// conversation", so this cannot be used to test whether an id exists.
+		if (!message || message.conversationId !== conversationId) throw new NotFoundError("Message not found");
+
+		const participant = await transaction.conversationParticipant.findUniqueOrThrow({
+			where: { conversationId_userId: { conversationId, userId: currentUserId } },
+			select: { lastReadMessageId: true, user: { select: { readReceiptsEnabled: true } } },
+		});
+		const areReceiptsShared = participant.user.readReceiptsEnabled && !isBlocked;
+
+		if (participant.lastReadMessageId) {
+			const currentMarker = await transaction.message.findUnique({
+				where: { id: participant.lastReadMessageId },
+				select: { createdAt: true },
+			});
+
+			// A marker only ever moves forward. Scrolling up loads older messages and
+			// the client marks what it sees, so without this the marker would follow
+			// the viewport backwards and a conversation someone had fully read would
+			// turn unread again the moment they looked at its history.
+			if (currentMarker && currentMarker.createdAt >= message.createdAt) {
+				return {
+					areReceiptsShared,
+					event: { conversationId, userId: currentUserId, lastReadMessageId: participant.lastReadMessageId },
+				};
+			}
 		}
-	}
 
-	await prisma.conversationParticipant.update({
-		where: { conversationId_userId: { conversationId, userId: currentUserId } },
-		data: {
-			lastReadMessageId: message.id,
-			// The private marker always moves — clearing your own badge is nobody
-			// else's business. The shared one moves only when receipts are on, so a
-			// reader who has turned them off leaves no record anywhere of how far
-			// they got.
-			...(areReceiptsShared && { lastSharedReadMessageId: message.id }),
-		},
-		select: { id: true },
+		await transaction.conversationParticipant.update({
+			where: { conversationId_userId: { conversationId, userId: currentUserId } },
+			data: {
+				lastReadMessageId: message.id,
+				// The private marker always moves — clearing your own badge is nobody
+				// else's business. The shared one moves only when receipts are on and
+				// direct contact is currently allowed.
+				...(areReceiptsShared && { lastSharedReadMessageId: message.id }),
+			},
+			select: { id: true },
+		});
+
+		return {
+			areReceiptsShared,
+			event: { conversationId, userId: currentUserId, lastReadMessageId: message.id },
+		};
 	});
-
-	const event: ConversationReadEvent = { conversationId, userId: currentUserId, lastReadMessageId: message.id };
 
 	if (areReceiptsShared) {
 		// To the room, so the author sees "Seen" appear without polling. The reader's
@@ -763,13 +798,24 @@ export async function clearSharedReadMarkers(userId: string): Promise<void> {
  * account in the app who else is online — people they have no relationship with.
  */
 export async function listContactIds(userId: string): Promise<string[]> {
-	const memberships = await prisma.conversationParticipant.findMany({
-		where: { conversation: { participants: { some: { userId } } } },
-		select: { userId: true },
-		distinct: ["userId"],
-	});
+	const rows = await prisma.$queryRaw<{ userId: string }[]>`
+		SELECT DISTINCT peer."userId"
+		FROM "ConversationParticipant" participant
+		JOIN "Conversation" conversation ON conversation.id = participant."conversationId"
+		JOIN "ConversationParticipant" peer ON peer."conversationId" = conversation.id
+		WHERE participant."userId" = ${userId}
+			AND (
+				conversation."isGroup"
+				OR NOT EXISTS (
+					SELECT 1
+					FROM "UserBlock" block
+					WHERE (block."blockerId" = ${userId} AND block."blockedId" = peer."userId")
+						OR (block."blockerId" = peer."userId" AND block."blockedId" = ${userId})
+				)
+			)
+	`;
 
-	return memberships.map((membership) => membership.userId);
+	return rows.map((row) => row.userId);
 }
 
 /**

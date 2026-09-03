@@ -69,6 +69,15 @@ describe("MessageInput", () => {
 		expect(screen.getByRole("button", { name: "Record a voice message" })).toBeEnabled();
 	});
 
+	it("keeps the blocker's composer read-only", () => {
+		renderInput({ isDisabled: true });
+
+		expect(screen.getByRole("status")).toHaveTextContent("You blocked this person");
+		expect(screen.getByLabelText("Message")).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Add an attachment" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Record a voice message" })).toBeDisabled();
+	});
+
 	it("groups photos, files and stickers behind one attachment trigger", async () => {
 		const typist = userEvent.setup();
 		renderInput();

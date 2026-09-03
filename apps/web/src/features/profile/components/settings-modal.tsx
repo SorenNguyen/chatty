@@ -7,6 +7,7 @@ import { useDialog } from "@/hooks/use-dialog";
 import { SETTINGS_NAVIGATION } from "../constants/settings";
 import type { SettingsSection } from "../types/settings";
 import { AppearanceSettings } from "./appearance-settings";
+import { BlockedUsersSettings } from "./blocked-users-settings";
 import { ChangeEmailForm } from "./change-email-form";
 import { ChangePasswordForm } from "./change-password-form";
 import { DeleteAccountForm } from "./delete-account-form";
@@ -90,6 +91,7 @@ export function SettingsModal({ user, onClose }: SettingsModalProps) {
 								<ProfileForm user={user} />
 							</>
 						)}
+						{activeSection === "blocked" && <BlockedUsersSettings />}
 						{activeSection === "appearance" && <AppearanceSettings />}
 						{activeSection === "email" && <ChangeEmailForm user={user} />}
 						{activeSection === "notifications" && <NotificationSettings />}

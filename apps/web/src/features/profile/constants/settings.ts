@@ -1,4 +1,4 @@
-import { Bell, CircleUserRound, Lock, Mail, Palette, TriangleAlert } from "lucide-react";
+import { Ban, Bell, CircleUserRound, Lock, Mail, Palette, TriangleAlert } from "lucide-react";
 import type { SettingsNavigationItem } from "../types/settings";
 
 /**
@@ -14,6 +14,12 @@ export const SETTINGS_NAVIGATION: SettingsNavigationItem[] = [
 		label: "Profile",
 		description: "How you appear to everyone you talk to.",
 		icon: CircleUserRound,
+	},
+	{
+		id: "blocked",
+		label: "Blocked users",
+		description: "Review and restore direct contact when you choose.",
+		icon: Ban,
 	},
 	{
 		id: "appearance",

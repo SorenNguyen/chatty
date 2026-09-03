@@ -33,6 +33,8 @@ import type {
 	ToggleReactionRequest,
 	TransferOwnershipRequest,
 	UpdateProfileRequest,
+	BlockStatusDTO,
+	BlockedUsersPageDTO,
 	UserDTO,
 } from "@chatty/shared-types";
 
@@ -385,9 +387,14 @@ export const api = {
 		return get<UserDTO[]>(`/users?query=${encodeURIComponent(query)}`);
 	},
 
-	/** Everyone you have blocked. Not everyone who has blocked you — that is not yours to see. */
-	listBlockedUsers(): Promise<UserDTO[]> {
-		return get<UserDTO[]>("/blocks");
+	/** A bounded page, walked by the Blocked users panel in account settings. */
+	listBlockedUsers(before?: string): Promise<BlockedUsersPageDTO> {
+		return get<BlockedUsersPageDTO>(`/blocks${before ? `?before=${encodeURIComponent(before)}` : ""}`);
+	},
+
+	/** Only the caller's own decision — the reverse direction remains private. */
+	getBlockStatus(userId: string): Promise<BlockStatusDTO> {
+		return get<BlockStatusDTO>(`/blocks/${userId}/status`);
 	},
 
 	// PUT, so blocking somebody already blocked is the same request twice and

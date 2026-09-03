@@ -3,8 +3,8 @@ import { Server } from "socket.io";
 import { verifyAccessToken } from "../lib/access-token.js";
 import { env } from "../config/env.js";
 import { logger } from "../lib/logger.js";
-import { prisma } from "../lib/prisma.js";
 import { setIO, userRoom, type ChattyServer, type ChattySocket } from "../lib/socket-bus.js";
+import { listRealtimeConversationIds } from "../modules/blocks/blocks.service.js";
 import { announceConnected, announceDisconnected, conversationRoomsOf } from "./presence.js";
 import { registerTypingHandlers } from "./typing.js";
 
@@ -16,14 +16,11 @@ import { registerTypingHandlers } from "./typing.js";
  * process exists, and reconnects would silently stop delivering messages.
  */
 async function joinConversationRooms(socket: ChattySocket, userId: string): Promise<void> {
-	const memberships = await prisma.conversationParticipant.findMany({
-		where: { userId },
-		select: { conversationId: true },
-	});
+	const conversationIds = await listRealtimeConversationIds(userId);
 
 	// The personal room is how the conversation service reaches this user's live
 	// sockets to add them to a conversation created after they connected.
-	await socket.join([userRoom(userId), ...memberships.map((membership) => membership.conversationId)]);
+	await socket.join([userRoom(userId), ...conversationIds]);
 }
 
 /**

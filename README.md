@@ -116,8 +116,9 @@ invite someone, rename it, remove a member, leave it, with every one of those an
 log, hand it to somebody else — edit your own profile, change your password, or reset a forgotten
 one, move the account to a new email address, turn read receipts off, delete the account entirely,
 send an image with or without a caption, rewrite or retract a recent message, inspect its edit
-history, remove any message from your own view, and search inside the open conversation for a message
-you half remember. Last-seen timestamps follow the privacy choice in account settings, which open as a dialog over the
+history, remove any message from your own view, search inside the open conversation for a message
+you half remember, and block somebody so neither of you can reach the other in a direct
+conversation. Last-seen timestamps follow the privacy choice in account settings, which open as a dialog over the
 chat rather than replacing it.
 
 Deleting leaves a marked-out placeholder rather than a hole: the text is emptied and the image and its
@@ -139,12 +140,12 @@ the paging cursor still point at those rows. Read receipts can be turned off, an
 symmetric — hide yours and you stop seeing everyone else's, with nothing revealed retroactively when
 you turn them back on. See [docs/ROADMAP.md](docs/ROADMAP.md) phase 13.
 
-Verified by 424 server tests (against a real Postgres), 266 web tests, and 37 Playwright specs
+Verified by 431 server tests (against a real Postgres), 272 web tests, and 37 Playwright specs
 driving a real browser against a real server — plus typecheck, lint, the conventions audit, and a
 production image build. CI runs all of it except the browser suite on every push.
 
 **[docs/ROADMAP.md](docs/ROADMAP.md) is the current source of truth for what is done and what is
-next.** Phases 1 to 33 are complete. Phase 7 makes group and password-reset transitions safe under
+next.** Phases 1 to 34 are complete. Phase 7 makes group and password-reset transitions safe under
 concurrent requests: one conversation lock orders membership-sensitive writes, PostgreSQL enforces
 the owner/message invariants, and fault-injection tests prove partial writes do not escape. Phase 8
 adds editing and deleting your own messages, on the same lock, with the deletion kept as a tombstone
@@ -220,6 +221,21 @@ first, so the bubble reserves exactly the box the stored image will occupy — a
 accumulating history it is not showing, which is item 76 answered by bounding the array rather than by
 windowing it.
 
+Phases 30-34 are the safety and scale pass. **Blocking** is enforced where it can actually be
+enforced: not at conversation creation, which stops nothing for two people who already have a thread,
+but inside the locked transaction that writes a direct message — and at every other write the
+recipient would see, plus user search, in both directions. A PostgreSQL advisory lock keyed on the
+pair of people orders a block against a send, which a row lock cannot do for a row that does not
+exist yet. Realtime follows the same policy: live sockets leave the direct room, presence is
+withdrawn unless a shared group still makes it visible, and read receipts stop being shared while
+leaving the reader able to clear their own badge. Groups are deliberately untouched, the same line
+WhatsApp, Messenger and Telegram draw, and the confirmation dialog says so before the decision rather
+than leaving it to be discovered in a group later. Blocking is reachable from the conversation row's
+menu and from account settings, which is also where the paged list of blocked people lives, and a
+block made on one device now reaches the same account's other sessions without a reload. Phase 33
+closed the last unbounded query — the conversation list is a keyset page, which the five-pin cap made
+expressible without raw SQL.
+
 Largest known gaps:
 
 - **No real deployment yet, and it is blocked on purchases rather than code** — a domain, a host and
@@ -227,7 +243,9 @@ Largest known gaps:
   out in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 - **There is no second admin and no demotion** — the role is one seat, so nobody can cover for an
   owner who has gone quiet without them handing it over first — and any member can still invite a
-  stranger. See [ADR 0008](docs/adr/0008-group-owner-role.md).
+  stranger. See [ADR 0008](docs/adr/0008-group-owner-role.md). Combined with blocking stopping at the
+  edge of a group, that means a member can add somebody you have blocked to a group you are in, and
+  you will see their messages there.
 - **A system line does not follow a later rename** — "An added Binh" keeps the names people had when
   it happened, by design. See [ADR 0009](docs/adr/0009-system-messages.md).
 - **Mail sends, but no production account is signed up for.** Phase 10 added a real SMTP transport
@@ -247,8 +265,6 @@ Largest known gaps:
 - **The CSP is not verified against a live API.** The web app has one as of phase 14, checked in a
   real browser against the built image — but with no API behind it, so `img-src` and `connect-src`
   are argued from the header's contents rather than demonstrated end to end.
-- **The conversation list is not paginated.** Phase 27 removed the blocker by replacing per-message
-  full re-lists with incremental socket patches; a cursor is now an independent follow-up.
 - **The message list is not virtualised.** Messages accumulate only through explicit paging, so
   reaching a DOM large enough to matter takes deliberate work — but the ceiling is real, and the two
   cheap fixes both risk the scroll-position handling that already works. See phase 19, item 76.
