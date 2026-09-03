@@ -63,6 +63,8 @@ model User {
   pinnedMessages      PinnedMessage[]
   blocksMade          UserBlock[]               @relation("BlocksMade")
   blocksReceived      UserBlock[]               @relation("BlocksReceived")
+  restrictionsMade    UserRestriction[]         @relation("RestrictionsMade")
+  restrictionsTaken   UserRestriction[]         @relation("RestrictionsReceived")
 }
 
 /// One person refusing contact from another. Directed: the row says who did it.
@@ -92,6 +94,31 @@ model UserBlock {
   // of the pair the unique above serves.
   @@index([blockedId, blockerId])
   @@index([blockerId, createdAt, id])
+}
+
+/// One person quietly holding another at arm's length.
+///
+/// Deliberately the same shape as `UserBlock` — directed, one row, unique on the
+/// pair — because it answers the same question from the same two sides. What
+/// differs is entirely in what the row *means*: a block is symmetric in effect
+/// and refuses the write, while a restriction is one-directional and refuses
+/// nothing. Messages still arrive; they arrive somewhere quieter.
+model UserRestriction {
+  id           String   @id @default(cuid())
+  restrictorId String
+  restrictedId String
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+
+  restrictor User @relation("RestrictionsMade", fields: [restrictorId], references: [id], onDelete: Cascade)
+  restricted User @relation("RestrictionsReceived", fields: [restrictedId], references: [id], onDelete: Cascade)
+
+  @@unique([restrictorId, restrictedId])
+  /// "Has this person restricted me?" is asked whenever a read receipt or a
+  /// presence event is about to cross, which is the opposite side of the pair
+  /// from the unique above.
+  @@index([restrictedId, restrictorId])
+  /// The settings list is a descending keyset over one person's own rows.
+  @@index([restrictorId, createdAt, id])
 }
 
 enum PresenceVisibility {
