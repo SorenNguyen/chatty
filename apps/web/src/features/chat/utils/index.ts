@@ -14,6 +14,7 @@ export { mergeReloadedMessages } from "./merge-messages";
 export { hasMessageTimeGap, isWithinMessageBurst } from "./message-spacing";
 export { buildDraftMessage, getNewestStoredMessage, isDraftId } from "./build-draft-message";
 export { toDraftAttachments } from "./draft-attachment";
+export { downloadAttachment } from "./download-attachment";
 export { countJumboEmoji } from "./emoji-only";
 export { searchEmoji } from "./search-emoji";
 export { getReadReceipt } from "./read-receipt";

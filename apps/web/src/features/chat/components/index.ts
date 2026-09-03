@@ -15,6 +15,8 @@ export { GroupMemberRow } from "./group-member-row";
 export { GroupMembersPanel } from "./group-members-panel";
 export { MessageActions } from "./message-actions";
 export { AttachmentLightbox } from "./attachment-lightbox";
+export { AttachmentLightboxThumbnails } from "./attachment-lightbox-thumbnails";
+export { AttachmentLightboxToolbar } from "./attachment-lightbox-toolbar";
 export { MessageGallery } from "./message-gallery";
 export { MessageDeliveryStatus } from "./message-delivery-status";
 export { MessageEditor } from "./message-editor";

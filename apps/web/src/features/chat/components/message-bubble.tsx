@@ -1,9 +1,8 @@
 import { cn } from "@/utils/cn";
-import { ALBUM_FAN_REACH, ALBUM_FAN_TRAIL, ALBUM_SIZE, STICKER_DISPLAY_SIZE } from "../constants/attachment";
+import { STICKER_DISPLAY_SIZE } from "../constants/attachment";
 import { INCOMING_BUBBLE_RADIUS, OUTGOING_BUBBLE_RADIUS } from "../constants/message-cluster";
 import type { ClusterPosition } from "../types/message-cluster";
 import type { ThreadMessage } from "../types/thread-message";
-import { getAttachmentDisplaySize } from "../utils/attachment-size";
 import { formatMessageTime } from "../utils/format-time";
 import { MessageGallery } from "./message-gallery";
 import { MessageFileCard } from "./message-file-card";
@@ -24,6 +23,12 @@ interface MessageBubbleProps {
 	jumboCount: number;
 	onJumpToReplyOriginal: () => void;
 	participants: ParticipantDTO[];
+	/**
+	 * Forwards this message from inside the image viewer. Optional and omitted
+	 * for a message nothing may act on yet — one still on its way has no server
+	 * id for a forward to name.
+	 */
+	onForward?: () => void;
 }
 
 /**
@@ -49,6 +54,7 @@ export function MessageBubble({
 	jumboCount,
 	onJumpToReplyOriginal,
 	participants,
+	onForward,
 }: MessageBubbleProps) {
 	const images = message.attachments.filter((attachment) => attachment.kind === "image");
 	const file = message.attachments.find((attachment) => attachment.kind === "file");
@@ -74,36 +80,9 @@ export function MessageBubble({
 		);
 	}
 
-	// Pictures get no bubble either, and for the same reason the sticker above
-	// does not: a photograph is already a rectangle of somebody else's content,
-	// and a fill around it is a second frame that the picture did not ask for.
-	// The ink one was worse than most — a dark border around every photograph
-	// somebody sent, which is the opposite of the "ink on paper" the fill exists
-	// to carry everywhere else.
-	//
-	// A caption still keeps the fill that says whose the words are — but it is
-	// **attached** to the picture rather than floating under it. It had become a
-	// narrow pill in its own box, a gap below a photograph and pulled to the
-	// tail edge, which reads as a second message sent after the picture instead
-	// of as the picture's caption. Flush, the same width, and sharing the run's
-	// corners, the two are one object; the fill still never surrounds the
-	// photograph, which is the whole of what phase 29 was protecting.
-	//
-	// The width is the picture's, taken from the same pure function the gallery
-	// sizes itself with, so a long caption wraps inside the photograph's width
-	// rather than making the block wider than the thing it describes.
+	// A caption belongs to the media, not a second tail-aligned bubble. It stays
+	// out of the thread and appears in full at the top of the opened picture.
 	if (hasImages) {
-		const single = images.length === 1 ? images[0] : undefined;
-		// An album's caption attaches too. It cannot share an *edge* with a fan of
-		// rotated cards, so the stack sits on the caption rather than being welded
-		// to it — but it is the same width, with no gap and the same squared join,
-		// which is what stops one message reading as two.
-		const attachedWidth = single
-			? single.width !== null && single.height !== null
-				? getAttachmentDisplaySize(single.width, single.height).width
-				: undefined
-			: ALBUM_SIZE + ALBUM_FAN_REACH + ALBUM_FAN_TRAIL;
-
 		return (
 			<div className={cn("flex min-w-0 flex-col gap-1.5", isMine ? "items-end" : "items-start")}>
 				{message.isForwarded && <span className="eyebrow text-ink-faint">Forwarded</span>}
@@ -115,38 +94,14 @@ export function MessageBubble({
 					/>
 				)}
 
-				{/* No gap: the caption meets the picture's squared edge. */}
-				<div
-					className="flex min-w-0 max-w-full flex-col"
-					style={attachedWidth ? { width: attachedWidth } : undefined}
-				>
-					<MessageGallery
-						attachments={images}
-						caption={message.content}
-						isMine={isMine}
-						clusterPosition={clusterPosition}
-						// Withheld while the message is still on its way: the time it
-						// carries then is this machine's guess, and the gutter is saying
-						// "Sending…" rather than a number.
-						{...(message.deliveryState ? {} : { timeLabel: formatMessageTime(message.createdAt) })}
-					/>
-
-					{message.content && (
-						<MessageText
-							content={message.content}
-							mentionedUserIds={message.mentionedUserIds}
-							participants={participants}
-							className={cn(
-								"min-w-0 whitespace-pre-wrap px-3.5 py-2 text-sm/[1.55] wrap-break-word",
-								isMine ? "bg-block text-block-ink" : "border border-rule bg-paper-raised text-ink",
-								(isMine ? OUTGOING_BUBBLE_RADIUS : INCOMING_BUBBLE_RADIUS)[clusterPosition],
-								// Only when it is actually attached to something. An album
-								// keeps a caption of its own shape, rounded all round.
-								attachedWidth && "rounded-t-none",
-							)}
-						/>
-					)}
-				</div>
+				<MessageGallery
+					attachments={images}
+					caption={message.content}
+					isMine={isMine}
+					clusterPosition={clusterPosition}
+					{...(message.deliveryState ? {} : { timeLabel: formatMessageTime(message.createdAt) })}
+					{...(onForward && { onForward })}
+				/>
 			</div>
 		);
 	}

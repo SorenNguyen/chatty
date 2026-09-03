@@ -199,7 +199,11 @@ export function VaultTabContent({
 					key={attachments[lightboxIndex]?.id}
 					attachments={attachments}
 					initialIndex={lightboxIndex}
-					caption="Shared image"
+					// No caption: the vault lists attachments rather than the messages
+					// they came with, so there is no text to state — and the viewer's
+					// caption line is now type above the picture, where a stand-in
+					// label would read as this picture's own words.
+					caption=""
 					onClose={() => setLightboxIndex(null)}
 					onOpenMessage={(attachment) => {
 						setLightboxIndex(null);

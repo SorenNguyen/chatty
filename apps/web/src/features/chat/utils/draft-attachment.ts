@@ -36,9 +36,8 @@ async function toDraftAttachment(file: File): Promise<AttachmentDTO> {
 		id: `${DRAFT_ATTACHMENT_ID_PREFIX}${crypto.randomUUID()}`,
 		kind: "image",
 		url,
-		// The album stack reaches for this only on the cards behind the top one,
-		// and a draft has no server-made thumbnail to reach for. The full picture
-		// is already local, so there is nothing to save by having one.
+		// A draft has no server-made thumbnail. Its full picture is already local,
+		// so the album's cards behind the cover do not need a second URL yet.
 		thumbUrl: null,
 		width: size?.width ?? null,
 		height: size?.height ?? null,

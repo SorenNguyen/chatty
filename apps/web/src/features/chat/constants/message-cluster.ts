@@ -48,10 +48,8 @@ export const INCOMING_BUBBLE_RADIUS: Record<ClusterPosition, string> = {
  * behind, so a bare picture sat at half the radius of every bubble beside it,
  * with one corner squared against a caption that had moved out of its box.
  *
- * A captioned picture is one object again, and it is built from the table above
- * with a single override at each end: the picture takes it plus `rounded-b-none`
- * and the caption takes it plus `rounded-t-none`. The two squared edges meet, so
- * the run's grammar — the unbroken side, the seam, the one notch — is drawn
- * across the pair exactly as it would be across one bubble. `cn` is what makes
- * that work: tailwind-merge drops the corner class a later side class covers.
+ * A caption remains a low-contrast overlay on the picture itself, not a second
+ * bubble underneath it. The media keeps this table unchanged, so the run's
+ * grammar — the unbroken side, the seam and the one notch — stays legible even
+ * when the message also carries text.
  */

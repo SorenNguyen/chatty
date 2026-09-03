@@ -1,3 +1,5 @@
+import { cn } from "@/utils/cn";
+
 /**
  * Widest an image is *drawn* at, on a screen with room for it.
  *
@@ -59,50 +61,24 @@ export const REFUSED_FILE_EXTENSIONS = [
 /**
  * The side of the album's top photograph, in pixels.
  *
- * A stack, not a grid, and that is the point: four square tiles at bubble width
- * occupy 320×320 of a conversation for a set somebody will open in a viewer
- * anyway. The stack says "there are pictures here, and how many" in roughly a
- * quarter of the space, and one tap gets to all of them.
+ * A compact stack leaves the thread readable while retaining a recognizable
+ * cover image. Opening it reveals every image and its full accompanying text.
  */
 export const ALBUM_SIZE = 168;
 
-/**
- * Degrees each card behind the top one is turned.
- *
- * The first version offset them straight down with no rotation and drew them as
- * blank paper. It was legible and it was dead — the block read as a rendering
- * fault rather than as a pile of photographs. A few degrees of fan is what makes
- * it a stack, and it is the one place in this app where a rotation earns its
- * keep: everything else here is set square because it is type and rules, and a
- * photograph thrown on a desk is neither.
- *
- * Small, though. Past about six degrees the corners start to look like a
- * mistake rather than a hand.
- */
+/** A restrained fan signals a set without turning the message into a collage. */
 export const ALBUM_CARD_ROTATION = 5;
 
 /** How far each card behind is nudged, in pixels, so the fan leans one way. */
 export const ALBUM_CARD_SHIFT = 4;
 
-/**
- * Room above and to the right of the top photograph, in pixels.
- *
- * Asymmetric because the fan leans that way, and worked out rather than
- * guessed. A square of side S turned by θ about its centre spans
- * `S·(cos θ + sin θ)`, so at 168px and ten degrees it reaches
- * `(168 · 1.159 − 168) / 2 ≈ 14px` past its own box on every side — and the
- * furthest card is nudged another 8px up and right on top of that.
- *
- * The first attempt reserved 8px and the cards poked out through the top of the
- * bubble, which reads as a clipping fault rather than as a stack. Room is
- * cheaper than that.
- */
+/** Room for the tilted cards above and beside the cover image. */
 export const ALBUM_FAN_REACH = 22;
 
-/** The same reach on the other two sides, where the lean works against it. */
+/** The matching reach below and on the opposite side. */
 export const ALBUM_FAN_TRAIL = 6;
 
-/** How many cards are drawn behind the top one, however many pictures there are. */
+/** Two visible cards are enough to imply a set without visual noise. */
 export const ALBUM_CARDS_BEHIND = 2;
 
 /**
@@ -137,11 +113,73 @@ export const IMAGE_MEASURE_TIMEOUT_MS = 1_500;
  * an image message read as undesigned however carefully the picture itself was
  * drawn.
  *
- * This is not a new idea imported from another app: the album count chip has
- * been the answer to "a machine-produced value, laid over media" since phase 23,
- * and this is that chip carrying the value that matters most. `scrim` is what
- * keeps it legible over a white sky and a black jacket alike, and `meta` is
- * tabular, so a minute ticking over does not shift the chip's width.
+ * The album count and timestamp share this legible-on-any-photo treatment:
+ * `scrim` keeps either one readable over a white sky and a black jacket, while
+ * `meta` keeps a minute ticking over from shifting its width.
  */
 export const MEDIA_TIME_CHIP_CLASS =
 	"meta pointer-events-none absolute bottom-2 right-2 rounded-badge bg-scrim/70 px-1.5 py-0.5 text-on-media";
+
+/**
+ * Every control in the image viewer: close, forward, save, and the two arrows.
+ *
+ * One class because they are one control repeated — a target drawn on somebody
+ * else's photograph. Each of them used to carry its own hairline border, which
+ * put four outlined boxes and a panel frame around a single picture; the frames
+ * were the loudest thing on screen and the picture was the quietest.
+ *
+ * What replaces the border is the behaviour: nothing at rest but the glyph, a
+ * soft wash under the pointer, and a press that gives slightly. The focus ring
+ * is restated because the Button default is drawn in `ink` — which is near-black
+ * in the light theme, i.e. invisible against the scrim this sits on.
+ */
+export const LIGHTBOX_CONTROL_CLASS = cn(
+	"rounded-full p-0 text-on-media/70 transition duration-200 ease-out",
+	"hover:bg-on-media/12 hover:text-on-media active:scale-95",
+	"focus-visible:ring-on-media/40",
+);
+
+/**
+ * The side of one thumbnail in the viewer's strip, in pixels — as a class pair
+ * rather than a number, because nothing computes with it.
+ *
+ * Larger on a screen with room for it: at 48px a face in a set of holiday
+ * photographs is not identifiable, which is the one job a strip of thumbnails
+ * has.
+ */
+export const LIGHTBOX_THUMBNAIL_CLASS = "size-12 sm:size-14";
+
+/**
+ * The floating pill that holds rotate and zoom — a second, smaller control
+ * language from `LIGHTBOX_CONTROL_CLASS`.
+ *
+ * Deliberately not the same size: those sit alone at the screen's edges and
+ * read as landmarks, so they're drawn big. These four sit shoulder to shoulder
+ * in one pill over the picture, and at the same 36px they would have out-massed
+ * the header they're grouped away from. 28px keeps the pill a detail you find
+ * when you look for it rather than a second toolbar competing with the first.
+ */
+export const LIGHTBOX_TOOLBAR_BUTTON_CLASS = cn(
+	"size-7 shrink-0 rounded-full p-0 text-on-media/75 transition duration-150 ease-out",
+	"hover:bg-on-media/15 hover:text-on-media active:scale-90",
+	"disabled:pointer-events-none disabled:opacity-30",
+	"focus-visible:ring-on-media/40",
+);
+
+/** Zoom bounds for the viewer, as multiples of the image's fitted size. */
+export const LIGHTBOX_ZOOM_MIN = 1;
+export const LIGHTBOX_ZOOM_MAX = 4;
+
+/** What one press of a zoom button, or one press of `+`/`-`, moves the needle. */
+export const LIGHTBOX_ZOOM_STEP = 0.5;
+
+/**
+ * What one tick of a wheel or trackpad pinch moves it — a third of the button
+ * step, because a wheel fires many times a second and the button fires once
+ * per press. At the button's own step a single scroll tick would jump the
+ * image by half again its size.
+ */
+export const LIGHTBOX_WHEEL_ZOOM_STEP = 0.15;
+
+/** Where a double-click or double-tap lands — enough to read the detail it was asked to show. */
+export const LIGHTBOX_DOUBLE_CLICK_ZOOM = 2.5;

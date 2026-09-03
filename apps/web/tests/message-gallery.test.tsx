@@ -1,9 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import { MessageGallery } from "@/features/chat/components/message-gallery";
 import { makeAttachment } from "./factories";
 
-/** `n` distinct images — distinct ids, because the grid keys on them. */
+/** `n` distinct images — distinct ids, because every card in the stack keys on them. */
 function makeAttachments(count: number) {
 	return Array.from({ length: count }, (_, index) =>
 		makeAttachment({ id: `attachment-${index}`, url: `http://api.test/attachments/${index}?token=signed` }),
@@ -29,8 +29,8 @@ describe("MessageGallery with one image", () => {
 
 	it("sets width and height so the box is reserved before the image loads", () => {
 		// Without these attributes every picture decoding mid-scroll shoves the
-		// messages below it down. Only the single-image case can do this — a grid
-		// tile is square whatever the picture's shape.
+		// messages below it down. Only the single-image case can do this — an album
+		// cover is square whatever the picture's shape.
 		render(
 			<MessageGallery
 				attachments={[makeAttachment({ width: 1600, height: 800 })]}
@@ -50,12 +50,49 @@ describe("MessageGallery with one image", () => {
 
 		expect(screen.getByAltText("Image")).toHaveAttribute("loading", "lazy");
 	});
+
+	it("keeps the caption out of the thread and states it beside the opened image", () => {
+		const caption = "the whiteboard notes that belong to this photo and continue past one compact line";
+		render(<MessageGallery attachments={[makeAttachment()]} caption={caption} isMine clusterPosition="solo" />);
+
+		expect(screen.queryByText(caption)).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: `Open image and caption: ${caption}` }));
+
+		// Not merely present: *not laid over the picture*. A positioned caption
+		// covered the top of every photograph whose subject was at the top of it.
+		const captionText = within(screen.getByRole("dialog")).getByText(caption);
+		expect(captionText).not.toHaveClass("absolute");
+	});
+
+	it("forwards the message from the viewer, and closes it so the forward panel is reachable", () => {
+		const onForward = vi.fn();
+		render(
+			<MessageGallery
+				attachments={[makeAttachment()]}
+				caption=""
+				isMine
+				clusterPosition="solo"
+				onForward={onForward}
+			/>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Open image" }));
+
+		fireEvent.click(screen.getByRole("button", { name: "Forward this message" }));
+
+		expect(onForward).toHaveBeenCalledTimes(1);
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+	});
+
+	it("offers no forward control when there is no message to forward", () => {
+		render(<MessageGallery attachments={[makeAttachment()]} caption="" isMine clusterPosition="solo" />);
+		fireEvent.click(screen.getByRole("button", { name: "Open image" }));
+
+		expect(screen.queryByRole("button", { name: "Forward this message" })).not.toBeInTheDocument();
+	});
 });
 
 describe("MessageGallery with several images", () => {
 	it("draws one stack rather than a tile per picture", () => {
-		// The whole point of the album: four tiles took 320×320 of the conversation
-		// for a set that gets opened in a viewer anyway.
 		render(<MessageGallery attachments={makeAttachments(5)} caption="" isMine clusterPosition="solo" />);
 
 		expect(screen.getAllByRole("button")).toHaveLength(1);
@@ -74,6 +111,7 @@ describe("MessageGallery with several images", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Open album of 5 images" }));
 
 		expect(screen.getByRole("dialog", { name: "Image 1 of 5" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "View image 5 of 5" })).toBeInTheDocument();
 	});
 
 	it("walks the set with the arrow keys and wraps at the end", () => {

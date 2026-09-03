@@ -1,28 +1,60 @@
 import type { AttachmentDTO } from "@chatty/shared-types";
-import { ChevronLeft, ChevronRight, X } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/button";
+import { cn } from "@/utils/cn";
+import { LIGHTBOX_CONTROL_CLASS } from "../constants/attachment";
+import { useAttachmentZoom } from "../hooks/use-attachment-zoom";
+import { downloadAttachment } from "../utils";
+import { AttachmentLightboxThumbnails } from "./attachment-lightbox-thumbnails";
+import { AttachmentLightboxToolbar } from "./attachment-lightbox-toolbar";
 
 interface AttachmentLightboxProps {
 	attachments: AttachmentDTO[];
 	/** Which one was clicked. The viewer opens here and moves from it. */
 	initialIndex: number;
+	/** The message text, stated in full above the picture — never over it. */
 	caption: string;
 	onClose: () => void;
 	onOpenMessage?: (attachment: AttachmentDTO) => void;
+	/**
+	 * Forwards the message these pictures came with. Absent where the viewer was
+	 * opened from something that is not a message — the vault lists attachments,
+	 * not the messages that carried them.
+	 */
+	onForward?: () => void;
 }
 
 /**
- * One image, full size, with the rest of its message a keystroke away.
+ * A picture, full screen, with everything it needs and nothing else.
  *
- * Split out of `MessageAttachment` when a message could carry more than one
- * picture: what used to be "show this image" became "walk a set", which is a
- * piece of state, two more controls and a second keyboard binding — none of
- * which the thumbnail that opens it has any business holding.
+ * **There is no panel.** The viewer used to draw a bordered card on the scrim,
+ * a rule under its header, a rule over its thumbnails and a border around each
+ * of its six controls — nine lines of chrome around one photograph, which is
+ * the opposite of what a viewer is for. What is left is the picture, the words
+ * that came with it, the set it belongs to, and controls that appear only under
+ * the pointer. The viewer's controls now meet again in one compact dock below
+ * the image, rather than sending the reader to a different screen corner for
+ * every action.
  *
- * The arrow keys work because a viewer that can only be driven with a mouse is
- * useless for the thing people actually do here, which is glance through a
- * handful of photos in a row.
+ * Previous/next live on a centred, fixed-width navigation rail. An image's
+ * aspect ratio must not decide where the next-picture target lands: portrait
+ * and landscape both put it in the same place, and it only fades in on intent.
+ *
+ * **The caption is above the picture, centred, not layered over it.** Laying it
+ * across the top of the image hid part of every photograph whose subject was at
+ * the top — which is most of them — and a translucent wash over a picture is
+ * unreadable exactly when the picture is busy. Above it, it is type on a scrim:
+ * always legible, and it costs the image only the height of the words.
+ *
+ * **The picture itself is not just looked at, it is examined.** A wheel or a
+ * trackpad pinch zooms in on the point under the cursor, a double-click or
+ * double-tap jumps to a close look and back, dragging pans once zoomed, and a
+ * turned photograph rotates in place — all in `useAttachmentZoom`, which also
+ * resets every one of them the moment the picture underneath changes.
+ *
+ * Escape closes; the arrow keys walk the set and wrap at both ends; `+`/`-`
+ * zoom, `0` resets it, `R` rotates clockwise and `Shift+R` rotates back.
  */
 export function AttachmentLightbox({
 	attachments,
@@ -30,29 +62,77 @@ export function AttachmentLightbox({
 	caption,
 	onClose,
 	onOpenMessage,
+	onForward,
 }: AttachmentLightboxProps) {
 	const [index, setIndex] = useState(initialIndex);
+	const [isSaving, setIsSaving] = useState(false);
+	const [saveError, setSaveError] = useState("");
 	const total = attachments.length;
+	const current = attachments[index];
 
-	// Wrapping rather than stopping at the ends: with three or four pictures the
-	// set is small enough that "next" always having somewhere to go is less
-	// surprising than an arrow that silently stops working.
-	const step = useCallback((delta: number) => setIndex((current) => (current + delta + total) % total), [total]);
+	const step = useCallback((delta: number) => setIndex((value) => (value + delta + total) % total), [total]);
+
+	const {
+		imageAreaRef,
+		imageRef,
+		zoom,
+		rotation,
+		fitScale,
+		pan,
+		isDragging,
+		zoomIn,
+		zoomOut,
+		resetZoom,
+		rotate,
+		handleImageLoad,
+		handleDoubleClick,
+		handlePointerDown,
+		handlePointerMove,
+		handlePointerUp,
+	} = useAttachmentZoom(current?.id ?? "");
 
 	useEffect(() => {
 		function handleKeyDown(event: KeyboardEvent) {
 			if (event.key === "Escape") onClose();
 			if (event.key === "ArrowRight") step(1);
 			if (event.key === "ArrowLeft") step(-1);
+			if (event.key === "+" || event.key === "=") zoomIn();
+			if (event.key === "-" || event.key === "_") zoomOut();
+			if (event.key === "0") resetZoom();
+			if (event.key.toLowerCase() === "r") rotate(event.shiftKey ? -1 : 1);
 		}
 
 		window.addEventListener("keydown", handleKeyDown);
 
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [onClose, step]);
+	}, [onClose, resetZoom, rotate, step, zoomIn, zoomOut]);
 
-	const current = attachments[index];
+	// Both neighbours are fetched while this one is being looked at, so an arrow
+	// key swaps the picture instead of blanking the frame for as long as a
+	// megabyte takes to arrive. Nothing is kept: the point is only to put the
+	// bytes in the browser's cache before they are asked for.
+	useEffect(() => {
+		if (total < 2) return;
+
+		for (const offset of [1, -1]) {
+			const neighbour = attachments[(index + offset + total) % total];
+			if (neighbour) new Image().src = neighbour.url;
+		}
+	}, [attachments, index, total]);
+
 	if (!current) return null;
+
+	async function saveCurrentImage(attachment: AttachmentDTO): Promise<void> {
+		setIsSaving(true);
+		setSaveError("");
+		try {
+			await downloadAttachment(attachment);
+		} catch {
+			setSaveError("This image could not be saved");
+		} finally {
+			setIsSaving(false);
+		}
+	}
 
 	return (
 		<div
@@ -60,70 +140,118 @@ export function AttachmentLightbox({
 			aria-modal="true"
 			aria-label={total > 1 ? `Image ${index + 1} of ${total}` : "Image preview"}
 			onClick={onClose}
-			className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/90 p-6 dark:bg-scrim/95"
+			className="fixed inset-0 z-50 flex flex-col gap-3 bg-scrim/90 p-3 dark:bg-scrim/95 sm:p-5"
 		>
-			<img
-				src={current.url}
-				alt={caption || "Image"}
-				// The backdrop closes on click; the picture itself must not, or
-				// reaching for the next arrow past the edge of a narrow image closes
-				// the viewer instead.
-				onClick={(event) => event.stopPropagation()}
-				className="max-h-full max-w-full rounded-control object-contain"
-			/>
-
-			{total > 1 && (
-				<>
-					<Button
-						variant="ghost"
-						onClick={(event) => {
-							event.stopPropagation();
-							step(-1);
-						}}
-						aria-label="Previous image"
-						className="absolute left-5 size-10 rounded-control border border-on-media/25 p-0 text-on-media hover:bg-on-media/10"
-					>
-						<ChevronLeft className="size-5" />
-					</Button>
-					<Button
-						variant="ghost"
-						onClick={(event) => {
-							event.stopPropagation();
-							step(1);
-						}}
-						aria-label="Next image"
-						className="absolute right-5 size-10 rounded-control border border-on-media/25 p-0 text-on-media hover:bg-on-media/10"
-					>
-						<ChevronRight className="size-5" />
-					</Button>
-					{/* Mono, like every other machine-produced number in this app. */}
-					<span className="meta absolute bottom-6 text-on-media/70">
-						{index + 1} / {total}
-					</span>
-				</>
-			)}
-
-			{onOpenMessage && (
-				<Button
-					variant="ghost"
-					onClick={(event) => {
-						event.stopPropagation();
-						onOpenMessage(current);
-					}}
-					className="absolute bottom-5 left-5 border border-on-media/25 text-on-media hover:bg-on-media/10"
+			{(caption || total > 1) && (
+				<div
+					onClick={(event) => event.stopPropagation()}
+					className="mx-auto flex w-full max-w-2xl shrink-0 flex-col items-center gap-1 px-2 text-center"
 				>
-					View in conversation
-				</Button>
+					{caption && (
+						<p className="max-h-20 overflow-y-auto whitespace-pre-wrap text-center text-sm/[1.55] text-on-media/85">
+							{caption}
+						</p>
+					)}
+					{total > 1 && (
+						<span className="meta text-on-media/55">
+							Photo set · {index + 1} of {total}
+						</span>
+					)}
+				</div>
 			)}
 
-			<Button
-				variant="ghost"
-				onClick={onClose}
-				aria-label="Close image preview"
-				className="absolute right-5 top-5 size-9 rounded-control border border-on-media/25 p-0 text-on-media hover:bg-on-media/10"
+			{saveError && (
+				<p role="alert" className="meta mx-auto w-max shrink-0 rounded-badge bg-signal px-2 py-1 text-on-media">
+					{saveError}
+				</p>
+			)}
+
+			<div
+				ref={imageAreaRef}
+				className="group relative flex min-h-0 flex-1 items-center justify-center overflow-hidden"
 			>
-				<X className="size-5" />
-			</Button>
+				{/* The entrance animation lives on this wrapper rather than on the
+				    image itself, because the image already owns `transform` for
+				    zoom, pan and rotation — one element animating one CSS property
+				    from two places at once is how a transition starts fighting a
+				    drag instead of yielding to it. */}
+				<div key={current.id} className="media-enter flex max-h-full max-w-full items-center justify-center">
+					<img
+						ref={imageRef}
+						src={current.url}
+						alt={caption || "Image"}
+						draggable={false}
+						onLoad={handleImageLoad}
+						onClick={(event) => event.stopPropagation()}
+						onDoubleClick={handleDoubleClick}
+						onPointerDown={handlePointerDown}
+						onPointerMove={handlePointerMove}
+						onPointerUp={handlePointerUp}
+						onPointerCancel={handlePointerUp}
+						style={{
+							transform: `translate(${pan.x}px, ${pan.y}px) rotate(${rotation}deg) scale(${zoom * fitScale})`,
+						}}
+						className={cn(
+							"max-h-full max-w-full touch-none select-none rounded-control object-contain",
+							!isDragging && "transition-transform duration-200 ease-out",
+							zoom > 1 ? (isDragging ? "cursor-grabbing" : "cursor-grab") : "cursor-zoom-in",
+						)}
+					/>
+				</div>
+
+				{total > 1 && (
+					<div className="pointer-events-none absolute inset-y-0 left-1/2 w-full max-w-[52rem] -translate-x-1/2">
+						<Button
+							variant="ghost"
+							onClick={(event) => {
+								event.stopPropagation();
+								step(-1);
+							}}
+							aria-label="Previous image"
+							className={cn(
+								LIGHTBOX_CONTROL_CLASS,
+								"pointer-events-auto absolute left-2 top-1/2 size-9 -translate-y-1/2 bg-scrim/45 opacity-100 backdrop-blur-sm transition-opacity focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100",
+							)}
+						>
+							<ChevronLeft className="size-5" />
+						</Button>
+						<Button
+							variant="ghost"
+							onClick={(event) => {
+								event.stopPropagation();
+								step(1);
+							}}
+							aria-label="Next image"
+							className={cn(
+								LIGHTBOX_CONTROL_CLASS,
+								"pointer-events-auto absolute right-2 top-1/2 size-9 -translate-y-1/2 bg-scrim/45 opacity-100 backdrop-blur-sm transition-opacity focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100",
+							)}
+						>
+							<ChevronRight className="size-5" />
+						</Button>
+					</div>
+				)}
+			</div>
+
+			<div className="flex shrink-0 flex-col items-center gap-2">
+				<AttachmentLightboxToolbar
+					zoom={zoom}
+					onZoomIn={zoomIn}
+					onZoomOut={zoomOut}
+					onResetZoom={resetZoom}
+					onRotateCounterclockwise={() => rotate(-1)}
+					onRotateClockwise={() => rotate(1)}
+					onSave={() => void saveCurrentImage(current)}
+					isSaving={isSaving}
+					onClose={onClose}
+					{...(onOpenMessage ? { onOpenMessage: () => onOpenMessage(current) } : {})}
+					{...(onForward ? { onForward } : {})}
+				/>
+
+				{total > 1 && (
+					<AttachmentLightboxThumbnails attachments={attachments} activeIndex={index} onSelect={setIndex} />
+				)}
+			</div>
 		</div>
 	);
 }

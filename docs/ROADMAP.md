@@ -1743,13 +1743,13 @@ user-uploaded packs (which is the attachment pipeline plus a per-account library
 answer was to do emoji and images first. Recorded so the next person knows it is waiting on a
 decision.
 
-## Phase 23 — an album instead of a grid, and stickers — `done`
+## Phase 23 — a stacked album and stickers — `done`
 
 Both asked for directly, and the first is a correction of something phase 22 had only just shipped.
 
 | # | Item | Status |
 | --- | --- | --- |
-| 88 | Several images render as a stacked album, not a grid | Done |
+| 88 | Several images render as a compact stacked album | Done |
 | 89 | Stickers: a personal tray, one tap to send | Done |
 | 90 | Pictures lose the bubble around them | Done |
 
@@ -1762,43 +1762,22 @@ around it is a second frame the picture never asked for. Worse, it was the ink f
 carries "ink on paper" everywhere else in the app — used as a mount.
 
 Pictures now render bare, on the paper, the same call stickers and emoji-only messages already made:
-the picture *is* the message. A caption keeps its bubble and sits **under** the image rather than
-around it, because the words still need the fill that says whose they are. The image also went back
-to all four corners rounded — the two that squared off were butting against a caption that is no
-longer in the same box.
+the picture *is* the message. A caption stays out of the thread entirely; opening the picture presents
+the complete text over the top of the full-resolution image, rather than turning it into a second
+message below it.
 
-### Item 88: the grid was the wrong answer to the right question
+### Item 88: the album should stay an album
 
-Phase 22 laid several pictures out as a 2×2 of square tiles. It read fine and it was too big: 320×320
-of a conversation spent on a set that gets opened in a viewer anyway, pushing everything said around
-it off the screen. The complaint was exactly that — "nó chiếm nhiều diện tích".
+Several images remain a compact fanned stack rather than a contact sheet: a conversation needs to
+stay readable, and the full set belongs in the viewer. The cards behind the cover are real upcoming
+images, while the count states exactly how many the set contains.
 
-An album stack takes roughly a quarter of the space and says the same two things: there are pictures
-here, and how many. One tap opens the viewer on the whole set, which is where a set of ten was always
-going to be looked at.
+The improvement is not to replace that gallery. Its cover remains only a picture; the complete
+accompanying text appears only in the viewer, at the top of the selected image. A photo set still reads
+quickly in the thread; opening it now feels like opening the message rather than only opening a file.
 
-**It took two attempts to look like anything.** The first drew the cards as blank paper, offset
-straight down with no rotation. It was legible and it was dead — the block read as a rendering fault
-rather than a pile of photographs, and the verdict on seeing it was "xấu quá". What fixes it, from
-the messenger it was compared against:
-
-- **The cards behind are the next pictures, not blank paper.** Showing the real images is also the
-  more useful half: a glance says what is in the set, not merely that there is one.
-- **They are turned a few degrees.** This is the one place in the app where a rotation earns its
-  keep — everything else here is set square because it is type and rules, and a photograph thrown on
-  a desk is neither. Five degrees per card; past about six the corners look like a mistake rather
-  than a hand.
-- **Two cards behind, whatever the count.** They say "more than one"; the badge carries the number.
-  A fan that deepens with the count is noise at this size.
-
-The room for the turned corners is worked out rather than guessed, and the first version got it
-wrong: a square of side S turned by θ spans `S·(cos θ + sin θ)`, so at 168px and ten degrees the
-furthest card reaches ~14px past its own box on every side — plus the 8px it is nudged up and right.
-Reserving 8px let the cards poke out through the top of the bubble, which reads as clipping. The
-padding is asymmetric now, because the fan leans one way.
-
-A single picture is untouched — it still gets its true proportions and its `width`/`height`
-attributes, because there is nothing for it to line up with and nothing to count.
+A single picture keeps its true proportions and its `width`/`height` attributes, so loading media
+never moves the conversation below it.
 
 ### Item 89: the sticker source question had an answer
 
@@ -2498,25 +2477,18 @@ What that produced was **two objects**: a bare photograph, a gap, and then a nar
 pulled to the tail edge — which reads as a separate message sent after the picture rather than as the
 picture's caption. Nobody chose that; it fell out of `flex-col gap-1.5` with `items-end`.
 
-A captioned picture is now one rounded rectangle. The picture squares its bottom edge, the caption
-squares its top, the gap is zero and the caption is **the picture's width** — taken from the same
-pure function the gallery sizes itself with, so a long caption wraps inside the photograph rather than
-making the block wider than the thing it describes. The fill still never surrounds the photograph,
-which is all item 90 was protecting.
+A captioned picture keeps its normal media corners and remains uncluttered in the thread. Its full
+caption appears only after opening the image — [phase 37](#phase-37--the-viewer-stops-being-a-panel--done)
+settles where — while the time remains quiet in its own lower corner. It makes the text visibly belong
+to the picture without adding another dark object to the conversation.
 
-Two dead tables went with it. `OUTGOING_ATTACHMENT_RADIUS` and its mirror described a picture *inside*
-a bubble — 5px, the bubble's 10 minus the 5px of padding around it — and item 90 removed that padding
-without removing them, so a bare picture had been sitting at half the radius of every bubble beside
-it, with one corner squared against a caption that was no longer in the box. The gallery's own comment
-said "all four corners, always" while the table it read squared two of them.
+There are no attachment-radius tables. The media reads the ordinary bubble table once, so the run's
+grammar — the unbroken side, the seam and the single notch — continues around the picture even when
+the message also carries text.
 
-There are no new tables. The picture takes the ordinary bubble table plus `rounded-b-none`, the caption
-takes it plus `rounded-t-none`, and the run's grammar — the unbroken side, the seam, the single notch —
-is drawn across the pair exactly as it would be across one bubble. `cn` is what makes that work:
-tailwind-merge drops the corner class that a later side class covers.
-
-**Albums are exempt**, and that is not laziness. An album is a fan of rotated cards, not a rectangle,
-so there is no edge for a caption to attach to; its caption keeps a box of its own.
+**Albums keep their fanned stack.** Their front cover carries no caption; opening the stack presents
+every image, direct thumbnail navigation, and the complete message text as one focused viewing
+surface.
 
 ### Item 110: two things a phone and a white photograph each proved
 
@@ -2551,20 +2523,18 @@ width away from anything it referred to, touching nothing — and that, more tha
 what made an image message read as undesigned. A picture drawn with care beside a number floating in
 empty space does not look like a decision anybody made.
 
-**The picture states its own time**, and the chip it does it in is not borrowed from another app:
-the album count has sat over media in exactly this chip since phase 23 — `scrim` behind it so it is
-legible over a white sky and a black jacket alike, `meta` on top so it is mono and tabular and does
-not shift width as a minute ticks over. This is that chip carrying the value that matters most, and
-the album's count moved to the opposite corner to make room. Two values, two corners, one chip.
+**The picture states its own time**, and the chip is deliberately quiet: `scrim` behind it keeps it
+legible over a white sky and a black jacket alike, while `meta` keeps it mono, tabular and stable as a
+minute ticks over. An album's total has the upper corner to itself, while time stays in the lower-right
+corner, so its metadata remains quick to scan.
 
 The gutter stops drawing a time when the bubble has one, so the number is never stated twice — but it
 keeps the edited marker, the read receipt, and the delivery status, because a message still on its way
 has no send time to state: the one it carries is this machine's guess rather than the server's answer.
 
-A captioned album now attaches too. It cannot share an *edge* with a fan of rotated cards, so the
-stack sits on its caption rather than being welded to it — the same width, no gap, the same squared
-join. The 6px between the front card and the caption is the room the rotated cards behind it dip
-into, not a gap in the layout.
+A captioned album stays a compact stack in the thread. Its cover stays text-free; the viewer states the
+complete caption with the selected image and lets the reader move through the whole set without
+turning the conversation itself into a grid.
 
 ### Item 108: the largest dismissible surface in the app was the one exception
 
@@ -2598,6 +2568,146 @@ entangled with roving focus — arrow keys, Home/End, and the focus restore that
 lifting the two shared lines out would separate Escape from the arrow keys that belong beside it. A
 shared hook is the right answer only once there is something to share that is not a fragment of a
 widget.
+
+## Phase 37 — the viewer stops being a panel — `done`
+
+All of it reported from a screenshot of the viewer opened on a photo set, and every item is the same
+complaint from a different angle: the frame had become louder than the picture.
+
+| # | Item | Status |
+| --- | --- | --- |
+| 112 | The caption is stated above the picture, not laid over it | Done |
+| 113 | The viewer loses its panel, its rules and its outlined buttons | Done |
+| 114 | The set is centred under the picture | Done |
+| 115 | A picture can be forwarded and saved from the viewer | Done |
+| 116 | A picture can be zoomed, panned and rotated in the viewer | Done |
+
+### Item 112: a caption over a photograph is unreadable exactly when it matters
+
+Phase 36 moved the caption out of the thread and into the viewer, which was right, and then laid it
+across the top of the opened image, which was not. Two things go wrong at once, and the screenshot
+shows both: the wash covers the top fifth of every photograph — where the subject of a photograph
+usually is — and the text is set on whatever happens to be underneath it, so a caption over a busy
+picture is the one caption nobody can read.
+
+It is now type on the scrim, centred, above the picture and under the header row. It costs the image
+the height of the words and nothing else, it is legible over any photograph because it is over no
+photograph, and centred type over a centred picture is one axis instead of two.
+
+Long captions are capped at roughly four lines and scroll inside that. A message can be a paragraph,
+and a paragraph is allowed to push a photograph off the screen in a thread — never in the viewer that
+exists to show it.
+
+### Item 113: nine lines around one picture
+
+Counted off the screenshot: a border around the panel, a rule under the header, a rule over the
+thumbnail strip, a border around the close button, one around each arrow, one around each thumbnail.
+Every one of them was defensible on its own and together they framed the photograph four deep.
+
+**The panel is gone entirely.** The viewer is the picture on the scrim. That does not mean scattering
+its controls around the screen: the image's context stays on the same centred axis above it, the
+previous/next affordances hug its own edges, and every tool meets again in one dock below it.
+
+The dock is ordinary layout, not another absolute layer competing for the bottom of the viewport: its
+toolbar comes first and its thumbnail strip follows. The arrows share one centred, fixed-width
+navigation rail and fade in on hover or keyboard focus. An image's aspect ratio must not decide where
+the next-picture target lands: portrait and landscape now put it at the same distance from the viewer's
+centre, close enough to reach without becoming part of the picture.
+
+The controls keep only what an affordance needs: nothing at rest but the glyph at 70% white, a soft
+wash under the pointer, a press that scales to 95%, and chevrons that appear beside the image only on
+intent. `LIGHTBOX_CONTROL_CLASS` holds it once — repeated controls that behave identically must not
+each acquire their own slightly different hover.
+
+The focus ring is restated on every one of them, and that is not decoration: the Button default ring
+is drawn in `ink`, which is near-black in the light theme, so keyboard focus inside a viewer full of
+scrim was invisible for anyone on the light setting.
+
+### Item 114: a strip of four pinned to the left
+
+The thumbnails hung off the left edge of a full-width panel, which reads as the beginning of a list
+that ran out rather than as the set. They are centred now — under a centred picture, on the same
+axis as the caption above it.
+
+**Centring a scroller is not `justify-center`.** A centred flex row whose content overflows pushes its
+first items past the left edge of the scroll container, where nothing can scroll back to them, and a
+set large enough to overflow is precisely when the strip matters. The row inside the scroller is
+`w-max` and centred by `mx-auto`: in the middle while it fits, from its true start once it does not.
+
+### Item 115: the two things you actually want from an open picture
+
+**Forward** reuses the panel the row menu already opens, and the viewer closes itself on the way — the
+forward panel belongs to the conversation pane and renders *under* the viewer, so a viewer left open
+would hide the thing the press just asked for. It is offered only where there is a message to forward:
+the vault lists attachments rather than messages, and a message this tab is still sending has no
+server id for a forward to name.
+
+**Save** could not be an `<a download>`, and the reason is worth writing down. That attribute is
+honoured only same-origin, and the API is a different origin from the web app in every environment
+this project has — the anchor would have navigated to the picture instead of saving it, replacing the
+conversation with a full-screen image. `downloadAttachment` fetches the bytes, wraps them in a
+`blob:` URL of our own origin, and hands *that* to the anchor. The blob is released a task later
+rather than immediately, because a URL revoked in the same task as the click that consumed it cancels
+the download in some browsers and not others.
+
+A failed save says so, in a chip on the scrim. The alternative — a button that does nothing when the
+network is down — is the failure mode people retry four times before giving up.
+
+### Item 116: a viewer that only displays was doing half the job
+
+Save and forward answer "what do I do with this picture"; nothing answered "let me actually look at
+it". A screenshot with handwriting in it, or a face in the back row of a group photo, had no way to
+get closer than whatever the browser happened to fit on screen.
+
+**Every zoom is anchored at the point being looked at**, not at the picture's centre. A wheel tick, a
+trackpad pinch, a double-click and the toolbar's own buttons all move the pan so the pixel under the
+cursor stays exactly where it was as the image grows or shrinks under it — the one property that makes
+a zoom feel like it is responding to you instead of sliding the thing you were looking at out from
+under your finger. The math is a small derivation, kept in the doc comment on `useAttachmentZoom`
+rather than re-argued at each call site: it holds `R·p·Z = M − centre − pan` at the old zoom and solves
+for the pan that keeps it true at the new one.
+
+**Panning is clamped to the picture, not to the screen.** Dragging a zoomed image only ever reveals
+more of *that image* — the edge stops at the edge of the (rotated, scaled) picture rather than letting
+the reader drag it into empty scrim, which is what a naive unclamped `translate` does. A 90° or 270°
+turn swaps which of the image's own dimensions faces the container's width, so the clamp swaps with it;
+getting this wrong is exactly how a sideways photograph ends up draggable past the edge of the screen
+on one axis and not the other.
+
+**A quarter-turn preserves the whole form.** At 100%, turning a wide landscape swaps its rendered
+width and height; leaving the original fitted scale in place would push its top and bottom past the
+viewport. The hook therefore calculates a second, automatic fit scale from the turned bounding box,
+and recalculates it when the viewer resizes. It never crops or distorts the picture. The reader's
+chosen zoom remains relative to that fitted state — rotate while inspecting at 150% and the 150% detail
+is respected; reset returns to the complete, correctly fitted image.
+
+**Rotate, zoom and pan live in one hook**, `useAttachmentZoom`, not inline in the viewer component —
+three gestures (wheel, double-click, drag) and two refs feeding one small state machine is precisely
+the "state plus lifecycle" split this project's hooks exist for, and it is what keeps the viewer
+component itself under the line length that would otherwise force a worse split. It resets on the
+attachment's own id rather than the array index, so it is tied to *which picture this is* and stays
+correct through a re-ordered set.
+
+**The controls meet in one smaller toolbar**, beneath the picture rather than in a second cluster at
+the top of the screen. Rotate and zoom come first, then a quiet divider, then message actions and
+close; the order follows how a picture is used — examine it, then do something with it. The thumbnail
+strip sits immediately below the same dock, so changing photos and changing their view remains one
+compact area. `LIGHTBOX_TOOLBAR_BUTTON_CLASS` draws it at 28px deliberately: nine controls in a
+single, quiet pill are still subordinate to the image rather than a second toolbar competing with it.
+The percentage doubles as the fastest way back to a fitted picture — a bare readout would have left
+the reader one press short of it.
+
+`+`/`-` zoom, `0` resets it, `R` rotates clockwise and `Shift+R` counterclockwise; the arrow keys and
+the wheel both still do what they did before: the keyboard surface grew, nothing already on it changed
+meaning.
+
+### What else the viewer gained, unasked
+
+Both neighbours of the open picture are fetched while it is being looked at, so an arrow key swaps
+the image instead of blanking the frame for as long as a megabyte takes to arrive; and the image
+itself fades in over 160ms, keyed on the attachment id, because a hard cut in a frame that does not
+move reads as a glitch rather than as a change. Both respect `prefers-reduced-motion` through the
+same block `popover-enter` already used.
 
 ## Verification bar
 

@@ -192,10 +192,10 @@ could take back, access tokens last fifteen minutes, and a refresh rotates so a 
 most once. Phase 22 lets a message carry up to ten images — a gallery in the bubble, a viewer that
 walks the set with the arrow keys — and gives the composer an emoji picker, searchable in English and
 in unaccented Vietnamese. A message that is nothing but one to three emoji is drawn large with no
-bubble at all. Phase 23 replaced that gallery with a stacked album — a 2×2 grid took 320×320 of the
-conversation for a set that gets opened in a viewer anyway — and added **stickers**: a personal tray
-of saved images, one tap from every conversation, copied into the message when sent so clearing the
-tray never blanks a picture out of somebody else's chat.
+bubble at all. Phase 23 keeps that gallery as a compact stacked album, with its caption kept out of the
+thread and stated in the viewer, and adds **stickers**: a personal tray of saved images,
+one tap from every conversation, copied into the message when sent so clearing the tray never blanks a
+picture out of somebody else's chat.
 
 Phases 24–28 complete the everyday messaging surface: arbitrary files are served as safe downloads,
 voice is normalized to AAC/MP4 with a shared waveform, and each conversation has a paged vault for
@@ -236,6 +236,19 @@ menu and from account settings, which is also where the paged list of blocked pe
 block made on one device now reaches the same account's other sessions without a reload. Phase 33
 closed the last unbounded query — the conversation list is a keyset page, which the five-pin cap made
 expressible without raw SQL.
+
+Phases 36-37 are the picture, looked at closely. A captioned photograph is one object in the thread
+rather than a photograph followed by a bubble, it states its own time in a chip on itself, and it fits
+the phone it is on instead of running past the row it is in. The viewer it opens into is no longer a
+panel: no card, no rules, no outlined buttons — the picture on the scrim, its caption as centred type
+*above* it rather than a wash across the top of it, the set centred underneath, the close button in
+one compact dock below the image beside forward and save. Saving fetches the bytes rather than trusting
+`<a download>`, which is silently ignored across origins and would have navigated away from the
+conversation instead. That same compact dock holds what
+phase 36 was missing: zoom and rotate, with every zoom anchored at the point the reader is looking at
+(a wheel tick, a trackpad pinch, a double-click) rather than at the picture's centre, and dragging to
+pan once zoomed in, clamped to the picture rather than to the screen. A quarter-turn re-fits the whole
+uncropped image to the viewport, so rotating a landscape never destroys its form.
 
 Largest known gaps:
 

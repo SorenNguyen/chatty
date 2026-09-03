@@ -21,3 +21,4 @@ export { useUnreadDivider } from "./use-unread-divider";
 export { useTypingParticipants } from "./use-typing-participants";
 export { useUserSearch } from "./use-user-search";
 export { useStickers } from "./use-stickers";
+export { useAttachmentZoom } from "./use-attachment-zoom";

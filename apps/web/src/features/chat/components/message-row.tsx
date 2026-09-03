@@ -243,6 +243,10 @@ export function MessageRow({
 							jumboCount={jumboCount}
 							onJumpToReplyOriginal={onJumpToReplyOriginal}
 							participants={participants}
+							// The same condition the row's own menu is drawn under: a
+							// tombstone has nothing left to forward, and a message this
+							// tab is still sending has no id to forward.
+							{...(!isDeleted && !deliveryState && { onForward })}
 						/>
 					)}
 
