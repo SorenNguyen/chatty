@@ -182,7 +182,13 @@ describe("AttachmentLightbox saving an image", () => {
 	});
 
 	it("fetches the bytes and hands them to a download rather than navigating to them", async () => {
-		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(new Blob(["picture"]))));
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue({
+				ok: true,
+				blob: async () => new Blob(["picture"]),
+			}),
+		);
 		render(<AttachmentLightbox attachments={[makeAttachment()]} initialIndex={0} caption="" onClose={vi.fn()} />);
 
 		fireEvent.click(screen.getByRole("button", { name: "Save this image" }));
