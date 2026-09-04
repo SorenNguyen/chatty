@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/api/client";
 import { MAX_RETAINED_MESSAGES } from "@/features/chat/constants/pagination";
 import { MessageList } from "@/features/chat/components/message-list";
+import { formatMessageTime } from "@/features/chat/utils";
 import { makeAttachment, makeMessage, makeOrphanedMessage, makeParticipant, makeSystemMessage } from "./factories";
 
 const messages = [makeMessage("m1", "minh", "first"), makeMessage("m2", "an", "second")];
@@ -77,6 +78,16 @@ describe("MessageList", () => {
 
 		expect(screen.getByText("first")).toBeInTheDocument();
 		expect(screen.getByText("second")).toBeInTheDocument();
+	});
+
+	it("keeps one visible time anchor for a burst even when its speakers alternate", () => {
+		renderList();
+
+		const timeLabel = formatMessageTime(messages[0]!.createdAt);
+		const renderedTimes = screen.getAllByText(timeLabel);
+		expect(renderedTimes).toHaveLength(2);
+		expect(renderedTimes[0]).toHaveClass("opacity-0");
+		expect(renderedTimes[1]).not.toHaveClass("opacity-0");
 	});
 
 	it("keeps a reaction inside the author's message run", () => {
@@ -224,9 +235,24 @@ describe("MessageList", () => {
 		renderList({ messages: [makeSystemMessage("s1", "An added Binh")], isGroup: true });
 
 		expect(screen.getByText("An added Binh")).toBeInTheDocument();
+		expect(screen.getByText(formatMessageTime("2026-08-23T10:00:00.000Z"))).toHaveClass("opacity-0");
 		// Nobody wrote it, so there is nothing to edit, unsend or hide — and so no
 		// actions menu, which is what tells it apart from a message in the DOM.
 		expect(screen.queryByRole("button", { name: "Message actions" })).not.toBeInTheDocument();
+	});
+
+	it("reveals a single message action trigger when its row is tapped", () => {
+		renderList();
+
+		const firstRow = screen.getByText("first").closest("[data-message-interaction-row]");
+		expect(firstRow).not.toBeNull();
+		fireEvent.pointerUp(firstRow!, { pointerType: "touch" });
+
+		expect(firstRow).toHaveFocus();
+		const actionRoot = screen.getAllByRole("button", { name: "Message actions" })[0]!.parentElement;
+		expect(actionRoot).toHaveClass("max-sm:pointer-events-none");
+		expect(actionRoot).toHaveClass("max-sm:group-focus-within:pointer-events-auto");
+		expect(actionRoot).toHaveClass("max-sm:group-focus-within:opacity-70");
 	});
 
 	it("shows an empty state when there are no messages", () => {

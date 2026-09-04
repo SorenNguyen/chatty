@@ -195,11 +195,11 @@ export function ChatPage() {
 					isShowingArchived={isShowingArchived}
 					onToggleArchived={() => setIsShowingArchived(!isShowingArchived)}
 					typingByConversation={typingByConversation}
-					className={cn(selectedConversation && "max-md:hidden")}
+					className={cn(selectedConversation && "max-lg:hidden")}
 				/>
 
 				<main
-					className={cn("relative min-w-0 flex-1 flex-col", selectedConversation ? "flex" : "hidden md:flex")}
+					className={cn("relative min-w-0 flex-1 flex-col", selectedConversation ? "flex" : "hidden lg:flex")}
 				>
 					{selectedConversation ? (
 						<ChatConversationPane

@@ -98,7 +98,7 @@ export function MessageMeta({
 				<span
 					className={cn(
 						"meta text-ink-faint transition-opacity",
-						!isTimeAlwaysVisible && "opacity-0 group-hover:opacity-100",
+						!isTimeAlwaysVisible && "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
 					)}
 				>
 					{formatMessageTime(createdAt)}

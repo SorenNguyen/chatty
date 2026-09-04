@@ -47,7 +47,7 @@ export function ConversationSidebar({
 }: ConversationSidebarProps) {
 	return (
 		<aside
-			className={cn("flex w-full shrink-0 flex-col border-r border-rule bg-paper-raised md:w-[360px]", className)}
+			className={cn("flex w-full shrink-0 flex-col border-r border-rule bg-paper-raised lg:w-[360px]", className)}
 		>
 			<div className="flex items-center justify-between px-4 pb-3 pt-4">
 				<h1 className="text-[25px] font-bold leading-none tracking-[-0.035em] text-ink">Chats</h1>
@@ -82,7 +82,7 @@ export function ConversationSidebar({
 			    shell people already use. It sat in the header before, which put the
 			    thing you touch least at the top of the thing you scan most. */}
 			<div className="flex shrink-0 items-center gap-3 border-t border-rule-soft px-4 py-3">
-				<Avatar user={currentUser} size="sm" />
+				<Avatar user={currentUser} size="md" />
 
 				<div className="min-w-0 flex-1">
 					<p className="truncate text-[13px] font-semibold leading-tight">{currentUser.displayName}</p>

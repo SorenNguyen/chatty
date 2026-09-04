@@ -95,6 +95,13 @@ export function MessageRows({
 			previous?.author?.id !== author.id;
 		const next = messages[index + 1];
 		const isWithinNextBurst = next ? isWithinMessageBurst(next.createdAt, message.createdAt) : false;
+		// Time belongs to the conversation's rhythm, not to its speaker turns.
+		// In a lively group every alternating author is a separate visual run; if
+		// run boundaries also printed time, a single minute became a wall of the
+		// same timestamp. Keep one visible anchor at the end of the shared activity
+		// burst and leave each individual time available on hover or keyboard focus.
+		const isTimeAnchor =
+			!next || next.kind === "system" || !isWithinNextBurst || isNewDay(next.createdAt, message.createdAt);
 		const isLastOfRun =
 			!author ||
 			isDeleted ||
@@ -117,6 +124,7 @@ export function MessageRows({
 					isMine={author?.id === currentUserId}
 					isGroup={isGroup}
 					isFirstOfRun={isFirstOfRun}
+					isTimeAnchor={isTimeAnchor}
 					clusterPosition={getClusterPosition(isFirstOfRun, isLastOfRun)}
 					isTargeted={message.id === targetMessageId}
 					isEditing={editingMessageId === message.id}

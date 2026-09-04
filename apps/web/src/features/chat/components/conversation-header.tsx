@@ -49,7 +49,7 @@ export function ConversationHeader({
 					variant="ghost"
 					onClick={onBack}
 					aria-label="Back to conversations"
-					className="-ml-2 size-8 shrink-0 p-0 md:hidden"
+					className="-ml-2 size-8 shrink-0 p-0 lg:hidden"
 				>
 					<ArrowLeft className="size-4" />
 				</Button>
@@ -58,16 +58,14 @@ export function ConversationHeader({
 				conversation={conversation}
 				currentUserId={currentUserId}
 				onlineUserIds={onlineUserIds}
-				size="sm"
+				size="md"
 			/>
 
 			{/*
-				The text column is boxed to the avatar's own 32px — an 18px name line
-				over a 14px status line, no gap between them. Left to their natural
-				leading the pair ran to about 38px, so the block stood taller than the
-				face beside it and the two stopped reading as one unit. Both numbers are
-				fixed rather than derived: `eyebrow` is 10px at 1.4, and the name has to
-				make up the remainder exactly or the column drifts off the avatar again.
+				The 44px face deliberately frames rather than matches the 32px identity
+				block. At 32px the picture read like a utility icon beside two lines of
+				type; the larger silhouette makes the person or group the primary cue
+				without increasing the fixed header height.
 			*/}
 			<div className="flex min-w-0 flex-1 flex-col justify-center">
 				<h1 className="truncate text-[14px] font-semibold leading-[18px] tracking-tight text-ink">

@@ -32,6 +32,7 @@ describe("AttachmentLightbox", () => {
 
 		expect(screen.getByRole("dialog", { name: "Image 3 of 4" })).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "View image 3 of 4" })).toHaveAttribute("aria-pressed", "true");
+		expect(screen.queryByText(/Photo set/i)).not.toBeInTheDocument();
 	});
 
 	it("draws no arrows and no strip for a single picture", () => {
@@ -63,13 +64,16 @@ describe("AttachmentLightbox", () => {
 		expect(onClose).not.toHaveBeenCalled();
 	});
 
-	it("keeps navigation on a fixed viewer rail and the dock out of the thumbnail strip", () => {
+	it("keeps navigation on fixed rails outside the image and the dock out of the thumbnail strip", () => {
 		render(<AttachmentLightbox attachments={makeAttachments(3)} initialIndex={0} caption="" onClose={vi.fn()} />);
 
 		const previousButton = screen.getByRole("button", { name: "Previous image" });
-		expect(previousButton).toHaveClass("left-2");
-		expect(previousButton.parentElement).toHaveClass("max-w-[52rem]");
-		expect(screen.getByRole("button", { name: "Next image" })).toHaveClass("right-2");
+		const nextButton = screen.getByRole("button", { name: "Next image" });
+		const imageArea = screen.getByAltText("Image").closest("[data-lightbox-image-area]");
+		expect(imageArea).not.toContainElement(previousButton);
+		expect(imageArea).not.toContainElement(nextButton);
+		expect(previousButton.parentElement).toHaveAttribute("data-lightbox-navigation-rail", "previous");
+		expect(nextButton.parentElement).toHaveAttribute("data-lightbox-navigation-rail", "next");
 		expect(screen.getByRole("button", { name: "Zoom in" }).parentElement).not.toHaveClass("absolute");
 	});
 });

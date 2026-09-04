@@ -26,6 +26,8 @@ interface MessageGalleryProps {
 	clusterPosition: ClusterPosition;
 	/** The send time, drawn on the picture itself. */
 	timeLabel?: string;
+	/** The last image in an activity burst keeps its time visible. */
+	isTimeAlwaysVisible?: boolean;
 	/** Forwards this message from inside the viewer. Absent while it is still being sent. */
 	onForward?: () => void;
 }
@@ -45,6 +47,7 @@ export function MessageGallery({
 	isMine,
 	clusterPosition,
 	timeLabel,
+	isTimeAlwaysVisible = false,
 	onForward,
 }: MessageGalleryProps) {
 	const [openIndex, setOpenIndex] = useState<number | null>(null);
@@ -117,7 +120,18 @@ export function MessageGallery({
 							<Layers aria-hidden="true" className="size-3 text-on-media" />
 							<span className="meta text-on-media">{attachments.length}</span>
 						</span>
-						{timeLabel && <span className={cn(MEDIA_TIME_CHIP_CLASS, "z-10")}>{timeLabel}</span>}
+						{timeLabel && (
+							<span
+								className={cn(
+									MEDIA_TIME_CHIP_CLASS,
+									"z-10 transition-opacity",
+									!isTimeAlwaysVisible &&
+										"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 max-sm:hidden",
+								)}
+							>
+								{timeLabel}
+							</span>
+						)}
 					</Button>
 				</div>
 			) : (
@@ -142,7 +156,18 @@ export function MessageGallery({
 							loading="lazy"
 							className={cn("h-auto max-w-full object-cover", radiusClasses)}
 						/>
-						{timeLabel && <span className={cn(MEDIA_TIME_CHIP_CLASS, "z-10")}>{timeLabel}</span>}
+						{timeLabel && (
+							<span
+								className={cn(
+									MEDIA_TIME_CHIP_CLASS,
+									"z-10 transition-opacity",
+									!isTimeAlwaysVisible &&
+										"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 max-sm:hidden",
+								)}
+							>
+								{timeLabel}
+							</span>
+						)}
 					</Button>
 				</div>
 			)}

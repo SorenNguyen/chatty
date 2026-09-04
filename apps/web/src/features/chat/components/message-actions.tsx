@@ -30,7 +30,8 @@ interface MessageActionsProps {
 }
 
 /**
- * A compact action menu beside a message bubble, visible on hover or keyboard focus.
+ * A compact action menu beside a message bubble, visible on hover or keyboard
+ * focus, and after a plain tap on that message when there is no hover.
  *
  * Three buttons, and the first of them changed shape in phase 29. It used to be
  * a heart that reacted with a heart, with the other four reactions parked at the
@@ -156,9 +157,12 @@ export function MessageActions({
 			ref={rootRef}
 			className={cn(
 				"relative flex shrink-0 items-center",
-				"max-sm:opacity-70 sm:opacity-0 sm:transition-opacity",
+				"opacity-0 transition-opacity",
+				// Keep the controls keyboard-discoverable, but remove the invisible
+				// pointer target until a touch focuses this message.
+				"max-sm:pointer-events-none max-sm:group-focus-within:pointer-events-auto max-sm:group-focus-within:opacity-70",
 				"sm:group-hover:opacity-100 sm:focus-within:opacity-100",
-				openPanel && "sm:opacity-100",
+				openPanel && "opacity-100",
 			)}
 		>
 			{onToggleReaction && (

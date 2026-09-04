@@ -142,21 +142,14 @@ export function AttachmentLightbox({
 			onClick={onClose}
 			className="fixed inset-0 z-50 flex flex-col gap-3 bg-scrim/90 p-3 dark:bg-scrim/95 sm:p-5"
 		>
-			{(caption || total > 1) && (
+			{caption && (
 				<div
 					onClick={(event) => event.stopPropagation()}
 					className="mx-auto flex w-full max-w-2xl shrink-0 flex-col items-center gap-1 px-2 text-center"
 				>
-					{caption && (
-						<p className="max-h-20 overflow-y-auto whitespace-pre-wrap text-center text-sm/[1.55] text-on-media/85">
-							{caption}
-						</p>
-					)}
-					{total > 1 && (
-						<span className="meta text-on-media/55">
-							Photo set · {index + 1} of {total}
-						</span>
-					)}
+					<p className="max-h-20 overflow-y-auto whitespace-pre-wrap text-center text-sm/[1.55] text-on-media/85">
+						{caption}
+					</p>
 				</div>
 			)}
 
@@ -167,40 +160,15 @@ export function AttachmentLightbox({
 			)}
 
 			<div
-				ref={imageAreaRef}
-				className="group relative flex min-h-0 flex-1 items-center justify-center overflow-hidden"
+				className={cn(
+					"group grid min-h-0 flex-1 items-stretch",
+					total > 1
+						? "grid-cols-[2.5rem_minmax(0,1fr)_2.5rem] gap-1 sm:grid-cols-[3.5rem_minmax(0,1fr)_3.5rem] sm:gap-2"
+						: "grid-cols-1",
+				)}
 			>
-				{/* The entrance animation lives on this wrapper rather than on the
-				    image itself, because the image already owns `transform` for
-				    zoom, pan and rotation — one element animating one CSS property
-				    from two places at once is how a transition starts fighting a
-				    drag instead of yielding to it. */}
-				<div key={current.id} className="media-enter flex max-h-full max-w-full items-center justify-center">
-					<img
-						ref={imageRef}
-						src={current.url}
-						alt={caption || "Image"}
-						draggable={false}
-						onLoad={handleImageLoad}
-						onClick={(event) => event.stopPropagation()}
-						onDoubleClick={handleDoubleClick}
-						onPointerDown={handlePointerDown}
-						onPointerMove={handlePointerMove}
-						onPointerUp={handlePointerUp}
-						onPointerCancel={handlePointerUp}
-						style={{
-							transform: `translate(${pan.x}px, ${pan.y}px) rotate(${rotation}deg) scale(${zoom * fitScale})`,
-						}}
-						className={cn(
-							"max-h-full max-w-full touch-none select-none rounded-control object-contain",
-							!isDragging && "transition-transform duration-200 ease-out",
-							zoom > 1 ? (isDragging ? "cursor-grabbing" : "cursor-grab") : "cursor-zoom-in",
-						)}
-					/>
-				</div>
-
 				{total > 1 && (
-					<div className="pointer-events-none absolute inset-y-0 left-1/2 w-full max-w-[52rem] -translate-x-1/2">
+					<div className="flex items-center justify-center" data-lightbox-navigation-rail="previous">
 						<Button
 							variant="ghost"
 							onClick={(event) => {
@@ -208,13 +176,53 @@ export function AttachmentLightbox({
 								step(-1);
 							}}
 							aria-label="Previous image"
-							className={cn(
-								LIGHTBOX_CONTROL_CLASS,
-								"pointer-events-auto absolute left-2 top-1/2 size-9 -translate-y-1/2 bg-scrim/45 opacity-100 backdrop-blur-sm transition-opacity focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100",
-							)}
+							className={cn(LIGHTBOX_CONTROL_CLASS, "size-9 bg-on-media/8 hover:bg-on-media/16")}
 						>
 							<ChevronLeft className="size-5" />
 						</Button>
+					</div>
+				)}
+
+				<div
+					ref={imageAreaRef}
+					data-lightbox-image-area
+					className="relative flex min-h-0 min-w-0 items-center justify-center overflow-hidden"
+				>
+					{/* The entrance animation lives on this wrapper rather than on the
+					    image itself, because the image already owns `transform` for
+					    zoom, pan and rotation — one element animating one CSS property
+					    from two places at once is how a transition starts fighting a
+					    drag instead of yielding to it. */}
+					<div
+						key={current.id}
+						className="media-enter flex max-h-full max-w-full items-center justify-center"
+					>
+						<img
+							ref={imageRef}
+							src={current.url}
+							alt={caption || "Image"}
+							draggable={false}
+							onLoad={handleImageLoad}
+							onClick={(event) => event.stopPropagation()}
+							onDoubleClick={handleDoubleClick}
+							onPointerDown={handlePointerDown}
+							onPointerMove={handlePointerMove}
+							onPointerUp={handlePointerUp}
+							onPointerCancel={handlePointerUp}
+							style={{
+								transform: `translate(${pan.x}px, ${pan.y}px) rotate(${rotation}deg) scale(${zoom * fitScale})`,
+							}}
+							className={cn(
+								"max-h-full max-w-full touch-none select-none rounded-control object-contain",
+								!isDragging && "transition-transform duration-200 ease-out",
+								zoom > 1 ? (isDragging ? "cursor-grabbing" : "cursor-grab") : "cursor-zoom-in",
+							)}
+						/>
+					</div>
+				</div>
+
+				{total > 1 && (
+					<div className="flex items-center justify-center" data-lightbox-navigation-rail="next">
 						<Button
 							variant="ghost"
 							onClick={(event) => {
@@ -222,10 +230,7 @@ export function AttachmentLightbox({
 								step(1);
 							}}
 							aria-label="Next image"
-							className={cn(
-								LIGHTBOX_CONTROL_CLASS,
-								"pointer-events-auto absolute right-2 top-1/2 size-9 -translate-y-1/2 bg-scrim/45 opacity-100 backdrop-blur-sm transition-opacity focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100",
-							)}
+							className={cn(LIGHTBOX_CONTROL_CLASS, "size-9 bg-on-media/8 hover:bg-on-media/16")}
 						>
 							<ChevronRight className="size-5" />
 						</Button>

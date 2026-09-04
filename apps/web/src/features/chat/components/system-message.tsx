@@ -15,11 +15,16 @@ interface SystemMessageProps {
  */
 export function SystemMessage({ content, createdAt }: SystemMessageProps) {
 	return (
-		<div className="flex items-center gap-3 py-4">
+		<div className="group flex items-center gap-3 py-4">
 			<span className="h-px w-6 shrink-0 bg-rule" />
 			<span className="eyebrow tracking-[0.08em] text-ink-faint">{content}</span>
 			<span className="h-px flex-1 bg-rule-soft" />
-			<span className="meta shrink-0 text-ink-faint">{formatMessageTime(createdAt)}</span>
+			<time
+				dateTime={createdAt}
+				className="meta shrink-0 text-ink-faint opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-sm:hidden"
+			>
+				{formatMessageTime(createdAt)}
+			</time>
 		</div>
 	);
 }

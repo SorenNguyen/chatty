@@ -1,5 +1,6 @@
 import type { ParticipantDTO, ReactionEmoji } from "@chatty/shared-types";
 import { Ban } from "lucide-react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { Avatar } from "@/components/avatar";
 import { cn } from "@/utils/cn";
 import { DELETED_AUTHOR_NAME, DELETED_MESSAGE_TEXT } from "../constants/message";
@@ -20,10 +21,11 @@ interface MessageRowProps {
 	isGroup: boolean;
 	/** First of a run from the same author — the one that carries the avatar and the byline. */
 	isFirstOfRun: boolean;
+	/** Last message in a shared activity burst, regardless of who spoke. */
+	isTimeAnchor: boolean;
 	/**
 	 * Where this message sits in its run, which decides its corners: see the
-	 * tables in `constants/message-cluster`. Also decides whether the timestamp
-	 * stays on screen — a run states its time once, at the end.
+	 * tables in `constants/message-cluster`.
 	 */
 	clusterPosition: ClusterPosition;
 	/** The message a search result jumped to, highlighted until the reader moves on. */
@@ -58,29 +60,18 @@ interface MessageRowProps {
  * One message somebody wrote.
  *
  * The bubble's bottom corner is cut to 2px on the side the message came from,
- * and that notch — not the fill — is what tells you who spoke: it survives
- * being read at a glance, in a screenshot, and by anyone who cannot tell the ink
- * block from the paper one by colour.
+ * so authorship remains legible without relying on colour alone.
  *
- * Everything that is *about* the message rather than part of it — the time, the
- * edited marker, the read receipt, the actions — sits in a gutter beside the
- * bubble on the message's own centreline, never on a line beneath it. That is
- * one decision doing three jobs:
- *
- *  - A run of messages stacks at 3px instead of being pushed apart by a
- *    timestamp under each one, which is what made a burst of five messages read
- *    as five separate conversations.
- *  - The actions button lines up with the middle of the bubble it acts on. It
- *    used to be bottom-aligned to a column that contained the timestamp too, so
- *    it hung below the bubble and looked broken.
- *  - The gutter is laid out at full width and only *faded* in, so hovering a
- *    message reveals its time without moving a single pixel of the thread.
+ * Metadata and actions share a fixed gutter on the bubble's centreline. Keeping
+ * that space in the layout while fading secondary information prevents hover
+ * from moving the thread and lets message runs retain their compact 3px rhythm.
  */
 export function MessageRow({
 	message,
 	isMine,
 	isGroup,
 	isFirstOfRun,
+	isTimeAnchor,
 	clusterPosition,
 	isTargeted,
 	isEditing,
@@ -114,12 +105,10 @@ export function MessageRow({
 	// A tombstone has no content and no image left to change, so the author's
 	// two actions have nothing to act on — the row stays only to hold its place.
 	const canModify = isMine && !isDeleted && !deliveryState;
-	// The time is kept on screen for the message that ends a burst and hidden on
-	// the ones inside it: consecutive lines sent in the same minute would print
-	// the same number four times. Anything else is a hover away, and an edited
-	// message keeps its marker outright — a note saying "this is not what was
-	// sent" must not need to be discovered.
-	const isTimeAlwaysVisible = clusterPosition === "last" || clusterPosition === "solo" || Boolean(receipt);
+	// Speaker changes shape the bubbles, but they do not restart the clock. The
+	// list supplies one shared time anchor for the whole activity burst; a receipt
+	// keeps its message's time beside the delivery state as useful context.
+	const isTimeAlwaysVisible = isTimeAnchor || Boolean(receipt);
 	// A picture states its own time, in a chip on the image. Only a picture: a
 	// file card and a voice player are rows of ink on paper like any other
 	// bubble, and the gutter is level with them.
@@ -151,6 +140,16 @@ export function MessageRow({
 		onToggleReaction(DEFAULT_REACTION);
 	}
 
+	function revealTouchActions(event: ReactPointerEvent<HTMLDivElement>) {
+		if (event.pointerType === "mouse") return;
+		if ((event.target as HTMLElement).closest("a, button, input, textarea, [role='button']")) return;
+
+		// A phone has no hover. Focusing the row on a plain tap reveals only this
+		// message's overflow action; focusing the composer or another message hides
+		// it again. `-1` keeps hundreds of rows out of the keyboard tab order.
+		event.currentTarget.focus({ preventScroll: true });
+	}
+
 	return (
 		<div
 			id={`message-${message.id}`}
@@ -174,7 +173,7 @@ export function MessageRow({
 			    over the bubble rather than over the face. Groups only: in a 1-1 the
 			    header already names the one person it could possibly be. */}
 			{!isMine && isFirstOfRun && isGroup && (
-				<span className="eyebrow mb-1.5 ml-11 text-ink-soft">
+				<span className="eyebrow mb-1.5 ml-12 text-ink-soft sm:ml-13">
 					{/* A USER message with no author is one whose writer deleted their
 					    account — still theirs to have said, no longer theirs to be
 					    named for. */}
@@ -186,8 +185,11 @@ export function MessageRow({
 			    row rather than the controls themselves, which are invisible until it
 			    happens and so cannot be hovered first. */}
 			<div
+				data-message-interaction-row
+				tabIndex={-1}
+				onPointerUp={revealTouchActions}
 				className={cn(
-					"group relative flex max-w-full items-center gap-2 sm:gap-3",
+					"group relative flex max-w-full items-center gap-2 outline-none sm:gap-3",
 					isMine && "flex-row-reverse",
 					// Only the half of the reaction pill that hangs below the bubble needs
 					// reserving — 10px of a 20px pill, plus 6px so the next message does
@@ -240,6 +242,7 @@ export function MessageRow({
 							message={message}
 							isMine={isMine}
 							clusterPosition={clusterPosition}
+							isTimeAlwaysVisible={isTimeAlwaysVisible}
 							jumboCount={jumboCount}
 							onJumpToReplyOriginal={onJumpToReplyOriginal}
 							participants={participants}

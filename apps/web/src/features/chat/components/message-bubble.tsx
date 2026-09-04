@@ -15,6 +15,8 @@ interface MessageBubbleProps {
 	message: ThreadMessage;
 	isMine: boolean;
 	clusterPosition: ClusterPosition;
+	/** Whether this message is the visible time anchor for its activity burst. */
+	isTimeAlwaysVisible: boolean;
 	/**
 	 * How many emoji this message is, when it is *only* emoji — zero otherwise.
 	 * Decided by the row, which is where the conditions that disqualify a message
@@ -51,6 +53,7 @@ export function MessageBubble({
 	message,
 	isMine,
 	clusterPosition,
+	isTimeAlwaysVisible,
 	jumboCount,
 	onJumpToReplyOriginal,
 	participants,
@@ -100,6 +103,7 @@ export function MessageBubble({
 					isMine={isMine}
 					clusterPosition={clusterPosition}
 					{...(message.deliveryState ? {} : { timeLabel: formatMessageTime(message.createdAt) })}
+					isTimeAlwaysVisible={isTimeAlwaysVisible}
 					{...(onForward && { onForward })}
 				/>
 			</div>

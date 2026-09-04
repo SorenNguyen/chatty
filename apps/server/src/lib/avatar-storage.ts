@@ -14,7 +14,7 @@ import { ValidationError } from "./errors.js";
  */
 
 /**
- * One size, re-encoded on upload. Chat shows avatars at 32-40px, so 256 covers
+ * One size, re-encoded on upload. Chat shows avatars at 32-44px, so 256 covers
  * retina and any future profile view without keeping the original around.
  */
 const AVATAR_SIZE = 256;
