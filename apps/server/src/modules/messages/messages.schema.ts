@@ -18,8 +18,8 @@ export const sendMessageSchema = z.object({
 	// schema can see, and it is the half that matters.
 	stickerId: z.string().min(1).max(64).optional(),
 	forwardOfMessageId: z.string().min(1).max(64).optional(),
-	// Never read as an identifier: it is echoed to the room and nothing here
-	// looks it up, so the bound is the whole validation.
+	// A device-generated idempotency key. The service scopes it to the author;
+	// the length bound also caps the unique-index key stored by PostgreSQL.
 	clientId: z.string().min(1).max(64).optional(),
 	mentionedUserIds: z.preprocess(
 		(value) => {

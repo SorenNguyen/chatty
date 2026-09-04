@@ -6,7 +6,9 @@ COPY package.json package-lock.json ./
 COPY apps/server/package.json apps/server/
 COPY apps/web/package.json apps/web/
 COPY packages/shared-types/package.json packages/shared-types/
-RUN npm ci
+# Keep downloaded packages between BuildKit runs. The install itself remains
+# clean and lockfile-exact; only npm's network cache survives the layer.
+RUN --mount=type=cache,target=/root/.npm npm ci
 COPY tsconfig.base.json ./
 COPY packages/shared-types packages/shared-types
 COPY apps/web apps/web

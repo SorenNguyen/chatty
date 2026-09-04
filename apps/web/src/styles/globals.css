@@ -1,7 +1,8 @@
 /*
  * Fonts are self-hosted, not pulled from Google.
  *
- * `nginx.conf.template` sets `style-src 'self'; font-src 'self'` and means it.
+ * `nginx.conf.template` keeps styles same-origin and permits the data-URL fonts
+ * emitted by the icon/font packages bundled into the production CSS.
  * A <link> to fonts.googleapis.com would need both relaxed, and the stylesheet
  * it returns is a runtime dependency on a third party for a chat app that has
  * none anywhere else. Vite fingerprints these into the bundle, so the policy

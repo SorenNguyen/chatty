@@ -97,8 +97,9 @@ export interface CurrentUserDTO extends UserDTO {
  */
 export interface ParticipantDTO extends UserDTO {
 	/**
-	 * What this participant may do to the *other* members of a group: an owner
-	 * may rename it and remove anyone, a member may only remove themselves.
+	 * What this participant may do to the group: the owner controls roles and
+	 * policy; owner/admin manage ordinary members and naming; a member may always
+	 * leave and may invite only while the group policy is open.
 	 *
 	 * Present on a direct conversation's participants too, where it is always
 	 * "member" and means nothing — a two-person chat has nothing to administer.
@@ -129,12 +130,15 @@ export interface ParticipantDTO extends UserDTO {
  * schema.prisma). The mapper is the one place that knows both spellings, the
  * same way `createdAt` is a Date on one side and an ISO string on the other.
  */
-export type ConversationRole = "owner" | "member";
+export type ConversationRole = "owner" | "admin" | "member";
+export type GroupInvitePolicy = "everyone" | "managers";
 
 export interface ConversationDTO {
 	id: string;
 	isGroup: boolean;
 	name: string | null; // null for 1-1 conversations; derived from participants on the client
+	/** Who may add people; meaningful only for groups. */
+	invitePolicy: GroupInvitePolicy;
 	participants: ParticipantDTO[];
 	lastMessage: MessageDTO | null;
 	/**
@@ -402,10 +406,9 @@ export interface MessageDTO {
 	/** The message this one answers, or null. */
 	replyTo: MessageReplyDTO | null;
 	/**
-	 * The `clientId` the sender asked for, echoed straight back — see
-	 * `SendMessageRequest.clientId`. Present only on the message that has just
-	 * been sent, and only for whoever sent it; absent on every message read back
-	 * from the database, because nothing stores it.
+	 * The `clientId` the sender asked for — see `SendMessageRequest.clientId`.
+	 * Stored as that sender's idempotency key, but exposed only on the immediate
+	 * send response and room event; ordinary history pages omit it.
 	 *
 	 * Every other participant receives it too, and for them it names nothing.
 	 * That is the cost of one broadcast to the room rather than one emit per
@@ -579,6 +582,14 @@ export interface TransferOwnershipRequest {
 	userId: string;
 }
 
+export interface SetParticipantRoleRequest {
+	role: Exclude<ConversationRole, "owner">;
+}
+
+export interface SetGroupInvitePolicyRequest {
+	invitePolicy: GroupInvitePolicy;
+}
+
 /**
  * Body of `POST /auth/password`.
  *
@@ -673,8 +684,8 @@ export interface SendMessageRequest {
 	 * whenever the socket wins the draft and the saved message sit in the thread
 	 * side by side until the response arrives to clear the draft away.
 	 *
-	 * Optional because it is a client convenience, not part of what a message is.
-	 * The server neither stores it nor interprets it.
+	 * Optional for legacy/non-optimistic clients. The server stores it under a
+	 * per-author unique index and interprets a replay as the same logical send.
 	 */
 	clientId?: string | undefined;
 }
@@ -817,8 +828,8 @@ export interface TypingSignal {
 }
 
 /**
- * Participants or the name changed in a conversation you are in — someone was
- * added, someone left or was removed, or the group was renamed.
+ * Shared conversation state changed — someone was added, left, changed role,
+ * renamed the group, or changed its invite policy.
  *
  * Carries only the parts of a conversation that are *not* specific to who is
  * watching. `unreadCount` and `lastMessage` are deliberately absent: they are
@@ -831,6 +842,7 @@ export interface TypingSignal {
 export interface ConversationUpdatedEvent {
 	conversationId: string;
 	name: string | null;
+	invitePolicy: GroupInvitePolicy;
 	participants: ParticipantDTO[];
 }
 

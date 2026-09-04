@@ -51,6 +51,19 @@ describe("MessageGallery with one image", () => {
 		expect(screen.getByAltText("Image")).toHaveAttribute("loading", "lazy");
 	});
 
+	it("uses the thumbnail in the thread and the full image only in the viewer", () => {
+		const attachment = makeAttachment({
+			url: "http://api.test/photo-full",
+			thumbUrl: "http://api.test/photo-thumb",
+		});
+		render(<MessageGallery attachments={[attachment]} caption="" isMine clusterPosition="solo" />);
+
+		expect(screen.getByAltText("Image")).toHaveAttribute("src", attachment.thumbUrl);
+		fireEvent.click(screen.getByRole("button", { name: "Open image" }));
+
+		expect(within(screen.getByRole("dialog")).getByAltText("Image")).toHaveAttribute("src", attachment.url);
+	});
+
 	it("keeps the caption out of the thread and states it beside the opened image", () => {
 		const caption = "the whiteboard notes that belong to this photo and continue past one compact line";
 		render(<MessageGallery attachments={[makeAttachment()]} caption={caption} isMine clusterPosition="solo" />);

@@ -3,6 +3,7 @@ import path from "node:path";
 import sharp from "sharp";
 import { env } from "../config/env.js";
 import { ValidationError } from "./errors.js";
+import { startImageNormalization } from "./metrics.js";
 import { signAttachmentToken } from "./attachment-token.js";
 
 /**
@@ -95,36 +96,46 @@ function thumbnailPathFor(attachmentId: string): string {
 export async function saveAttachment(attachmentId: string, upload: Buffer): Promise<StoredAttachment> {
 	const filePath = attachmentPathFor(attachmentId);
 	const thumbnailPath = thumbnailPathFor(attachmentId);
+	const stopTimer = startImageNormalization(upload.byteLength);
 
-	let normalized: Buffer;
-	let width: number;
-	let height: number;
 	try {
-		const { data, info } = await sharp(upload, { limitInputPixels: MAX_INPUT_PIXELS })
-			// Applies the EXIF orientation flag, then discards it — without this,
-			// photos taken in portrait arrive sideways.
-			.rotate()
-			.resize(MAX_ATTACHMENT_DIMENSION, MAX_ATTACHMENT_DIMENSION, { fit: "inside", withoutEnlargement: true })
-			.webp({ quality: 82 })
-			.toBuffer({ resolveWithObject: true });
-		normalized = data;
-		width = info.width;
-		height = info.height;
-	} catch {
-		// sharp throws for anything it cannot decode — a PDF renamed to .png, a
-		// truncated upload, a decompression bomb. All the caller's fault, so a 400
-		// rather than the 500 an unhandled throw would become.
-		throw new ValidationError("That file could not be read as an image");
+		let normalized: Buffer;
+		let width: number;
+		let height: number;
+		try {
+			const { data, info } = await sharp(upload, { limitInputPixels: MAX_INPUT_PIXELS })
+				// Applies the EXIF orientation flag, then discards it — without this,
+				// photos taken in portrait arrive sideways.
+				.rotate()
+				.resize(MAX_ATTACHMENT_DIMENSION, MAX_ATTACHMENT_DIMENSION, {
+					fit: "inside",
+					withoutEnlargement: true,
+				})
+				.webp({ quality: 82 })
+				.toBuffer({ resolveWithObject: true });
+			normalized = data;
+			width = info.width;
+			height = info.height;
+		} catch {
+			// sharp throws for anything it cannot decode — a PDF renamed to .png, a
+			// truncated upload, a decompression bomb. All the caller's fault, so a 400
+			// rather than the 500 an unhandled throw would become.
+			throw new ValidationError("That file could not be read as an image");
+		}
+
+		await mkdir(attachmentsDirectory, { recursive: true });
+		const thumbnail = await sharp(normalized)
+			.resize(MAX_THUMBNAIL_DIMENSION, MAX_THUMBNAIL_DIMENSION, { fit: "inside", withoutEnlargement: true })
+			.webp({ quality: 70 })
+			.toBuffer();
+		await Promise.all([writeFile(filePath, normalized), writeFile(thumbnailPath, thumbnail)]);
+		stopTimer("success", normalized.byteLength);
+
+		return { width, height, byteSize: normalized.byteLength };
+	} catch (error) {
+		stopTimer("error");
+		throw error;
 	}
-
-	await mkdir(attachmentsDirectory, { recursive: true });
-	const thumbnail = await sharp(normalized)
-		.resize(MAX_THUMBNAIL_DIMENSION, MAX_THUMBNAIL_DIMENSION, { fit: "inside", withoutEnlargement: true })
-		.webp({ quality: 70 })
-		.toBuffer();
-	await Promise.all([writeFile(filePath, normalized), writeFile(thumbnailPath, thumbnail)]);
-
-	return { width, height, byteSize: normalized.byteLength };
 }
 
 /** Writes bytes that were validated for download, under an opaque server key. */

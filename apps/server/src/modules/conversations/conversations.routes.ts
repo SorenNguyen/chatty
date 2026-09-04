@@ -11,6 +11,8 @@ import {
 	pinConversationController,
 	removeParticipantController,
 	renameConversationController,
+	setInvitePolicyController,
+	setParticipantRoleController,
 	transferOwnershipController,
 } from "./conversations.controller.js";
 
@@ -34,6 +36,8 @@ conversationsRouter.post("/:conversationId/members", addParticipantController);
 // target. Removing yourself and being removed are the same operation on the
 // same resource — see removeParticipant's doc comment in the service.
 conversationsRouter.delete("/:conversationId/members/:userId", removeParticipantController);
+conversationsRouter.put("/:conversationId/members/:userId/role", setParticipantRoleController);
+conversationsRouter.put("/:conversationId/invite-policy", setInvitePolicyController);
 // PUT, not POST: a group has exactly one owner, so this replaces a value rather
 // than appending to a collection — and naming the same person twice ends in the
 // same state. Its own path segment rather than a field on the rename PATCH,

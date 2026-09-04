@@ -2,12 +2,18 @@ import type {
 	ConversationDTO,
 	ConversationPageDTO,
 	ConversationReadEvent,
+	ConversationRole,
 	ConversationSelfUpdatedEvent,
 	ConversationUpdatedEvent,
+	GroupInvitePolicy,
 	MessageDTO,
 	ParticipantDTO,
 } from "@chatty/shared-types";
-import { Prisma, type ConversationRole as DbConversationRole } from "@prisma/client";
+import {
+	Prisma,
+	type ConversationInvitePolicy as DbConversationInvitePolicy,
+	type ConversationRole as DbConversationRole,
+} from "@prisma/client";
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../../lib/errors.js";
 import { prisma } from "../../lib/prisma.js";
 import { getIO, userRoom } from "../../lib/socket-bus.js";
@@ -23,6 +29,8 @@ import type {
 	MuteConversationInput,
 	PinConversationInput,
 	RenameConversationInput,
+	SetInvitePolicyInput,
+	SetParticipantRoleInput,
 	TransferOwnershipInput,
 } from "./conversations.schema.js";
 
@@ -82,6 +90,7 @@ interface ConversationRow {
 	id: string;
 	isGroup: boolean;
 	name: string | null;
+	invitePolicy: DbConversationInvitePolicy;
 	updatedAt: Date;
 	participants: {
 		lastSharedReadMessageId: string | null;
@@ -100,6 +109,17 @@ interface ConversationRow {
 	}[];
 }
 
+const conversationRoleByDatabaseValue: Record<DbConversationRole, ConversationRole> = {
+	OWNER: "owner",
+	ADMIN: "admin",
+	MEMBER: "member",
+};
+
+const invitePolicyByDatabaseValue: Record<DbConversationInvitePolicy, GroupInvitePolicy> = {
+	EVERYONE: "everyone",
+	MANAGERS: "managers",
+};
+
 /**
  * Shared by every mapper below, so a participant looks the same everywhere one appears.
  *
@@ -113,7 +133,7 @@ interface ConversationRow {
 function mapParticipants(rows: ConversationRow["participants"]): ParticipantDTO[] {
 	return rows.map(({ user, lastSharedReadMessageId, role }) => ({
 		...toUserDTO(user, true),
-		role: role === "OWNER" ? "owner" : "member",
+		role: conversationRoleByDatabaseValue[role],
 		lastReadMessageId: lastSharedReadMessageId,
 	}));
 }
@@ -137,6 +157,7 @@ function toConversationDTO(row: ConversationRow, unreadCount: number, viewerId: 
 		id: row.id,
 		isGroup: row.isGroup,
 		name: row.name,
+		invitePolicy: invitePolicyByDatabaseValue[row.invitePolicy],
 		participants,
 		lastMessage,
 		unreadCount,
@@ -161,7 +182,12 @@ function toConversationDTO(row: ConversationRow, unreadCount: number, viewerId: 
  * payload sent to a whole room at once.
  */
 function toConversationUpdatedEvent(row: ConversationRow): ConversationUpdatedEvent {
-	return { conversationId: row.id, name: row.name, participants: mapParticipants(row.participants) };
+	return {
+		conversationId: row.id,
+		name: row.name,
+		invitePolicy: invitePolicyByDatabaseValue[row.invitePolicy],
+		participants: mapParticipants(row.participants),
+	};
 }
 
 interface UnreadCountRow {
@@ -347,10 +373,10 @@ async function evictParticipantFromRoom(userId: string, conversationId: string):
 }
 
 /**
- * Tells whoever is still in a conversation that its participants or name changed.
+ * Tells whoever is still in a conversation that shared membership or settings changed.
  *
  * To the conversation room, not per-user like `conversation:new` — everyone
- * left in it should see the same membership list, and by the time this fires
+ * left in it should see the same membership and policy, and by the time this fires
  * a removed participant's sockets have already been evicted from that room
  * (see `evictParticipantFromRoom`), so they do not receive it.
  */
@@ -851,13 +877,13 @@ async function prepareGroupMutation(
 	transaction: Prisma.TransactionClient,
 	userId: string,
 	conversationId: string,
-): Promise<void> {
+): Promise<{ invitePolicy: DbConversationInvitePolicy }> {
 	// Every membership or name mutation takes the same row lock first. It makes
 	// two requests for one group happen in a stable order — most importantly an
 	// owner leaving at the same time as their likely successor. Without it, one
 	// request can promote a participant the other request has just removed.
-	const conversations = await transaction.$queryRaw<{ isGroup: boolean }[]>`
-		SELECT "isGroup"
+	const conversations = await transaction.$queryRaw<{ isGroup: boolean; invitePolicy: DbConversationInvitePolicy }[]>`
+		SELECT "isGroup", "invitePolicy"
 		FROM "Conversation"
 		WHERE id = ${conversationId}
 		FOR UPDATE
@@ -868,6 +894,8 @@ async function prepareGroupMutation(
 	if (!conversations[0]?.isGroup) {
 		throw new ValidationError("This operation is only available in a group conversation");
 	}
+
+	return { invitePolicy: conversations[0].invitePolicy };
 }
 
 /**
@@ -894,6 +922,23 @@ async function assertOwner(
 	});
 
 	if (participant?.role !== "OWNER") throw new ForbiddenError("Only the group owner can do this");
+}
+
+/** Owner and admins share day-to-day moderation; role and policy remain owner-only. */
+async function assertManager(
+	transaction: Prisma.TransactionClient,
+	userId: string,
+	conversationId: string,
+): Promise<DbConversationRole> {
+	const participant = await transaction.conversationParticipant.findUnique({
+		where: { conversationId_userId: { conversationId, userId } },
+		select: { role: true },
+	});
+	if (participant?.role !== "OWNER" && participant?.role !== "ADMIN") {
+		throw new ForbiddenError("Only group owners and admins can do this");
+	}
+
+	return participant.role;
 }
 
 /**
@@ -976,11 +1021,21 @@ async function transferOwnership(
 	transaction: Prisma.TransactionClient,
 	conversationId: string,
 ): Promise<MessageRow | null> {
-	const successor = await transaction.conversationParticipant.findFirst({
-		where: { conversationId },
-		orderBy: [{ joinedAt: "asc" }, { id: "asc" }],
-		select: { id: true, user: { select: { displayName: true } } },
-	});
+	// An existing admin was explicitly trusted for continuity, so prefer one over
+	// an ordinary member. Within each role the longest-standing membership wins,
+	// preserving the old deterministic succession rule.
+	const selectSuccessor = { id: true, user: { select: { displayName: true } } } as const;
+	const successor =
+		(await transaction.conversationParticipant.findFirst({
+			where: { conversationId, role: "ADMIN" },
+			orderBy: [{ joinedAt: "asc" }, { id: "asc" }],
+			select: selectSuccessor,
+		})) ??
+		(await transaction.conversationParticipant.findFirst({
+			where: { conversationId },
+			orderBy: [{ joinedAt: "asc" }, { id: "asc" }],
+			select: selectSuccessor,
+		}));
 
 	// The last person out of a group leaves nobody to promote. Allowed: nothing
 	// in this app deletes a conversation, and an empty one is simply unreachable.
@@ -1018,10 +1073,8 @@ async function reloadConversation(
  * existing group never saw it appear in their sidebar until they reloaded.
  * Everyone already in the room gets `conversation:updated`.
  *
- * **Any member may do this, owner or not** — unlike renaming and removing.
- * Inviting is how a group grows, gating it behind one person makes them a
- * bottleneck for the thing groups exist to do, and the worst case (an unwanted
- * arrival) is one the owner can undo. See ADR 0008.
+ * Open by default for compatibility. An owner may choose MANAGERS, in which
+ * case the owner and admins can invite while ordinary members get a clear 403.
  */
 export async function addParticipant(
 	currentUserId: string,
@@ -1029,7 +1082,10 @@ export async function addParticipant(
 	input: AddParticipantInput,
 ): Promise<ConversationDTO> {
 	const { systemMessage, updated } = await prisma.$transaction(async (transaction) => {
-		await prepareGroupMutation(transaction, currentUserId, conversationId);
+		const group = await prepareGroupMutation(transaction, currentUserId, conversationId);
+		if (group.invitePolicy === "MANAGERS") {
+			await assertManager(transaction, currentUserId, conversationId);
+		}
 
 		const targetUser = await transaction.user.findUnique({ where: { id: input.userId }, select: { id: true } });
 		if (!targetUser) throw new NotFoundError("User not found");
@@ -1081,10 +1137,8 @@ export async function addParticipant(
  * conversation in this app — an empty group just becomes unreachable, the
  * same way a direct conversation is never destroyed either.
  *
- * **Removing someone else is owner-only; removing yourself is always allowed.**
- * That asymmetry is the whole of what the role does here — see ADR 0008 — and
- * an owner who walks out hands the group to whoever has been in it longest
- * rather than leaving it with nobody able to administer it.
+ * Removing yourself is always allowed. An owner may remove any non-owner;
+ * admins may remove ordinary members but cannot act on the owner or one another.
  */
 export async function removeParticipant(
 	currentUserId: string,
@@ -1094,13 +1148,18 @@ export async function removeParticipant(
 	const isLeaving = targetUserId === currentUserId;
 	const { systemMessages, remaining } = await prisma.$transaction(async (transaction) => {
 		await prepareGroupMutation(transaction, currentUserId, conversationId);
-		if (!isLeaving) await assertOwner(transaction, currentUserId, conversationId);
 
 		const target = await transaction.conversationParticipant.findUnique({
 			where: { conversationId_userId: { conversationId, userId: targetUserId } },
 			select: { id: true, role: true, user: { select: { displayName: true } } },
 		});
 		if (!target) throw new NotFoundError("Not a participant of this conversation");
+		if (!isLeaving) {
+			const actorRole = await assertManager(transaction, currentUserId, conversationId);
+			if (actorRole === "ADMIN" && target.role !== "MEMBER") {
+				throw new ForbiddenError("Admins can only remove ordinary group members");
+			}
+		}
 
 		await transaction.conversationParticipant.delete({
 			where: { conversationId_userId: { conversationId, userId: targetUserId } },
@@ -1144,9 +1203,8 @@ export async function removeParticipant(
 }
 
 /**
- * Renames a group conversation. **Owner only** — the name is the one piece of
- * a group everybody sees, and it is what a sidebar row is recognised by. See
- * ADR 0008.
+ * Renames a group conversation. Owner or admin: this is day-to-day group
+ * maintenance, unlike changing roles, invite policy or ownership.
  */
 export async function renameConversation(
 	currentUserId: string,
@@ -1155,7 +1213,7 @@ export async function renameConversation(
 ): Promise<ConversationDTO> {
 	const { systemMessage, updated } = await prisma.$transaction(async (transaction) => {
 		await prepareGroupMutation(transaction, currentUserId, conversationId);
-		await assertOwner(transaction, currentUserId, conversationId);
+		await assertManager(transaction, currentUserId, conversationId);
 
 		// `@updatedAt` bumps `Conversation.updatedAt` on this write, which moves the
 		// conversation to the top of everyone's sidebar (sorted by that column).
@@ -1248,6 +1306,112 @@ export async function transferGroupOwnership(
 	announceConversationUpdated(conversationId, toConversationUpdatedEvent(updated));
 
 	const actorUnread = await countUnreadByConversation(currentUserId, [conversationId]);
+	return toConversationDTO(updated, actorUnread.get(conversationId) ?? 0, currentUserId);
+}
+
+/** Promotes or demotes one non-owner. Role administration stays owner-only. */
+export async function setParticipantRole(
+	currentUserId: string,
+	conversationId: string,
+	targetUserId: string,
+	input: SetParticipantRoleInput,
+): Promise<ConversationDTO> {
+	const { systemMessage, updated, didChange } = await prisma.$transaction(async (transaction) => {
+		await prepareGroupMutation(transaction, currentUserId, conversationId);
+		await assertOwner(transaction, currentUserId, conversationId);
+
+		const target = await transaction.conversationParticipant.findUnique({
+			where: { conversationId_userId: { conversationId, userId: targetUserId } },
+			select: { id: true, role: true, user: { select: { displayName: true } } },
+		});
+		if (!target) throw new NotFoundError("Not a participant of this conversation");
+		if (target.role === "OWNER") {
+			throw new ValidationError("Transfer ownership before changing the owner's role");
+		}
+
+		const nextRole = input.role === "admin" ? "ADMIN" : "MEMBER";
+		if (target.role === nextRole) {
+			return {
+				systemMessage: null,
+				updated: await reloadConversation(transaction, conversationId),
+				didChange: false,
+			};
+		}
+
+		await transaction.conversationParticipant.update({
+			where: { id: target.id },
+			data: { role: nextRole },
+			select: { id: true },
+		});
+		const [actorName] = await displayNamesOf(transaction, [currentUserId]);
+		const action = nextRole === "ADMIN" ? "made" : "removed";
+		const suffix = nextRole === "ADMIN" ? "an admin" : "from the admins";
+		const message = await createSystemMessage(
+			transaction,
+			conversationId,
+			`${actorName} ${action} ${target.user.displayName} ${suffix}`,
+		);
+
+		return {
+			systemMessage: message,
+			updated: await reloadConversation(transaction, conversationId),
+			didChange: true,
+		};
+	});
+
+	if (didChange) {
+		if (systemMessage) announceSystemMessage(systemMessage);
+		announceConversationUpdated(conversationId, toConversationUpdatedEvent(updated));
+	}
+	const actorUnread = await countUnreadByConversation(currentUserId, [conversationId]);
+
+	return toConversationDTO(updated, actorUnread.get(conversationId) ?? 0, currentUserId);
+}
+
+/** Replaces the group's invite policy. Only the owner chooses who may grow it. */
+export async function setGroupInvitePolicy(
+	currentUserId: string,
+	conversationId: string,
+	input: SetInvitePolicyInput,
+): Promise<ConversationDTO> {
+	const { systemMessage, updated, didChange } = await prisma.$transaction(async (transaction) => {
+		const group = await prepareGroupMutation(transaction, currentUserId, conversationId);
+		await assertOwner(transaction, currentUserId, conversationId);
+		const nextPolicy = input.invitePolicy === "managers" ? "MANAGERS" : "EVERYONE";
+		if (group.invitePolicy === nextPolicy) {
+			return {
+				systemMessage: null,
+				updated: await reloadConversation(transaction, conversationId),
+				didChange: false,
+			};
+		}
+
+		await transaction.conversation.update({
+			where: { id: conversationId },
+			data: { invitePolicy: nextPolicy },
+			select: { id: true },
+		});
+		const [actorName] = await displayNamesOf(transaction, [currentUserId]);
+		const description = nextPolicy === "MANAGERS" ? "owners and admins" : "everyone";
+		const message = await createSystemMessage(
+			transaction,
+			conversationId,
+			`${actorName} changed group invites to ${description}`,
+		);
+
+		return {
+			systemMessage: message,
+			updated: await reloadConversation(transaction, conversationId),
+			didChange: true,
+		};
+	});
+
+	if (didChange) {
+		if (systemMessage) announceSystemMessage(systemMessage);
+		announceConversationUpdated(conversationId, toConversationUpdatedEvent(updated));
+	}
+	const actorUnread = await countUnreadByConversation(currentUserId, [conversationId]);
+
 	return toConversationDTO(updated, actorUnread.get(conversationId) ?? 0, currentUserId);
 }
 

@@ -9,6 +9,7 @@ import type {
 } from "@chatty/shared-types";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/api/client";
+import { cacheConversationPage, readConversationPage } from "@/lib/local-chat-store";
 import type { ConversationPaging } from "../types/conversation-paging";
 import { usePresenceLastSeenSync } from "./use-presence-last-seen-sync";
 import { useSocketEvent } from "./use-socket-event";
@@ -56,17 +57,60 @@ export function useConversationList(
 	const [isShowingArchived, setIsShowingArchived] = useState(false);
 	const [hasMore, setHasMore] = useState(false);
 	const [isLoadingMore, setIsLoadingMore] = useState(false);
+	const [loadedCacheScope, setLoadedCacheScope] = useState<string | null>(null);
+	const cacheScope = currentUserId ? `${currentUserId}:${isShowingArchived ? "archived" : "active"}` : null;
 
 	usePresenceLastSeenSync(setConversations);
 
 	const refresh = useCallback(() => {
-		void api.listConversations(isShowingArchived).then((page) => {
-			setConversations(page.items);
-			setHasMore(page.hasMore);
-		});
-	}, [isShowingArchived]);
+		if (!currentUserId) return;
+		void api
+			.listConversations(isShowingArchived)
+			.then((page) => {
+				setConversations(page.items);
+				setHasMore(page.hasMore);
+			})
+			.catch(() => {
+				// An offline refresh keeps the snapshot already on screen. Reconnect is
+				// another refresh path, so no timer or request loop is needed here.
+			});
+	}, [currentUserId, isShowingArchived]);
 
-	useEffect(refresh, [refresh]);
+	useEffect(() => {
+		if (!currentUserId || !cacheScope) {
+			setConversations([]);
+			setHasMore(false);
+			setLoadedCacheScope(null);
+
+			return;
+		}
+
+		let isCurrent = true;
+		setConversations([]);
+		setHasMore(false);
+		setLoadedCacheScope(null);
+		void readConversationPage(currentUserId, isShowingArchived)
+			.then((cached) => {
+				if (!isCurrent || !cached) return;
+				setConversations(cached.items);
+				setHasMore(cached.hasMore);
+			})
+			.catch(() => undefined)
+			.finally(() => {
+				if (!isCurrent) return;
+				setLoadedCacheScope(cacheScope);
+				refresh();
+			});
+
+		return () => {
+			isCurrent = false;
+		};
+	}, [cacheScope, currentUserId, isShowingArchived, refresh]);
+
+	useEffect(() => {
+		if (!currentUserId || loadedCacheScope !== cacheScope) return;
+		void cacheConversationPage(currentUserId, isShowingArchived, conversations, hasMore).catch(() => undefined);
+	}, [cacheScope, conversations, currentUserId, hasMore, isShowingArchived, loadedCacheScope]);
 
 	/**
 	 * The cursor is the last **unpinned** row, because pinned rows are not paged —
@@ -92,6 +136,9 @@ export function useConversationList(
 				});
 				setHasMore(page.hasMore);
 			})
+			.catch(() => {
+				// Keep the accumulated local page when pagination loses the network.
+			})
 			.finally(() => setIsLoadingMore(false));
 	}, [conversations, isLoadingMore, isShowingArchived]);
 
@@ -106,13 +153,16 @@ export function useConversationList(
 					// objection that kept item 80 shut. Fetch the one row instead and put
 					// it where the activity says it belongs.
 					if (!current.some((conversation) => conversation.id === message.conversationId)) {
-						void api.getConversation(message.conversationId).then((row) => {
-							setConversations((latest) =>
-								latest.some((conversation) => conversation.id === row.id)
-									? latest
-									: orderConversationRows([row, ...latest]),
-							);
-						});
+						void api
+							.getConversation(message.conversationId)
+							.then((row) => {
+								setConversations((latest) =>
+									latest.some((conversation) => conversation.id === row.id)
+										? latest
+										: orderConversationRows([row, ...latest]),
+								);
+							})
+							.catch(() => undefined);
 
 						return current;
 					}
@@ -243,14 +293,19 @@ export function useConversationList(
 	useSocketEvent(
 		"conversation:updated",
 		useCallback((event: ConversationUpdatedEvent) => {
-			// Patched in place, and only the two fields the event actually carries
+			// Patched in place, and only the shared fields the event actually carries
 			// — `unreadCount` and `lastMessage` are deliberately absent from it
 			// (see the type's doc comment), so leaving them untouched here is what
 			// keeps them correct rather than overwriting them with nothing.
 			setConversations((current) =>
 				current.map((conversation) =>
 					conversation.id === event.conversationId
-						? { ...conversation, name: event.name, participants: event.participants }
+						? {
+								...conversation,
+								name: event.name,
+								invitePolicy: event.invitePolicy,
+								participants: event.participants,
+							}
 						: conversation,
 				),
 			);

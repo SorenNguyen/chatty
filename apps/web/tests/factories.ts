@@ -156,6 +156,7 @@ export function makeConversation(overrides: Partial<ConversationDTO> = {}): Conv
 		id: "conversation-1",
 		isGroup: false,
 		name: null,
+		invitePolicy: "everyone",
 		participants: [],
 		lastMessage: null,
 		unreadCount: 0,

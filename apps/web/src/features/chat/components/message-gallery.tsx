@@ -14,7 +14,7 @@ import {
 } from "../constants/attachment";
 import { INCOMING_BUBBLE_RADIUS, OUTGOING_BUBBLE_RADIUS } from "../constants/message-cluster";
 import type { ClusterPosition } from "../types/message-cluster";
-import { getAttachmentDisplaySize } from "../utils";
+import { getAttachmentDisplaySize, getAttachmentPreviewUrl } from "../utils";
 import { AttachmentLightbox } from "./attachment-lightbox";
 
 interface MessageGalleryProps {
@@ -82,7 +82,12 @@ export function MessageGallery({
 									transform: `translate(${depth * ALBUM_CARD_SHIFT}px, ${-depth * ALBUM_CARD_SHIFT}px) rotate(${depth * ALBUM_CARD_ROTATION}deg)`,
 								}}
 							>
-								<img src={attachment.url} alt="" loading="lazy" className="size-full object-cover" />
+								<img
+									src={getAttachmentPreviewUrl(attachment)}
+									alt=""
+									loading="lazy"
+									className="size-full object-cover"
+								/>
 							</span>
 						);
 					})}
@@ -103,7 +108,7 @@ export function MessageGallery({
 						}}
 					>
 						<img
-							src={first.url}
+							src={getAttachmentPreviewUrl(first)}
 							alt={caption || `Album of ${attachments.length} images`}
 							loading="lazy"
 							className="size-full object-cover"
@@ -130,7 +135,7 @@ export function MessageGallery({
 						)}
 					>
 						<img
-							src={first.url}
+							src={getAttachmentPreviewUrl(first)}
 							alt={caption || "Image"}
 							width={size.width}
 							height={size.height}

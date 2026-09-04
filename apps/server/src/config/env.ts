@@ -96,6 +96,13 @@ const envSchema = z.object({
 		.optional(),
 	/** The From: address. Required with `smtp`; providers reject unverified senders. */
 	MAIL_FROM: z.string().email().optional(),
+	/**
+	 * Protects the Prometheus endpoint. Metrics reveal traffic volume, failure
+	 * rates and resource pressure, so production refuses to expose them under a
+	 * weak or missing credential. Optional in development because the route is
+	 * omitted entirely when no token is configured.
+	 */
+	METRICS_TOKEN: z.string().min(32).optional(),
 });
 
 const parsed = envSchema
@@ -124,6 +131,14 @@ const parsed = envSchema
 				message:
 					"In production, set REDIS_URL so instances share rate limits and socket rooms — " +
 					'or set SINGLE_INSTANCE="true" to state that this deployment is one process.',
+			});
+		}
+
+		if (value.NODE_ENV === "production" && !value.METRICS_TOKEN) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["METRICS_TOKEN"],
+				message: "METRICS_TOKEN is required in production so operational data is not public",
 			});
 		}
 

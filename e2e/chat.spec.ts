@@ -99,12 +99,18 @@ test.describe("two people, one conversation", () => {
 
 		const delivered = viewerPage.getByAltText("here is the photo");
 		await expect(delivered).toBeVisible({ timeout: 15_000 });
+		expect(new URL((await delivered.getAttribute("src")) ?? "").searchParams.get("size")).toBe("thumb");
 
 		// Visible is not loaded. A broken <img> still occupies its reserved box,
 		// so the only proof the signed URL worked is the decoded pixel count.
 		await expect
 			.poll(async () => delivered.evaluate((img: HTMLImageElement) => img.naturalWidth), { timeout: 15_000 })
 			.toBeGreaterThan(0);
+
+		await delivered.click();
+		const fullImage = viewerPage.getByRole("dialog").getByAltText("here is the photo");
+		await expect(fullImage).toBeVisible();
+		expect(new URL((await fullImage.getAttribute("src")) ?? "").searchParams.has("size")).toBe(false);
 
 		await sender.close();
 		await viewer.close();

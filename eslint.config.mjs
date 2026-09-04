@@ -18,11 +18,18 @@ export default tseslint.config(
 	{
 		// `apps/web/public` is served verbatim rather than bundled, so nothing in
 		// it goes through the TypeScript project and none of the browser globals
-		// are in scope by default. `theme.js` is the only file there and it runs
-		// before the bundle exists on purpose — see the comment in it.
+		// are in scope by default. These files intentionally run outside the bundle:
+		// the theme boot script runs before it, and the service worker owns its cache.
 		files: ["apps/web/public/*.js"],
 		languageOptions: {
-			globals: { window: "readonly", document: "readonly", localStorage: "readonly" },
+			globals: {
+				window: "readonly",
+				document: "readonly",
+				localStorage: "readonly",
+				self: "readonly",
+				URL: "readonly",
+				Response: "readonly",
+			},
 		},
 		rules: {
 			// A `catch` that exists to swallow does not need to name what it

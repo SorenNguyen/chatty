@@ -20,12 +20,11 @@ selected conversation, and the loaded messages. Everything below it is presentat
 
 ## The rules that are not obvious from the code
 
-**Render sent messages from the socket event, not from the POST response.** The server broadcasts
-`message:new` to everyone in the conversation, including the sender. If the UI also appends the
-POST's return value, your own messages appear twice — and worse, your client takes a different code
-path than everyone else's, so a bug in the broadcast only shows up for other people.
-
-POST to send, socket to render. One source of truth for what is on screen.
+**A send has two acknowledgements and one identity.** The server broadcasts `message:new` to everyone
+in the conversation, including the sender, and also answers the POST. The durable draft id travels as
+`clientId`; whichever acknowledgement arrives first replaces that draft, and the other deduplicates
+by server id. Replaying the same id after a reload returns the existing database row and does not
+broadcast again. Never append either path without both checks.
 
 **Typing is the only thing this app sends up the socket.** Everything that persists goes over HTTP.
 See `constants/typing.ts`: the three timings are related, and changing one alone breaks the
@@ -41,9 +40,10 @@ and "you were removed" all come from `conversation:updated` / `conversation:left
 `chat-page.tsx`. Adding a second code path in the panel that also patched local state would be exactly
 the double-render bug the message-rendering rule above already warns about.
 
-**Any participant can manage a group — there is no admin role.** See
-[ADR 0006](../../../../../docs/adr/0006-flat-group-permissions.md) before adding a permission check
-that assumes otherwise.
+**Group permissions are a three-level hierarchy, not a matrix.** Owner/admin handle naming and
+ordinary-member moderation; only the one owner changes admins, ownership and invite policy. A member
+may always leave and may invite only under open policy. See
+[ADR 0018](../../../../../docs/adr/0018-group-admins-and-invite-policy.md).
 
 **Search state is `useUserSearch`, not copied.** `NewConversationPanel` and `GroupMembersPanel` both
 need "find someone by name or email" with the same loading/error/results shape; the hook exists so

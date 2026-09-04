@@ -14,7 +14,7 @@ apps/web (React) ──HTTP──► apps/server (Express)
 - **HTTP (REST)** handles one-shot actions: auth, fetching conversation history, creating a conversation.
 - **WebSocket** is a persistent connection used to push events the client didn't ask for: a new message arriving, a user going online, someone typing.
 
-A client authenticates once via HTTP and gets **two** tokens: a short-lived access JWT, which goes on every request and opens the WebSocket, and a long-lived refresh token, which is the session. Everything after that — actually sending/receiving messages in realtime — happens over the socket, not by polling the REST API.
+A client authenticates once via HTTP and gets **two** tokens: a short-lived access JWT, which goes on every request and opens the WebSocket, and a long-lived refresh token, which is the session. Persistent commands use HTTP; their deltas arrive over the socket rather than through polling.
 
 **Why two.** A JWT is valid because it says so, and nothing can take it back before it expires. That made the old seven-day token *the session*, so signing out cleared one browser's copy and left every other copy working for the rest of the week. The access token is now fifteen minutes, so a copied one is worth minutes; the session is a `RefreshToken` row, which `revokedAt` can end. `POST /auth/refresh` trades a refresh token for a new pair — rotating it, so a stolen one works at most once — and `POST /auth/logout` revokes it. Both are unauthenticated, because a client calls them exactly when its access token has expired.
 
@@ -27,6 +27,30 @@ state change and its system messages share one database transaction; socket effe
 commit. See [ADR 0010](adr/0010-serialize-conversation-writes.md).
 
 Typing is the one exception, and it proves the rule — it is not written anywhere, it fires several times a sentence, and it expires in seconds. On HTTP it would be a request per keystroke, each with its own round trip and auth check. So `typing:start` / `typing:stop` are the only client→server socket events, and their membership check reads `socket.rooms` rather than the database for the same reason.
+
+## Message delivery and bandwidth
+
+The thread is an initial HTTP snapshot plus incremental Socket.IO events. History is keyset-paged 50
+messages at a time, the browser retains a bounded window, and reconnecting refetches only the newest
+page to repair changes missed while the socket was down. Text sends render optimistically under a
+client id; PostgreSQL stores that id under a per-author unique index, so replaying an IndexedDB outbox
+command returns the original row rather than writing or broadcasting a duplicate. The browser caches
+the bounded recent snapshot and unsent text/image bytes in IndexedDB, paints it before HTTP on reload,
+and retries failed drafts on reconnect. Signed media URLs are replaced by inert local placeholders in
+the snapshot because they expire; the online refresh mints fresh ones. See
+[ADR 0017](adr/0017-durable-local-message-outbox.md).
+
+Large JSON responses are compressed above 1KB. WebSocket compression is deliberately off: its frames
+are already deltas and Socket.IO documents substantial CPU/memory overhead for `permessage-deflate`.
+Binary encoding remains a measured future optimisation, not a default complexity cost.
+
+Images follow a separate path. The browser fits a picked image inside 1600px and tries a quality-0.86
+WebP, using it only when it is smaller; the optimistic bubble is already visible while this happens.
+The server still treats every upload as untrusted and performs the authoritative decode, orientation,
+pixel-limit check, metadata removal and WebP re-encode. A 480px derivative is used in threads and
+grids; the 1600px stored image is fetched only when the viewer opens or the image is saved. See
+[ADR 0016](adr/0016-bandwidth-first-message-delivery.md) for the complete pipeline and the measured
+conditions that justify object storage, a durable delta log, delivery queues or a binary protocol.
 
 ## Server layering (`apps/server/src`)
 
@@ -48,8 +72,8 @@ Core persistence includes:
 
 - `User` — account + profile
 - `Conversation` — a 1-1 or group thread (no separate "DM" vs "group" table; a 1-1 chat is just a conversation with two participants)
-- `ConversationParticipant` — join table between `User` and `Conversation`, and where per-user state lives: `lastReadMessageId` is here, not on `Message`, because "read" is a fact about a person and a group of ten has ten different answers for the same message. It has a twin, `lastSharedReadMessageId`, and only the twin ever leaves the process: it stops advancing when its owner turns read receipts off, so hiding them is a value that was never written rather than a filter applied on the way out — and switching them back on therefore reveals nothing about the period in between (phase 13). `role` is here too: exactly one participant of a non-empty group is its `OWNER`, and only they may rename it, remove anyone else, or hand the group on ([ADR 0008](adr/0008-group-owner-role.md)). PostgreSQL enforces this with a partial unique index and deferred aggregate trigger because Prisma cannot express a cross-row constraint ([ADR 0010](adr/0010-serialize-conversation-writes.md))
-- `Message` — belongs to a `Conversation`, authored by a `User`. `content` is an empty string when the message is only an image. A `kind = SYSTEM` message is the exception with no author at all: it is the group event log ("An added Binh"), stored as a message so it survives a reload and sits in order among the messages around it ([ADR 0009](adr/0009-system-messages.md)). A database check rejects the contradictory shape (`SYSTEM` with an author). A `USER` message *without* one is not a contradiction: since phase 13 an account can be deleted, and its messages stay behind with `authorId` null — the relation is `ON DELETE SET NULL` rather than cascade, because deleting them would empty other people's conversations and remove rows that read markers and paging cursors point at. `kind`, not the null, is what tells a system line from an orphaned message
+- `ConversationParticipant` — join table between `User` and `Conversation`, and where per-user state lives: `lastReadMessageId` is here, not on `Message`, because "read" is a fact about a person and a group of ten has ten different answers for the same message. It has a twin, `lastSharedReadMessageId`, and only the twin ever leaves the process: it stops advancing when its owner turns read receipts off, so hiding them is a value that was never written rather than a filter applied on the way out — and switching them back on therefore reveals nothing about the period in between (phase 13). `role` is here too: exactly one participant of a non-empty group is its `OWNER`, with optional `ADMIN` rows for naming and ordinary-member moderation. Only the owner manages roles, ownership and invite policy ([ADR 0018](adr/0018-group-admins-and-invite-policy.md)). PostgreSQL enforces the single owner with a partial unique index and deferred aggregate trigger because Prisma cannot express a cross-row constraint ([ADR 0010](adr/0010-serialize-conversation-writes.md))
+- `Message` — belongs to a `Conversation`, authored by a `User`. `content` is an empty string when the message is only an image. `clientId` is the sending device's optional idempotency key, unique per non-null author so an offline replay converges on one row ([ADR 0017](adr/0017-durable-local-message-outbox.md)). A `kind = SYSTEM` message is the exception with no author at all: it is the group event log ("An added Binh"), stored as a message so it survives a reload and sits in order among the messages around it ([ADR 0009](adr/0009-system-messages.md)). A database check rejects the contradictory shape (`SYSTEM` with an author). A `USER` message *without* one is not a contradiction: since phase 13 an account can be deleted, and its messages stay behind with `authorId` null — the relation is `ON DELETE SET NULL` rather than cascade, because deleting them would empty other people's conversations and remove rows that read markers and paging cursors point at. `kind`, not the null, is what tells a system line from an orphaned message
 - `PasswordResetToken` — a one-time link, stored only as a SHA-256 of the token that was mailed
 - `RefreshToken` — one signed-in session, and the only thing here that can be revoked. Stored as a SHA-256 for the same reason the reset link is: a leaked database must not be a drawer full of working sessions. Single use — a refresh spends the row and creates its replacement in one transaction, claimed with a conditional update so two tabs waking together cannot turn one session into two
 - `MessageReaction` — one person's reaction to one message, **at most one**. The primary key `(messageId, userId)` *is* that rule: the database cannot hold two reactions from the same person on the same message however the service is called, so picking a second emoji is an update rather than an insert — which is what Messenger, Instagram and Telegram all do. It used to include `kind` and store a Postgres enum of five; phase 29 opened the set, and with an open set the old key is not merely different but unbounded, since one person could put forty distinct chips under one sentence. `emoji` is a `VarChar(64)` and the argument that made it an enum is now enforced at the request boundary instead: `toggleReactionSchema` admits a single fully-qualified RGI emoji (`\p{RGI_Emoji}` under the `v` flag) and nothing else, so `❤` is a 400 and only `❤️` reaches the column — which is what keeps "the same reaction" decidable. Unique among the things pointing at a `User` here, it is `ON DELETE CASCADE`: a reaction carries no history worth keeping without the person who left it, nothing points at it, and the count simply drops by one. The DTO names everyone (`userIds`) rather than counting, because the message is broadcast to the whole room as one payload — anything answering "is this mine?" would be answering it for whoever triggered the write, and it is also what the reactor list is built from
@@ -83,7 +107,10 @@ Uploads are decoded and re-encoded to WebP rather than stored as they arrived. T
 
 An attachment is private content inside a conversation, so "addressed by an id nobody can guess" — which is enough for a public profile picture — is not enough here. `AttachmentDTO.url` carries a signed token scoped to that one attachment, minted per response and expiring after an hour, and `GET /attachments/:id` is the app's second and last unauthenticated route. A bad token answers 404 rather than 401, so the endpoint never confirms that an id exists.
 
-Images are decoded to pixels and re-encoded to WebP. An ordinary file cannot use that control: its bytes are sniffed, browser-interpretable types are demoted, and the response is always a download with `nosniff` and a sandbox CSP ([ADR 0013](adr/0013-safe-arbitrary-file-downloads.md)). Voice uploads are decoded for validation, duration and waveform, then normalized to AAC/MP4 so Safari and Chromium play the same stored file ([ADR 0014](adr/0014-portable-voice-message-format.md)). This is deliberately not described as antivirus.
+Images are opportunistically resized and encoded in the browser to save upstream bytes, then decoded
+to pixels and re-encoded to WebP again on the server because only that pass is a security boundary. An
+ordinary file cannot use that control: its bytes are sniffed, browser-interpretable types are demoted,
+and the response is always a download with `nosniff` and a sandbox CSP ([ADR 0013](adr/0013-safe-arbitrary-file-downloads.md)). Voice uploads are decoded for validation, duration and waveform, then normalized to AAC/MP4 so Safari and Chromium play the same stored file ([ADR 0014](adr/0014-portable-voice-message-format.md)). This is deliberately not described as antivirus.
 
 Both kinds of token are signed with `JWT_SECRET`, so attachment tokens carry a `typ` claim and `requireAuth` rejects any token that has one — otherwise an attachment token presented as a bearer token would authenticate as a user whose id is an attachment id.
 
@@ -116,13 +143,33 @@ so there is no per-process state left to reconcile.
 
 It is optional rather than required so that `npm run verify` and a plain `npm run dev:server` need
 one container instead of two. `docker-compose.prod.yml` always sets it, runs two API instances to
-keep the single-instance assumptions from creeping back, and the server logs a warning at boot if it
-is missing in production.
+keep the single-instance assumptions from creeping back, and the server refuses to boot in production
+when neither Redis nor an explicit `SINGLE_INSTANCE="true"` declaration exists.
 
 The uploads directory is the remaining shared-filesystem dependency: both instances mount one volume,
 because an avatar uploaded through one has to be servable by the other. Object storage is what
 replaces it, and [ADR 0004](adr/0004-avatar-storage.md) and [ADR 0007](adr/0007-signed-attachment-urls.md)
 are both written so that swap touches one module each.
+
+`docker-compose.prod.yml` routes both instances through one internal Caddy gateway. The browser uses
+WebSocket-only Socket.IO, so a connected socket stays on the upstream that accepted it and HTTP
+polling affinity is unnecessary. Public ingress is an optional Cloudflare Tunnel container: it joins
+the same Docker network, maps separate web/API hostnames, and makes only outbound connections. Host
+ports bind to loopback so public traffic cannot bypass that edge. See
+[DEPLOYMENT.md](DEPLOYMENT.md) for the zero-monthly-bill boundary and external launch conditions.
+
+## Provider-free observability
+
+Each API process exposes `GET /metrics` in Prometheus's text format when `METRICS_TOKEN` is set; it is
+mandatory in production and accepted only as a bearer token. The registry covers process resources,
+bounded HTTP route groups, request payload size, message sends, image normalisation, Prisma queries
+and socket connections. Labels are deliberately finite — no URL, id, handle or error string — so
+observability cannot become a user-data leak or a time-series-per-conversation memory leak.
+
+Registries are process-local. A collector must scrape `api-1` and `api-2` independently and aggregate
+them; scraping through Caddy would randomly read only one process on each interval. Pino remains the
+structured log, Prometheus supplies time-series and percentile calculations, and neither requires a
+hosted provider or DSN.
 
 ## Shared types (`packages/shared-types`)
 

@@ -19,7 +19,9 @@ COPY apps/web/package.json apps/web/
 COPY packages/shared-types/package.json packages/shared-types/
 # `npm ci` over `npm install`: it installs exactly the lockfile and fails if the
 # two disagree, so an image can never be built from dependencies nobody chose.
-RUN npm ci
+# A changed workspace manifest still needs a clean install, but it should not
+# need to download the entire registry payload again.
+RUN --mount=type=cache,target=/root/.npm npm ci
 
 # ---- build ----
 FROM deps AS build
@@ -40,7 +42,7 @@ ENV NODE_ENV=production
 COPY package.json package-lock.json ./
 COPY apps/server/package.json apps/server/
 COPY packages/shared-types/package.json packages/shared-types/
-RUN npm ci --omit=dev
+RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev
 COPY --from=build /app/node_modules/.prisma node_modules/.prisma
 COPY --from=build /app/node_modules/@prisma/client node_modules/@prisma/client
 COPY --from=build /app/apps/server/dist apps/server/dist

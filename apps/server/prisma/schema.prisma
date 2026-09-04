@@ -328,16 +328,19 @@ model OutboxMessage {
 }
 
 model Conversation {
-  id        String   @id @default(cuid())
+  id           String                   @id @default(cuid())
   // true once a third participant joins; kept explicit rather than derived
   // from participant count so a 1-1 chat that later becomes a group doesn't
   // silently change identity.
-  isGroup   Boolean  @default(false)
+  isGroup      Boolean                  @default(false)
   // display name for group chats; null for 1-1 (client derives a name from
   // the other participant)
-  name      String?
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+  name         String?
+  /// Who may add people. Only the owner may change this; EVERYONE preserves
+  /// the original open-invite behaviour, MANAGERS means owner or admin.
+  invitePolicy ConversationInvitePolicy @default(EVERYONE)
+  createdAt    DateTime                 @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime                 @updatedAt @db.Timestamptz(3)
 
   participants   ConversationParticipant[]
   messages       Message[]
@@ -346,14 +349,18 @@ model Conversation {
   pinnedMessages PinnedMessage[]
 }
 
-/// Who may kick and rename inside a group.
-///
-/// Two values, not a permission matrix: the only distinction the app makes is
-/// "may act on other people" versus "may act on yourself". Adding a member is
-/// deliberately not gated by it — see ADR 0008.
+/// A small hierarchy rather than a permission matrix. OWNER alone changes
+/// roles/policy and transfers ownership; OWNER and ADMIN manage ordinary group
+/// activity; MEMBER acts on themselves and may invite only under open policy.
 enum ConversationRole {
   OWNER
+  ADMIN
   MEMBER
+}
+
+enum ConversationInvitePolicy {
+  EVERYONE
+  MANAGERS
 }
 
 model ConversationParticipant {
@@ -362,8 +369,8 @@ model ConversationParticipant {
   userId                  String
   /// Every group has exactly one OWNER while it has anyone in it: the creator
   /// to begin with, and on their way out the longest-standing member left (see
-  /// `removeParticipant`). Meaningless in a direct conversation, where there is
-  /// nothing to administer — both rows there stay MEMBER.
+  /// `removeParticipant`). ADMIN is optional and may repeat. Meaningless in a
+  /// direct conversation, where both rows stay MEMBER.
   ///
   /// PostgreSQL enforces the cross-row rule Prisma cannot express: the phase 7
   /// migration adds an OWNER-only unique index plus a deferred constraint
@@ -431,6 +438,11 @@ model Message {
   /// holds the other direction — a SYSTEM message has no author — and `kind` is
   /// what tells the two cases apart, which is what it was declared for.
   authorId       String?
+  /// Stable id chosen by the sending device. It makes a replay after a lost
+  /// response the same write rather than a second message. Null on system and
+  /// legacy messages; uniqueness for non-null authors/ids is enforced by the
+  /// partial index in the phase 42 migration.
+  clientId       String?                  @db.VarChar(64)
   kind           MessageKind              @default(USER)
   // Empty string for a message that is only an image. Nullable would be more
   // truthful, but every read of this column would then need a null branch to
@@ -527,6 +539,7 @@ model Message {
   // useless btree one alongside it.
 
   @@index([conversationId, createdAt])
+  @@index([authorId, clientId])
   @@index([replyToId])
 }
 

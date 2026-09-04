@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { ValidationError } from "../../lib/errors.js";
+import { observeMessageUploadBytes, startMessageSendTimer, type MessageMetricKind } from "../../lib/metrics.js";
 import { MAX_FILE_BYTES, MAX_VOICE_UPLOAD_BYTES } from "../../middlewares/upload-image.js";
 import {
 	editMessageSchema,
@@ -54,18 +55,39 @@ export async function sendMessageController(req: Request, res: Response): Promis
 		throw new ValidationError("A forwarded message is sent on its own");
 	}
 
-	const message = await messagesService.sendMessage(req.userId!, conversationId, {
-		content,
-		...(input.replyToId ? { replyToId: input.replyToId } : {}),
-		...(input.stickerId ? { stickerId: input.stickerId } : {}),
-		...(input.forwardOfMessageId ? { forwardOfMessageId: input.forwardOfMessageId } : {}),
-		...(input.mentionedUserIds ? { mentionedUserIds: input.mentionedUserIds } : {}),
-		...(input.clientId ? { clientId: input.clientId } : {}),
-		...(images.length > 0 ? { attachments: images.map((image) => image.buffer) } : {}),
-		...(file ? { file: { buffer: file.buffer, fileName: file.originalname } } : {}),
-		...(voice ? { voice: voice.buffer } : {}),
-	});
-	res.status(201).json(message);
+	const metricKind: MessageMetricKind = voice
+		? "voice"
+		: file
+			? "file"
+			: images.length > 0
+				? "image"
+				: input.stickerId
+					? "sticker"
+					: input.forwardOfMessageId
+						? "forward"
+						: "text";
+	const uploadBytes = images.reduce((total, image) => total + image.size, 0) + (file?.size ?? 0) + (voice?.size ?? 0);
+	const stopTimer = startMessageSendTimer(metricKind);
+	observeMessageUploadBytes(metricKind, uploadBytes);
+
+	try {
+		const message = await messagesService.sendMessage(req.userId!, conversationId, {
+			content,
+			...(input.replyToId ? { replyToId: input.replyToId } : {}),
+			...(input.stickerId ? { stickerId: input.stickerId } : {}),
+			...(input.forwardOfMessageId ? { forwardOfMessageId: input.forwardOfMessageId } : {}),
+			...(input.mentionedUserIds ? { mentionedUserIds: input.mentionedUserIds } : {}),
+			...(input.clientId ? { clientId: input.clientId } : {}),
+			...(images.length > 0 ? { attachments: images.map((image) => image.buffer) } : {}),
+			...(file ? { file: { buffer: file.buffer, fileName: file.originalname } } : {}),
+			...(voice ? { voice: voice.buffer } : {}),
+		});
+		stopTimer("success");
+		res.status(201).json(message);
+	} catch (error) {
+		stopTimer("error");
+		throw error;
+	}
 }
 
 export async function editMessageController(req: Request, res: Response): Promise<void> {

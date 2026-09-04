@@ -1,12 +1,11 @@
-# Production-shaped stack: two API instances behind nothing in particular, so
-# that the thing phase 5 item 12 fixed is actually exercised rather than
-# asserted. Run with:
+# Zero-monthly-bill production stack: two API instances behind one internal
+# gateway, with Postgres, Redis and uploads on the same host. Run with:
 #
 #   JWT_SECRET=$(openssl rand -hex 32) docker compose -f docker-compose.prod.yml up --build
 #
-# This is not a deployment — there is no TLS, no reverse proxy, and the two API
-# instances are on separate ports rather than behind a load balancer. It is the
-# smallest arrangement in which "more than one instance" is a real condition.
+# Ports bind to loopback only. For a public deployment, add
+# docker-compose.tunnel.yml; Cloudflare terminates TLS and reaches these
+# services over an outbound-only tunnel, so the host opens no inbound port.
 
 # Its own project name, and this line is not cosmetic. Compose derives the
 # project from the directory otherwise, so this file and docker-compose.yml
@@ -15,10 +14,17 @@
 # either would take out both.
 name: chatty-prod
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_USER: chatty
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chatty}
@@ -34,6 +40,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    logging: *default-logging
     volumes:
       - redis-data:/data
     healthcheck:
@@ -47,6 +54,7 @@ services:
       context: .
       dockerfile: apps/server/Dockerfile
     restart: unless-stopped
+    logging: *default-logging
     environment:
       DATABASE_URL: postgresql://chatty:${POSTGRES_PASSWORD:-chatty}@postgres:5432/chatty
       # Always set here, unlike development: without it each instance would keep
@@ -68,6 +76,9 @@ services:
       MAIL_TRANSPORT: smtp
       SMTP_URL: ${SMTP_URL:?set SMTP_URL, e.g. smtp://user:pass@smtp.provider.example:587}
       MAIL_FROM: ${MAIL_FROM:?set MAIL_FROM to an address on a domain you have verified with the provider}
+      # Operational data is private too. Prometheus can scrape each API over
+      # this Docker network; callers without this bearer token get a 401.
+      METRICS_TOKEN: ${METRICS_TOKEN:?set METRICS_TOKEN to at least 32 random characters}
     volumes:
       # Shared between both instances on purpose: an avatar uploaded through
       # api-1 has to be servable by api-2. This is the local stand-in for the
@@ -76,15 +87,43 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
-    ports:
-      - "4000:4000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:4000/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
   # Same image, same everything. Its only job is to make single-instance
   # assumptions fail loudly during local testing instead of in production.
   api-2:
     <<: *api
+
+  api-gateway:
+    image: caddy:2.11.4-alpine
+    restart: unless-stopped
+    logging: *default-logging
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
     ports:
-      - "4010:4000"
+      # The tunnel joins this Docker network directly in production. Keeping a
+      # loopback port still lets the smoke test exercise the gateway on-host
+      # without making the API reachable from the public network.
+      - "127.0.0.1:4000:4000"
+    depends_on:
+      api-1: { condition: service_healthy }
+      api-2: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:4000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   web:
     build:
@@ -99,10 +138,11 @@ services:
     environment:
       API_ORIGIN: ${API_PUBLIC_URL:-http://localhost:4000}
     restart: unless-stopped
+    logging: *default-logging
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
-      - api-1
+      api-gateway: { condition: service_healthy }
 
 volumes:
   postgres-data:

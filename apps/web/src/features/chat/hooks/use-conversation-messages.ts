@@ -2,11 +2,20 @@ import type { MessageDTO, ReactionEmoji } from "@chatty/shared-types";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/api/client";
 import { useAuth } from "@/hooks/use-auth";
+import {
+	cacheMessageSnapshot,
+	enqueueLocalMessage,
+	readLocalOutbox,
+	readMessageSnapshot,
+	removeLocalMessage,
+} from "@/lib/local-chat-store";
 import { MAX_RETAINED_MESSAGES, MESSAGE_PAGE_SIZE } from "../constants/pagination";
 import type { ThreadMessage } from "../types/thread-message";
-import { buildDraftMessage, getNewestStoredMessage } from "../utils/build-draft-message";
+import { buildDraftMessage, getNewestStoredMessage, isDraftId } from "../utils/build-draft-message";
 import { toDraftAttachments } from "../utils/draft-attachment";
+import { restoreLocalOutboxMessage, toLocalOutboxMessage } from "../utils/local-outbox";
 import { mergeReloadedMessages } from "../utils/merge-messages";
+import { optimizeImagesForUpload } from "../utils/optimize-image-upload";
 import { toReplyQuote } from "../utils/reply-quote";
 import { useMessageActions } from "./use-message-actions";
 import { useSocketEvent } from "./use-socket-event";
@@ -21,7 +30,7 @@ import { useSocketEvent } from "./use-socket-event";
  * depend on the draft still being in the array — which, on a discard, it is not.
  */
 interface PendingUpload {
-	files: File[];
+	filesPromise: Promise<File[]>;
 	urls: string[];
 }
 
@@ -130,7 +139,12 @@ export function useConversationMessages(
 	// conversation or message it is loading.
 	const [reloadCount, setReloadCount] = useState(0);
 	const [targetMessageId, setTargetMessageId] = useState<string | null>(null);
+	const [loadedCacheScope, setLoadedCacheScope] = useState<string | null>(null);
+	const [restoredDraftIds, setRestoredDraftIds] = useState<string[]>([]);
 	const pendingUploadsRef = useRef(new Map<string, PendingUpload>());
+	const currentUserId = useAuth((state) => state.currentUser?.id);
+	const cacheScope = currentUserId && conversationId ? `${currentUserId}:${conversationId}` : null;
+	const deliverRef = useRef<(draft: ThreadMessage) => Promise<void>>(async () => undefined);
 
 	// Anything still in flight when the tab navigates away or the hook unmounts
 	// has nobody left to settle it, and its URLs would outlive the component
@@ -153,15 +167,19 @@ export function useConversationMessages(
 	);
 
 	useEffect(() => {
-		if (!conversationId) {
+		if (!conversationId || !currentUserId || !cacheScope) {
 			setMessages([]);
 			setHasMoreOlder(false);
 			setLoadError("");
+			setLoadedCacheScope(null);
+			setRestoredDraftIds([]);
 
 			return;
 		}
 
 		let isCurrent = true;
+		let hasLocalMessages = false;
+		let hasServerPage = false;
 
 		const request = requestedMessageId
 			? api.getMessageContext(conversationId, requestedMessageId, MESSAGE_PAGE_SIZE)
@@ -173,15 +191,50 @@ export function useConversationMessages(
 
 		setIsLoadingThread(true);
 		setLoadError("");
+		setMessages([]);
+		setLoadedCacheScope(null);
+		setRestoredDraftIds([]);
 
-		void request
+		const localRequest = Promise.all([
+			readMessageSnapshot(currentUserId, conversationId),
+			readLocalOutbox(currentUserId, conversationId),
+		])
+			.then(([cached, queued]) => {
+				if (!isCurrent) return;
+				const restored = queued.map(restoreLocalOutboxMessage);
+				for (const item of restored) {
+					if (item.files.length === 0) continue;
+					pendingUploadsRef.current.set(item.draft.id, {
+						filesPromise: optimizeImagesForUpload(item.files),
+						urls: item.urls,
+					});
+				}
+				hasLocalMessages = cached.length > 0 || restored.length > 0;
+				setMessages((current) => {
+					const drafts = restored.map((item) => item.draft);
+					if (!hasServerPage) return [...cached, ...drafts];
+					const known = new Set(current.map((message) => message.id));
+
+					return [...current, ...drafts.filter((draft) => !known.has(draft.id))];
+				});
+				setRestoredDraftIds(restored.map((item) => item.draft.id));
+				setLoadedCacheScope(cacheScope);
+			})
+			.catch(() => {
+				if (isCurrent) setLoadedCacheScope(cacheScope);
+			});
+
+		const serverRequest = request
 			.then((page) => {
 				// Switching conversations quickly can land an older response after a
 				// newer one; without this the wrong conversation's messages appear.
 				if (!isCurrent) return;
 
-				// The API returns newest-first for pagination; the view reads oldest-first.
-				setMessages(page.messages);
+				hasServerPage = true;
+				// Keep durable drafts beside the fresh page. The server history omits
+				// client ids, so the outbox replay is what resolves a send whose original
+				// response disappeared after commit.
+				setMessages((current) => [...page.messages, ...current.filter((message) => isDraftId(message.id))]);
 				// A full page probably means more exist. When the total is an exact
 				// multiple of the page size this costs one empty request at the end,
 				// which is cheaper than asking the server for a count every time.
@@ -189,23 +242,29 @@ export function useConversationMessages(
 				setHasMoreNewer(page.hasMoreNewer);
 				setTargetMessageId(requestedMessageId);
 			})
-			.catch((error: Error) => {
+			.catch(async (error: Error) => {
 				// Without this the thread rendered empty on any failure, which is the
 				// one thing a conversation with history is definitely not — and it
 				// offered nothing to try again with.
-				if (!isCurrent) return;
-
-				setMessages([]);
+				await localRequest;
+				if (!isCurrent || hasLocalMessages) return;
 				setLoadError(error.message);
-			})
-			.finally(() => {
-				if (isCurrent) setIsLoadingThread(false);
 			});
+
+		void Promise.allSettled([localRequest, serverRequest]).then(() => {
+			if (isCurrent) setIsLoadingThread(false);
+		});
 
 		return () => {
 			isCurrent = false;
 		};
-	}, [conversationId, requestedMessageId, reloadCount]);
+	}, [cacheScope, conversationId, currentUserId, requestedMessageId, reloadCount]);
+
+	useEffect(() => {
+		if (!currentUserId || !conversationId || loadedCacheScope !== cacheScope) return;
+		const stored = messages.filter((message) => !isDraftId(message.id)).slice(-MAX_RETAINED_MESSAGES);
+		void cacheMessageSnapshot(currentUserId, conversationId, stored).catch(() => undefined);
+	}, [cacheScope, conversationId, currentUserId, loadedCacheScope, messages]);
 
 	const retryLoad = useCallback(() => setReloadCount((current) => current + 1), []);
 
@@ -222,7 +281,20 @@ export function useConversationMessages(
 	 * pulling them to the live end would throw away the thing they went to find.
 	 */
 	const resync = useCallback(() => {
-		if (!conversationId || hasMoreNewer) return;
+		if (!conversationId) return;
+		const failedDrafts = messages.filter((message) => message.deliveryState === "failed");
+		if (failedDrafts.length > 0) {
+			const failedIds = new Set(failedDrafts.map((message) => message.id));
+			setMessages((current) =>
+				current.map((message) =>
+					failedIds.has(message.id) ? { ...message, deliveryState: "pending" } : message,
+				),
+			);
+			for (const draft of failedDrafts) {
+				void deliverRef.current({ ...draft, deliveryState: "pending" }).catch(() => undefined);
+			}
+		}
+		if (hasMoreNewer) return;
 
 		void api
 			.listMessages(conversationId, { limit: MESSAGE_PAGE_SIZE })
@@ -253,6 +325,9 @@ export function useConversationMessages(
 				setMessages((current) => [...[...page].reverse(), ...current]);
 				setHasMoreOlder(page.length === MESSAGE_PAGE_SIZE);
 			})
+			.catch(() => {
+				// The loaded snapshot remains usable; the connection banner owns retry.
+			})
 			.finally(() => setIsLoadingOlder(false));
 	}, [conversationId, messages, isLoadingOlder, hasMoreOlder]);
 
@@ -268,6 +343,9 @@ export function useConversationMessages(
 			.then((page) => {
 				setMessages((current) => [...current, ...page]);
 				setHasMoreNewer(page.length === MESSAGE_PAGE_SIZE);
+			})
+			.catch(() => {
+				// Same as older paging: preserve the window already on screen.
 			})
 			.finally(() => setIsLoadingNewer(false));
 	}, [conversationId, messages, isLoadingNewer, hasMoreNewer]);
@@ -289,10 +367,12 @@ export function useConversationMessages(
 	 */
 	const deliver = useCallback(async (draft: ThreadMessage) => {
 		try {
+			const pendingUpload = pendingUploadsRef.current.get(draft.id);
+			const files = pendingUpload ? await pendingUpload.filesPromise : undefined;
 			const sent = await api.sendMessage(
 				draft.conversationId,
 				draft.content,
-				pendingUploadsRef.current.get(draft.id)?.files,
+				files,
 				draft.replyTo?.id,
 				draft.mentionedUserIds,
 				// The draft's own id goes with the send, and comes back on the
@@ -303,6 +383,7 @@ export function useConversationMessages(
 			);
 
 			releaseUpload(pendingUploadsRef.current, draft.id);
+			void removeLocalMessage(draft.id).catch(() => undefined);
 			setMessages((current) => {
 				const withoutDraft = current.filter((message) => message.id !== draft.id);
 
@@ -318,6 +399,18 @@ export function useConversationMessages(
 			throw error;
 		}
 	}, []);
+
+	useEffect(() => {
+		deliverRef.current = deliver;
+	}, [deliver]);
+
+	useEffect(() => {
+		if (restoredDraftIds.length === 0) return;
+		const restoredIds = new Set(restoredDraftIds);
+		const drafts = messages.filter((message) => restoredIds.has(message.id));
+		setRestoredDraftIds([]);
+		for (const draft of drafts) void deliver(draft).catch(() => undefined);
+	}, [deliver, messages, restoredDraftIds]);
 
 	/**
 	 * Sends a message, showing it immediately — pictures included.
@@ -351,11 +444,18 @@ export function useConversationMessages(
 			};
 			if (attachments.length > 0) {
 				pendingUploadsRef.current.set(draft.id, {
-					files: attachments,
+					// Begin after the draft has its dimensions, but do not await it:
+					// the bubble appears now while the browser prepares smaller bytes.
+					filesPromise: optimizeImagesForUpload(attachments),
 					urls: local.map((attachment) => attachment.url),
 				});
 			}
 			setMessages((current) => [...current, draft]);
+			// The local commit deliberately precedes the network call. Once a bubble is
+			// visible, closing the tab or losing power must not be able to erase it.
+			await toLocalOutboxMessage(draft, author.id, attachments)
+				.then(enqueueLocalMessage)
+				.catch(() => undefined);
 
 			await deliver(draft);
 		},
@@ -423,6 +523,7 @@ export function useConversationMessages(
 		// nothing left holding the URLs, and a `blob:` that is never revoked
 		// keeps its file in memory for the life of the tab.
 		releaseUpload(pendingUploadsRef.current, draftId);
+		void removeLocalMessage(draftId).catch(() => undefined);
 		setMessages((current) => current.filter((message) => message.id !== draftId));
 	}, []);
 
@@ -444,6 +545,10 @@ export function useConversationMessages(
 		useCallback(
 			(message: MessageDTO) => {
 				if (message.conversationId === conversationId) {
+					if (message.clientId && message.author?.id === currentUserId) {
+						releaseUpload(pendingUploadsRef.current, message.clientId);
+						void removeLocalMessage(message.clientId).catch(() => undefined);
+					}
 					setMessages((current) => {
 						// Two different duplicates to refuse. `id` catches a reconnect
 						// replaying an event already on screen; `clientId` catches this
@@ -459,7 +564,7 @@ export function useConversationMessages(
 					});
 				}
 			},
-			[conversationId],
+			[conversationId, currentUserId],
 		),
 	);
 

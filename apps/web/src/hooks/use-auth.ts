@@ -1,8 +1,9 @@
 import type { CurrentUserDTO, RegisterRequest } from "@chatty/shared-types";
 import { create } from "zustand";
-import { api, clearStoredToken, getStoredToken, storeSession } from "@/api/client";
+import { api, clearStoredToken, getStoredToken, NetworkUnavailableError, storeSession } from "@/api/client";
 import { useBlockedUsers } from "@/hooks/use-blocked-users";
 import { useRestrictedUsers } from "@/hooks/use-restricted-users";
+import { cacheCurrentUser, clearLocalUserData, readCachedCurrentUser } from "@/lib/local-chat-store";
 import { closeSocket } from "@/lib/socket";
 
 interface AuthState {
@@ -57,7 +58,9 @@ export const useAuth = create<AuthState>((set) => ({
 		storeSession(token);
 		useBlockedUsers.getState().reset();
 		useRestrictedUsers.getState().reset();
-		set({ currentUser: await api.getCurrentUser() });
+		const user = await api.getCurrentUser();
+		set({ currentUser: user });
+		await cacheCurrentUser(user).catch(() => undefined);
 	},
 
 	async register(input) {
@@ -65,11 +68,14 @@ export const useAuth = create<AuthState>((set) => ({
 		storeSession(token);
 		useBlockedUsers.getState().reset();
 		useRestrictedUsers.getState().reset();
-		set({ currentUser: await api.getCurrentUser() });
+		const user = await api.getCurrentUser();
+		set({ currentUser: user });
+		await cacheCurrentUser(user).catch(() => undefined);
 	},
 
 	setCurrentUser(user) {
 		set({ currentUser: user });
+		void cacheCurrentUser(user).catch(() => undefined);
 	},
 
 	async changePassword(currentPassword, newPassword) {
@@ -84,6 +90,7 @@ export const useAuth = create<AuthState>((set) => ({
 
 	async deleteAccount(currentPassword) {
 		await api.deleteAccount({ currentPassword });
+		const userId = useAuth.getState().currentUser?.id;
 		// Deliberately the same teardown as `logout`, in the same order, rather
 		// than a call to it: this state has to be gone whether or not `logout`
 		// keeps doing exactly this, and a failed request above must leave the
@@ -93,9 +100,11 @@ export const useAuth = create<AuthState>((set) => ({
 		useBlockedUsers.getState().reset();
 		useRestrictedUsers.getState().reset();
 		set({ currentUser: null });
+		if (userId) void clearLocalUserData(userId).catch(() => undefined);
 	},
 
 	logout() {
+		const userId = useAuth.getState().currentUser?.id;
 		// Told to the server first, and not awaited. Signing out must not depend on
 		// the network — a failed request would otherwise leave somebody looking at
 		// a chat they asked to leave — but before this call existed "sign out" only
@@ -110,6 +119,7 @@ export const useAuth = create<AuthState>((set) => ({
 		useBlockedUsers.getState().reset();
 		useRestrictedUsers.getState().reset();
 		set({ currentUser: null });
+		if (userId) void clearLocalUserData(userId).catch(() => undefined);
 	},
 
 	async restoreSession() {
@@ -127,8 +137,18 @@ export const useAuth = create<AuthState>((set) => ({
 		}
 
 		try {
-			set({ currentUser: await api.getCurrentUser(), isRestoring: false });
-		} catch {
+			const user = await api.getCurrentUser();
+			set({ currentUser: user, isRestoring: false });
+			void cacheCurrentUser(user).catch(() => undefined);
+		} catch (error) {
+			if (error instanceof NetworkUnavailableError) {
+				const cached = await readCachedCurrentUser().catch(() => null);
+				if (cached) {
+					set({ currentUser: cached, isRestoring: false });
+
+					return;
+				}
+			}
 			// Expired or tampered token — drop it rather than leaving the app in a
 			// half-authenticated state where every request 401s.
 			clearStoredToken();

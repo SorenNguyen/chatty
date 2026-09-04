@@ -19,5 +19,14 @@ export default defineConfig({
 		environment: "jsdom",
 		globals: true,
 		setupFiles: ["./tests/setup.ts"],
+		// Config and dependency changes can affect every test without being part of
+		// a runtime import graph, so changed-file mode must widen for them.
+		forceRerunTriggers: [
+			"**/package-lock.json",
+			"**/package.json",
+			"**/tsconfig*.json",
+			"**/vitest.config.*",
+			"**/tests/setup.ts",
+		],
 	},
 });

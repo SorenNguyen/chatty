@@ -8,6 +8,13 @@ import { makeCurrentUser, makeMessage } from "./factories";
 
 type SocketHandler = (payload: unknown) => void;
 const { socketHandlers } = vi.hoisted(() => ({ socketHandlers: new Map<string, SocketHandler>() }));
+const localStore = vi.hoisted(() => ({
+	cacheMessageSnapshot: vi.fn(),
+	enqueueLocalMessage: vi.fn(),
+	readLocalOutbox: vi.fn(),
+	readMessageSnapshot: vi.fn(),
+	removeLocalMessage: vi.fn(),
+}));
 
 vi.mock("@/api/client", () => ({
 	api: {
@@ -22,6 +29,7 @@ vi.mock("@/features/chat/hooks/use-socket-event", () => ({
 vi.mock("@/features/chat/hooks/use-message-actions", () => ({
 	useMessageActions: () => ({ editMessage: vi.fn(), deleteMessage: vi.fn(), toggleReaction: vi.fn() }),
 }));
+vi.mock("@/lib/local-chat-store", () => localStore);
 
 function emit<EventName extends keyof ServerToClientEvents>(
 	eventName: EventName,
@@ -34,6 +42,11 @@ beforeEach(() => {
 	socketHandlers.clear();
 	vi.mocked(api.listMessages).mockReset().mockResolvedValue([]);
 	vi.mocked(api.sendMessage).mockReset();
+	localStore.cacheMessageSnapshot.mockReset().mockResolvedValue(undefined);
+	localStore.enqueueLocalMessage.mockReset().mockResolvedValue(undefined);
+	localStore.readLocalOutbox.mockReset().mockResolvedValue([]);
+	localStore.readMessageSnapshot.mockReset().mockResolvedValue([]);
+	localStore.removeLocalMessage.mockReset().mockResolvedValue(undefined);
 	useAuth.setState({ currentUser: makeCurrentUser() });
 });
 
@@ -88,5 +101,43 @@ describe("optimistic send reconciliation", () => {
 
 		expect(view.result.current.messages).toHaveLength(1);
 		expect(view.result.current.messages[0]!.id).toBe("theirs");
+	});
+
+	it("replays a durable outbox item after an offline reload", async () => {
+		const author = makeCurrentUser();
+		localStore.readLocalOutbox.mockResolvedValue([
+			{
+				id: "draft:durable",
+				userId: author.id,
+				conversationId: "conversation",
+				author,
+				content: "saved before the tab closed",
+				replyTo: null,
+				mentionedUserIds: [],
+				createdAt: "2026-09-04T10:00:00.000Z",
+				attachments: [],
+			},
+		]);
+		vi.mocked(api.listMessages).mockRejectedValue(new TypeError("offline"));
+		vi.mocked(api.sendMessage).mockResolvedValue({
+			...makeMessage("saved", author.id, "saved before the tab closed"),
+			conversationId: "conversation",
+			clientId: "draft:durable",
+		});
+
+		const view = renderHook(() => useConversationMessages("conversation", vi.fn()));
+
+		await waitFor(() => expect(api.sendMessage).toHaveBeenCalled());
+		expect(api.sendMessage).toHaveBeenCalledWith(
+			"conversation",
+			"saved before the tab closed",
+			undefined,
+			undefined,
+			[],
+			"draft:durable",
+		);
+		await waitFor(() => expect(view.result.current.messages[0]?.id).toBe("saved"));
+		expect(localStore.removeLocalMessage).toHaveBeenCalledWith("draft:durable");
+		expect(view.result.current.loadError).toBe("");
 	});
 });

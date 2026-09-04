@@ -42,7 +42,7 @@ server {
 	# - `object-src 'none'` and `base-uri 'self'` close two injection routes that
 	#   `default-src` does not: plugin content, and rewriting where every relative
 	#   URL on the page resolves to.
-	set $csp "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: ${API_ORIGIN}; font-src 'self'; connect-src 'self' ${API_ORIGIN} ${API_WS_ORIGIN}; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
+	set $csp "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: ${API_ORIGIN}; media-src 'self' ${API_ORIGIN}; font-src 'self' data:; connect-src 'self' ${API_ORIGIN} ${API_WS_ORIGIN}; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
 
 	# Held in a variable and re-added per location because `add_header` does not
 	# merge: a location that sets any header of its own discards every one

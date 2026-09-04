@@ -16,3 +16,6 @@ playwright-report/
 .turbo/
 # Local CodeGraph index; contributors can regenerate it from the working tree.
 .codegraph/
+# Editor state is local. Repository-wide tooling belongs in committed config
+# files rather than settings that only one IDE reads.
+.vscode/

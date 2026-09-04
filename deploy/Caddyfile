@@ -1,0 +1,22 @@
+{
+	# TLS terminates at Cloudflare Tunnel in the zero-cost topology. This Caddy
+	# instance has one job: make two API containers one reliable internal origin.
+	auto_https off
+	admin off
+}
+
+:4000 {
+	reverse_proxy api-1:4000 api-2:4000 {
+		# Readiness includes PostgreSQL and Redis. Do not send a request to a
+		# process whose port is open but whose dependencies cannot serve it.
+		health_uri /ready
+		health_interval 10s
+		health_timeout 3s
+
+		# The web client uses WebSocket-only Socket.IO, so a connection remains on
+		# one upstream by construction and polling affinity is unnecessary. HTTP
+		# commands may use either stateless instance; Redis shares socket rooms.
+		lb_policy least_conn
+		lb_try_duration 5s
+	}
+}

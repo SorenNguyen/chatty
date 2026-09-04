@@ -8,6 +8,8 @@ import {
 	muteConversationSchema,
 	pinConversationSchema,
 	renameConversationSchema,
+	setInvitePolicySchema,
+	setParticipantRoleSchema,
 	transferOwnershipSchema,
 } from "./conversations.schema.js";
 import * as conversationsService from "./conversations.service.js";
@@ -92,6 +94,27 @@ export async function transferOwnershipController(req: Request, res: Response): 
 	const input = transferOwnershipSchema.parse(req.body);
 	const conversationId = req.params.conversationId as string;
 	const conversation = await conversationsService.transferGroupOwnership(req.userId!, conversationId, input);
+	res.status(200).json(conversation);
+}
+
+export async function setParticipantRoleController(req: Request, res: Response): Promise<void> {
+	const input = setParticipantRoleSchema.parse(req.body);
+	const conversation = await conversationsService.setParticipantRole(
+		req.userId!,
+		req.params.conversationId as string,
+		req.params.userId as string,
+		input,
+	);
+	res.status(200).json(conversation);
+}
+
+export async function setInvitePolicyController(req: Request, res: Response): Promise<void> {
+	const input = setInvitePolicySchema.parse(req.body);
+	const conversation = await conversationsService.setGroupInvitePolicy(
+		req.userId!,
+		req.params.conversationId as string,
+		input,
+	);
 	res.status(200).json(conversation);
 }
 

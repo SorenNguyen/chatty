@@ -9,6 +9,8 @@ const addParticipant = vi.fn();
 const removeParticipant = vi.fn();
 const renameConversation = vi.fn();
 const transferOwnership = vi.fn();
+const setParticipantRole = vi.fn();
+const setGroupInvitePolicy = vi.fn();
 
 vi.mock("@/api/client", () => ({
 	api: {
@@ -17,6 +19,9 @@ vi.mock("@/api/client", () => ({
 		removeParticipant: (conversationId: string, userId: string) => removeParticipant(conversationId, userId),
 		renameConversation: (conversationId: string, name: string) => renameConversation(conversationId, name),
 		transferOwnership: (conversationId: string, userId: string) => transferOwnership(conversationId, userId),
+		setParticipantRole: (conversationId: string, userId: string, role: string) =>
+			setParticipantRole(conversationId, userId, role),
+		setGroupInvitePolicy: (conversationId: string, policy: string) => setGroupInvitePolicy(conversationId, policy),
 	},
 }));
 
@@ -40,6 +45,8 @@ beforeEach(() => {
 	removeParticipant.mockReset().mockResolvedValue(undefined);
 	renameConversation.mockReset().mockResolvedValue(group);
 	transferOwnership.mockReset().mockResolvedValue(group);
+	setParticipantRole.mockReset().mockResolvedValue(group);
+	setGroupInvitePolicy.mockReset().mockResolvedValue(group);
 });
 
 describe("GroupMembersPanel", () => {
@@ -95,6 +102,24 @@ describe("GroupMembersPanel", () => {
 		// No hand-over button on your own row: you are already the owner, and the
 		// server refuses it anyway.
 		expect(screen.queryByRole("button", { name: "Make Minh the group owner" })).not.toBeInTheDocument();
+	});
+
+	it("promotes an ordinary member to admin", async () => {
+		const user = userEvent.setup();
+		render(<GroupMembersPanel conversation={group} currentUserId="minh" onClose={vi.fn()} />);
+
+		await user.click(screen.getByRole("button", { name: "Make An an admin" }));
+
+		expect(setParticipantRole).toHaveBeenCalledWith("group-1", "an", "admin");
+	});
+
+	it("lets the owner restrict invitations to managers", async () => {
+		const user = userEvent.setup();
+		render(<GroupMembersPanel conversation={group} currentUserId="minh" onClose={vi.fn()} />);
+
+		await user.selectOptions(screen.getByLabelText("Who can add people"), "managers");
+
+		expect(setGroupInvitePolicy).toHaveBeenCalledWith("group-1", "managers");
 	});
 
 	it("leaves the group once leaving is confirmed", async () => {
@@ -187,7 +212,7 @@ describe("GroupMembersPanel, seen by a member who does not own the group", () =>
 
 		expect(screen.getByLabelText("Group name")).toBeDisabled();
 		expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-		expect(screen.getByText(/only the group owner can rename/i)).toBeInTheDocument();
+		expect(screen.getByText(/only group owners and admins can rename/i)).toBeInTheDocument();
 	});
 
 	it("still lets them invite someone", async () => {
@@ -216,5 +241,35 @@ describe("GroupMembersPanel, seen by a member who does not own the group", () =>
 		render(<GroupMembersPanel conversation={group} currentUserId="an" onClose={vi.fn()} />);
 
 		expect(screen.getByText("Owner")).toBeInTheDocument();
+	});
+
+	it("hides add-member search when the owner chose manager-only invites", () => {
+		render(
+			<GroupMembersPanel
+				conversation={{ ...group, invitePolicy: "managers" }}
+				currentUserId="an"
+				onClose={vi.fn()}
+			/>,
+		);
+
+		expect(screen.queryByLabelText("Add a member")).not.toBeInTheDocument();
+		expect(screen.getByText(/only owners and admins add people/i)).toBeInTheDocument();
+	});
+});
+
+describe("GroupMembersPanel, seen by an admin", () => {
+	it("can rename, invite under manager policy, and remove an ordinary member", () => {
+		const adminGroup = {
+			...group,
+			invitePolicy: "managers" as const,
+			participants: [minh, { ...an, role: "admin" as const }, binh],
+		};
+		render(<GroupMembersPanel conversation={adminGroup} currentUserId="an" onClose={vi.fn()} />);
+
+		expect(screen.getByLabelText("Group name")).toBeEnabled();
+		expect(screen.getByLabelText("Add a member")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Remove Binh from the group" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Remove Minh from the group" })).not.toBeInTheDocument();
+		expect(screen.getByText("Admin")).toBeInTheDocument();
 	});
 });

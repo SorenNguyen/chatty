@@ -323,6 +323,57 @@ describe("sendMessage", () => {
 		expect(messageEmits()[0]).toEqual({ room: conversation.id, event: "message:new", payload: message });
 	});
 
+	it("returns the original message when a client id is replayed", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const conversation = await createConversation(minhId, { participantIds: [anId] });
+
+		const first = await sendMessage(minhId, conversation.id, {
+			content: "survives a lost response",
+			clientId: "draft:72b5e54a-7e14-41da-adfd-f67030ec0c31",
+		});
+		const replay = await sendMessage(minhId, conversation.id, {
+			content: "survives a lost response",
+			clientId: "draft:72b5e54a-7e14-41da-adfd-f67030ec0c31",
+		});
+
+		expect(replay).toEqual(first);
+		await expect(prisma.message.count({ where: { conversationId: conversation.id } })).resolves.toBe(1);
+		// A replay is a response to this device, not new activity for every device.
+		expect(messageEmits()).toHaveLength(1);
+	});
+
+	it("serialises concurrent replays into one row and one event", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const conversation = await createConversation(minhId, { participantIds: [anId] });
+		const input = { content: "sent from two tabs", clientId: "draft:7c5dccb8-558f-4770-92e3-40a08695218d" };
+
+		const [first, second] = await Promise.all([
+			sendMessage(minhId, conversation.id, input),
+			sendMessage(minhId, conversation.id, input),
+		]);
+
+		expect(second.id).toBe(first.id);
+		await expect(prisma.message.count({ where: { conversationId: conversation.id } })).resolves.toBe(1);
+		expect(messageEmits()).toHaveLength(1);
+	});
+
+	it("refuses to reuse one client id in another conversation", async () => {
+		const minhId = await createUser("minh");
+		const anId = await createUser("an");
+		const binhId = await createUser("binh");
+		const first = await createConversation(minhId, { participantIds: [anId] });
+		const second = await createConversation(minhId, { participantIds: [binhId] });
+		const clientId = "draft:0626a698-858c-4908-8143-fe2f9b708dea";
+		await sendMessage(minhId, first.id, { content: "first", clientId });
+
+		await expect(sendMessage(minhId, second.id, { content: "second", clientId })).rejects.toBeInstanceOf(
+			ValidationError,
+		);
+		await expect(prisma.message.count({ where: { authorId: minhId } })).resolves.toBe(1);
+	});
+
 	it("bumps the conversation's updatedAt so it sorts to the top", async () => {
 		const minhId = await createUser("minh");
 		const anId = await createUser("an");

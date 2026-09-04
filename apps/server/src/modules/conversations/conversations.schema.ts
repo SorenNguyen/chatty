@@ -36,6 +36,18 @@ export const transferOwnershipSchema = z.object({
 });
 export type TransferOwnershipInput = z.infer<typeof transferOwnershipSchema>;
 
+export const setParticipantRoleSchema = z.object({
+	// OWNER moves through its dedicated transfer endpoint because changing it is
+	// a two-row invariant, not one participant property.
+	role: z.enum(["admin", "member"]),
+});
+export type SetParticipantRoleInput = z.infer<typeof setParticipantRoleSchema>;
+
+export const setInvitePolicySchema = z.object({
+	invitePolicy: z.enum(["everyone", "managers"]),
+});
+export type SetInvitePolicyInput = z.infer<typeof setInvitePolicySchema>;
+
 export const listConversationsQuerySchema = z.object({
 	archived: z
 		.enum(["true", "false"])

@@ -1,9 +1,11 @@
+import compression from "compression";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
 import { env } from "./config/env.js";
 import { errorHandler } from "./middlewares/error-handler.js";
+import { observeHttp } from "./middlewares/observe-http.js";
 import { checkReadiness } from "./lib/readiness.js";
 import { attachmentsRouter } from "./modules/attachments/attachments.routes.js";
 import { stickersRouter } from "./modules/stickers/stickers.routes.js";
@@ -11,6 +13,7 @@ import { authRouter } from "./modules/auth/auth.routes.js";
 import { blocksRouter } from "./modules/blocks/blocks.routes.js";
 import { conversationsRouter } from "./modules/conversations/conversations.routes.js";
 import { messagesRouter } from "./modules/messages/messages.routes.js";
+import { metricsRouter } from "./modules/metrics/metrics.routes.js";
 import { restrictionsRouter } from "./modules/restrictions/restrictions.routes.js";
 import { searchRouter } from "./modules/search/search.routes.js";
 import { usersRouter } from "./modules/users/users.routes.js";
@@ -43,6 +46,11 @@ export function createApp() {
 			contentSecurityPolicy: false,
 		}),
 	);
+	app.use(observeHttp);
+	// Conversation pages repeat keys, authors and signed URL structure, which
+	// makes their JSON especially compressible. Keep the default 1KB threshold:
+	// compressing tiny health/error bodies spends CPU to save almost nothing.
+	app.use(compression());
 	// `credentials: true` is what lets the refresh-token cookie cross from the web
 	// app's origin to this one — without it the browser refuses to send or store
 	// it, no matter what the `Set-Cookie` response says. It requires `origin` to
@@ -72,6 +80,11 @@ export function createApp() {
 
 		res.status(readiness.ok ? 200 : 503).json(readiness);
 	});
+
+	// Optional outside production so a plain local server needs no extra secret.
+	// Production configuration requires one; exposing process and traffic shape
+	// without authentication would turn observability into reconnaissance.
+	if (env.METRICS_TOKEN) app.use("/metrics", metricsRouter);
 
 	app.use("/auth", authRouter);
 	app.use("/attachments", attachmentsRouter);

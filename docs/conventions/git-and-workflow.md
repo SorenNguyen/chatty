@@ -48,14 +48,18 @@ The exemption is a consequence of the repository having one regular author, not 
 ## Before you push
 
 ```bash
-npm run verify           # typecheck -> lint -> format:check -> test -> audit
+npm run verify           # cached static checks + tests related to changed files
 ```
 
 Clean, on Node 22 or newer. "It works on my machine" is not a state that survives a second machine — and pushing to `main` means the next thing that reads a broken commit is CI, or a deployment.
 
+Run `npm run verify:full` before a release and after security/auth, migration or dependency changes.
+CI always runs the complete suite in parallel; see [ADR 0019](../adr/0019-two-speed-verification.md).
+Version bumps, annotated tags and release artifacts follow [the release conventions](releases.md).
+
 Checklist:
 
-- [ ] `typecheck`, `lint`, `test` pass
+- [ ] the appropriate quick or full gate passes
 - [ ] New env vars added to `.env.example` in the same commit
 - [ ] Schema change has a migration committed alongside it
 - [ ] No `console.log`, no commented-out code, no `any`

@@ -229,7 +229,7 @@ describe("POST /conversations/:id/messages with several images", () => {
 
 	it("refuses more than the cap with a sentence rather than a 500", async () => {
 		// Multer aborts with LIMIT_FILE_COUNT, which reaches the error middleware
-		// as an unrecognised error unless it is translated — "something broke"
+		// as an unrecognised error unless it is mapped — "something broke"
 		// instead of "that is too many pictures".
 		const { token, conversationId } = await makeSender();
 

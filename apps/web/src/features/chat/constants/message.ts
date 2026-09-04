@@ -5,8 +5,7 @@
  * oversight: the server empties the row's content, so there is nothing left for
  * it to send. Putting the sentence in the payload would mean a deleted message
  * arriving with text in `content` again — the one field a client must be able to
- * trust is empty. It is also the string localisation would need, and the last
- * one this app can translate without touching the database (see ADR 0009).
+ * trust is empty.
  */
 export const DELETED_MESSAGE_TEXT = "This message was deleted";
 

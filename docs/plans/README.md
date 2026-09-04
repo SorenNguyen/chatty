@@ -43,7 +43,7 @@ Read [CLAUDE.md](../../CLAUDE.md) first — this section adds to it, it does not
    uploaded image is decoded and re-encoded, so nothing of the input format survives. Phase 24 breaks
    that assumption on purpose and has to replace it; see ADR 0013 in that file. Nothing in phases 24-28
    may serve an uploaded byte inline unless this server produced those bytes itself.
-5. **Verification is `npm run verify` plus running the thing.** Every phase below names the endpoint
+5. **Verification is the appropriate `verify`/`verify:full` gate plus running the thing.** Every phase below names the endpoint
    test it needs, because this repository has shipped a 500 with a green suite twice (the avatar route,
    the sticker URL) and both times the missing test was at the HTTP boundary rather than under it.
 6. **Update what describes the behaviour in the same commit** — ROADMAP.md, README.md, `.env.example`,
@@ -62,7 +62,7 @@ there":
 - **Malware scanning.** Phase 24 refuses executables by extension and forces every download as an
   attachment. That is not antivirus and the plan says so out loud rather than implying a protection
   that does not exist.
-- **Threads, polls, translation, scheduled messages.** All real features, none of them small, none of
-  them asked for.
+- **Threads, polls and scheduled messages.** All real features, none of them small, none of them
+  asked for.
 - **Web Push / a service worker.** Still blocked on VAPID keys, the same class as the mail provider —
   see ROADMAP.md, "Known gaps".

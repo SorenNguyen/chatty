@@ -111,7 +111,7 @@ test.describe("a group with an owner", () => {
 		await member.page.getByRole("button", { name: "Group members" }).click();
 
 		await expect(member.page.getByLabel("Group name")).toBeDisabled();
-		await expect(member.page.getByText(/only the group owner can rename/i)).toBeVisible();
+		await expect(member.page.getByText(/only group owners and admins can rename/i)).toBeVisible();
 		await expect(
 			member.page.getByRole("button", { name: `Remove ${third.user.displayName} from the group` }),
 		).toBeHidden();
@@ -120,5 +120,30 @@ test.describe("a group with an owner", () => {
 		await expect(member.page.getByLabel("Add a member")).toBeEnabled();
 
 		await Promise.all([owner.page.context().close(), member.page.context().close(), third.page.context().close()]);
+	});
+
+	test("shares moderation with an admin and restricts invites to managers", async ({ browser }) => {
+		const owner = await join(browser, "Captain");
+		const admin = await join(browser, "Helper");
+		const member = await join(browser, "Guest");
+
+		await startGroupChat(owner.page, [admin.user, member.user], GROUP_NAME);
+		await openConversationNamed(admin.page, GROUP_NAME);
+		await openConversationNamed(member.page, GROUP_NAME);
+
+		await owner.page.getByRole("button", { name: "Group members" }).click();
+		await owner.page.getByRole("button", { name: `Make ${admin.user.displayName} an admin` }).click();
+		await owner.page.getByLabel("Who can add people").selectOption("managers");
+
+		await admin.page.getByRole("button", { name: "Group members" }).click();
+		await expect(admin.page.getByText("Admin", { exact: true })).toBeVisible({ timeout: 15_000 });
+		await expect(admin.page.getByLabel("Group name")).toBeEnabled();
+		await expect(admin.page.getByLabel("Add a member")).toBeEnabled();
+
+		await member.page.getByRole("button", { name: "Group members" }).click();
+		await expect(member.page.getByLabel("Add a member")).toBeHidden({ timeout: 15_000 });
+		await expect(member.page.getByText(/only owners and admins add people/i)).toBeVisible();
+
+		await Promise.all([owner.page.context().close(), admin.page.context().close(), member.page.context().close()]);
 	});
 });

@@ -28,10 +28,12 @@ knowing before you spend an afternoon on them:
 ## Before you open a pull request
 
 ```bash
-npm run verify     # typecheck → lint → format:check → test → audit
+npm run verify     # cached static checks + tests related to your changes
 ```
 
-Green, on Node 22+. CI runs exactly this, so a red `verify` locally is a red pull request.
+Green, on Node 22+. Use `npm run verify:full` for security/auth changes, migrations, dependency
+upgrades and releases. CI always runs the complete suite in parallel shards, so the quick local gate
+changes waiting time rather than the amount of code checked before acceptance.
 
 `npm run test:e2e` is **not** part of `verify` — it needs two servers and a browser download — and it
 is what you should run for anything touching a flow rather than a function. It has earned its place:

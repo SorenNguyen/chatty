@@ -2,14 +2,19 @@
 
 A messaging app (Zalo/Telegram-style: 1-1 and group chat, realtime delivery) built from scratch to learn how a production-grade chat system is put together.
 
+Current release: **`v0.2.0-rc.1`** — feature-complete release candidate for private acceptance;
+public launch still requires the external conditions in [Deployment](docs/DEPLOYMENT.md).
+
 ## Read first
 
 | Document | What it answers |
 | --- | --- |
 | [CLAUDE.md](CLAUDE.md) | The conventions block — button/icon/alias/filename decisions, and the checklists |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to run it, what the gate is, and what a good pull request looks like |
+| [docs/PRODUCT-DIRECTION.md](docs/PRODUCT-DIRECTION.md) | The product values, free-first constraint, UI rules and feature-selection rubric |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the pieces fit together and why |
 | [docs/conventions/](docs/conventions/) | The rules for writing frontend, backend, and commits |
+| [CHANGELOG.md](CHANGELOG.md) | What changed in each published release |
 | [docs/adr/](docs/adr/) | Why each major technical decision was made |
 
 ## Stack
@@ -57,10 +62,24 @@ That creates `minh@test.com`, `an@test.com` and `binh@test.com` (password `Super
 one direct conversation and one group. It **wipes the database first** and refuses to run against
 anything that is not localhost.
 
+For a UI/realtime stress dataset against the running Docker stack, use:
+
+```bash
+npm run seed:demo
+```
+
+This goes through the real HTTP API without wiping data. It creates four reusable accounts, a direct
+thread and a managed group with hundreds of alternating messages, image/gallery thumbnails, voice,
+files, reply/forward/mention/link, pin and saved-message examples. Fixed message keys make reruns
+converge rather than duplicate the dataset. The credentials are printed after the script verifies the
+message counts and every attachment kind.
+
 ## Checks
 
 ```bash
-npm run verify          # all of the below, in order, failing on the first problem
+npm run verify          # fast: cached static checks + tests related to changed files
+npm run verify:full     # every server/web test; release and high-risk gate
+npm run version:check   # SemVer is identical in every workspace and the lockfile
 ```
 
 Or individually:
@@ -70,12 +89,19 @@ npm run typecheck       # all workspaces
 npm run lint
 npm run format:check    # prettier; skips docs and .prisma, see .prettierignore
 npm run test            # server (Vitest + Postgres) and web (Vitest + Testing Library)
+npm run test:changed    # only tests statically affected by uncommitted files
 npm run audit:rules     # greps apps/web/src against the conventions — a report
 npm run format          # rewrites, rather than just reporting
 ```
 
 The server test setup creates its disposable `chatty_test` database automatically on the local
-Postgres instance. A fresh clone therefore needs no database command between `db:up` and `verify`.
+Postgres instance. A fresh clone therefore needs no database command between `db:up` and either gate.
+
+`verify` keeps whole-project type safety but reuses TypeScript/ESLint/Prettier caches and lets Vitest
+follow the changed import graph. Schema, migration, package, config and global-test-setup changes
+automatically run the complete affected suite. CI always runs all tests: the PostgreSQL suite is
+split over two isolated shards while web/static checks and image builds run alongside it. See
+[ADR 0019](docs/adr/0019-two-speed-verification.md).
 
 End-to-end tests are separate, because they need both servers and a browser:
 
@@ -104,16 +130,17 @@ scripts/
   audit-rules.sh  Convention checker (from evondev's Dev Rules, MIT)
 ```
 
-Deployment lives in `apps/*/Dockerfile`, `docker-compose.prod.yml` (two API instances, on purpose)
-and `.github/workflows/verify.yml`.
+Deployment lives in `apps/*/Dockerfile`, `docker-compose.prod.yml` (two API instances behind a Caddy
+gateway), the optional free public edge in `docker-compose.tunnel.yml`, and
+`.github/workflows/verify.yml`.
 
 ## Status
 
 Working end to end: register, sign in, find people by `@handle`, start a direct chat or a group,
 send messages that arrive in real time over WebSocket, scroll up to load older history, upload an
 avatar, see unread badges, read receipts, typing indicators and who is online, manage a group —
-invite someone, rename it, remove a member, leave it, with every one of those announced in the chat
-log, hand it to somebody else — edit your own profile, change your password, or reset a forgotten
+invite someone under its chosen policy, share day-to-day moderation with admins, rename it, remove a
+member, leave it, with every one of those announced in the chat log, hand it to somebody else — edit your own profile, change your password, or reset a forgotten
 one, move the account to a new email address, turn read receipts off, delete the account entirely,
 send an image with or without a caption, rewrite or retract a recent message, inspect its edit
 history, remove any message from your own view, search inside the open conversation for a message
@@ -129,9 +156,9 @@ An author may edit or delete for everyone for eight hours after sending. The act
 that window closes; deleting only from your own view remains available without a time limit and also
 removes the message from your sidebar preview, search results and unread count.
 
-A group has an owner: the person who created it. Only they can rename it, remove somebody else or
-hand the group on; anyone can invite, and anyone can leave. See
-[ADR 0008](docs/adr/0008-group-owner-role.md).
+A group has exactly one owner and may have admins. Owner/admin can rename and moderate ordinary
+members; only the owner changes roles, transfers ownership and chooses whether everyone or only
+managers may invite. Anyone can leave. See [ADR 0018](docs/adr/0018-group-admins-and-invite-policy.md).
 
 Deleting your account removes the account, its avatar file and every session it had open — but not
 its messages. Those stay in their conversations with the author taken off them, rendered as "Deleted
@@ -140,12 +167,16 @@ the paging cursor still point at those rows. Read receipts can be turned off, an
 symmetric — hide yours and you stop seeing everyone else's, with nothing revealed retroactively when
 you turn them back on. See [docs/ROADMAP.md](docs/ROADMAP.md) phase 13.
 
-Verified by 434 server tests (against a real Postgres), 275 web tests, and 37 Playwright specs
-driving a real browser against a real server — plus typecheck, lint, the conventions audit, and a
-production image build. CI runs all of it except the browser suite on every push.
+Verified by complete server tests against real PostgreSQL, web component/unit tests and Playwright
+specs driving a real browser against a real server — plus typecheck, lint, the conventions audit and
+production image builds. Normal CI keeps independent gates parallel; release tags additionally gate
+artifact publication on browser E2E.
 
 **[docs/ROADMAP.md](docs/ROADMAP.md) is the current source of truth for what is done and what is
-next.** Phases 1 to 36 are complete. Phase 7 makes group and password-reset transitions safe under
+next.** Phase 42 now has durable local snapshots/idempotent offline sends, stronger group trust and
+an explicit E2EE protocol/readiness decision; implementation remains behind the audited browser-MLS
+gate in ADR 0020. Future ideas still enter through [docs/PRODUCT-DIRECTION.md](docs/PRODUCT-DIRECTION.md)'s
+rubric. Phase 7 makes group and password-reset transitions safe under
 concurrent requests: one conversation lock orders membership-sensitive writes, PostgreSQL enforces
 the owner/message invariants, and fault-injection tests prove partial writes do not escape. Phase 8
 adds editing and deleting your own messages, on the same lock, with the deletion kept as a tombstone
@@ -250,16 +281,23 @@ phase 36 was missing: zoom and rotate, with every zoom anchored at the point the
 pan once zoomed in, clamped to the picture rather than to the screen. A quarter-turn re-fits the whole
 uncropped image to the viewport, so rotating a landscape never destroys its form.
 
+Phase 39 makes network use follow what is actually visible. A picked photo is reduced to the server's
+1600px ceiling and encoded in the browser when that produces fewer bytes, while the server keeps its
+authoritative security re-encode. The thread downloads 480px derivatives and reserves the full image
+for the viewer/save path; large JSON responses are compressed. [ADR 0016](docs/adr/0016-bandwidth-first-message-delivery.md)
+maps those choices to Messenger's published snapshot/delta and separate-media architecture, and states
+the evidence required before adding object storage, durable event cursors, queues or binary encoding.
+
 Largest known gaps:
 
-- **No real deployment yet, and it is blocked on purchases rather than code** — a domain, a host and
-  an SMTP account. The cost of each, the two host options and what changes between them are worked
-  out in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
-- **There is no second admin and no demotion** — the role is one seat, so nobody can cover for an
-  owner who has gone quiet without them handing it over first — and any member can still invite a
-  stranger. See [ADR 0008](docs/adr/0008-group-owner-role.md). Combined with blocking stopping at the
-  edge of a group, that means a member can add somebody you have blocked to a group you are in, and
-  you will see their messages there.
+- **No real deployment yet.** The $0/month topology is implemented: one existing machine or Oracle
+  Always Free runs Postgres, Redis, uploads, two APIs and an internal Caddy gateway; the optional
+  Cloudflare Tunnel compose file provides the public edge. Launch is blocked on buying the one
+  planned purchase (a domain), creating free Cloudflare/Resend accounts and choosing a backup
+  destination. Exact conditions are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+- **Blocking does not become a group-wide ban.** Manager-only invite policy limits who can introduce
+  somebody, but if a blocked person already shares a group with you, both of you still see that
+  group's messages. See [ADR 0018](docs/adr/0018-group-admins-and-invite-policy.md).
 - **A system line does not follow a later rename** — "An added Binh" keeps the names people had when
   it happened, by design. See [ADR 0009](docs/adr/0009-system-messages.md).
 - **Mail sends, but no production account is signed up for.** Phase 10 added a real SMTP transport
@@ -273,9 +311,10 @@ Largest known gaps:
   with a one-hour life, but bearer proof for that hour — see
   [ADR 0007](docs/adr/0007-signed-attachment-urls.md). Files left behind by a send that failed midway
   are swept every six hours as of phase 14; avatar files are not swept yet.
-- **Still no TLS, reverse proxy, load balancer or object storage.** The two API instances sit on
-  separate ports rather than behind anything, and uploads are a shared volume — which works on one
-  machine and does not survive per-machine disks. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+- **TLS is configured but not exercised on a real hostname.** Caddy now balances the two API
+  instances and the tunnel scaffold provides TLS/public ingress without opening host ports. A domain
+  and tunnel token are still needed to prove it end to end. Object storage is deliberately deferred:
+  the shared volume is the correct $0 boundary while every API instance lives on one host.
 - **The CSP is not verified against a live API.** The web app has one as of phase 14, checked in a
   real browser against the built image — but with no API behind it, so `img-src` and `connect-src`
   are argued from the header's contents rather than demonstrated end to end.

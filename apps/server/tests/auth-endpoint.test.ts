@@ -48,6 +48,17 @@ function register(): Promise<Response> {
 }
 
 describe("the refresh-token cookie", () => {
+	it("returns a client error for malformed JSON instead of reporting a server failure", async () => {
+		const response = await fetch(`${baseUrl}/auth/register`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: "{",
+		});
+
+		expect(response.status).toBe(400);
+		expect(await response.json()).toEqual({ error: "BadRequest", message: "Malformed JSON body" });
+	});
+
 	it("never appears in a register, login, refresh or password-change response body", async () => {
 		const registered = await register();
 		const registerBody = (await registered.json()) as Record<string, unknown>;

@@ -36,6 +36,21 @@ export const MAX_ATTACHMENTS_PER_MESSAGE = 10;
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 export const MAX_FILES_PER_MESSAGE = 1;
+
+/**
+ * The server stores this longest edge, so sending pixels beyond it only makes
+ * the uplink and server decoder work harder. Kept beside the picker limits
+ * because this is a wire budget, not display geometry.
+ */
+export const MAX_IMAGE_UPLOAD_DIMENSION: number = 1600;
+
+/**
+ * A high-quality first pass before the server's authoritative re-encode.
+ * This is a quality target, not "remove 75%": already efficient images are
+ * retained when the browser's result is not actually smaller.
+ */
+export const IMAGE_UPLOAD_QUALITY: number = 0.86;
+export const OPTIMIZED_IMAGE_MEDIA_TYPE: string = "image/webp";
 export const REFUSED_FILE_EXTENSIONS = [
 	"exe",
 	"msi",

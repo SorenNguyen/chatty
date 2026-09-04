@@ -48,6 +48,9 @@ fi
 # Read one convention value: the text between backticks on the "- Key:" line.
 convention() {
   [ -n "$CONFIG" ] && [ -f "$CONFIG" ] || return 0
+  # The sed program needs literal backticks and capture syntax; shell expansion
+  # here would change the expression rather than make it safer.
+  # shellcheck disable=SC2016
   grep -iE "^- $1:" "$CONFIG" | head -1 | sed -E 's/^[^`]*`([^`]*)`.*$/\1/'
 }
 
@@ -165,7 +168,11 @@ esac
 section "9. className: no template string with ternary (use the styling helper)"
 case "$CONV_STYLING" in
   none*) is_off "no styling helper declared" ;;
-  *) tsx_files | xargs grep -n 'className={`[^`]*\${[^}]*?[^}]*:' 2>/dev/null | report ;;
+  *)
+    # `${` is the source text this heuristic is searching for, not a shell variable.
+    # shellcheck disable=SC2016
+    tsx_files | xargs grep -n 'className={`[^`]*\${[^}]*?[^}]*:' 2>/dev/null | report
+    ;;
 esac
 
 # ---------------------------------------------------------------------------
@@ -219,7 +226,7 @@ ts_files | xargs grep -nE 'const \[([a-z][A-Za-z]*), set[A-Z][A-Za-z]*\] = useSt
 # ---------------------------------------------------------------------------
 section "19. Constant arrays declared inside feature component files (move to constants/)"
 if [ -d "$SRC/features" ]; then
-  find "$SRC/features" -path '*/components/*.tsx' | xargs grep -nE '^const [A-Z_]{3,}(: [A-Za-z\[\]<>]+)? = \[' 2>/dev/null | report
+  find "$SRC/features" -path '*/components/*.tsx' -exec grep -nEH '^const [A-Z_]{3,}(: [A-Za-z\[\]<>]+)? = \[' {} + 2>/dev/null | report
 else
   echo "  (no $SRC/features folder)"
 fi
@@ -227,7 +234,7 @@ fi
 # ---------------------------------------------------------------------------
 section "20. Helper functions declared inside feature component files (move to utils/)"
 if [ -d "$SRC/features" ]; then
-  find "$SRC/features" -path '*/components/*.tsx' | xargs grep -nE '^function [a-z][A-Za-z]*\(' 2>/dev/null | report
+  find "$SRC/features" -path '*/components/*.tsx' -exec grep -nEH '^function [a-z][A-Za-z]*\(' {} + 2>/dev/null | report
 else
   echo "  (no $SRC/features folder)"
 fi

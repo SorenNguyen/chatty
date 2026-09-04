@@ -45,8 +45,6 @@ deleting an account produces.
   for a feature whose entire output is one line of grey text.
 - A log entry describes a moment. "An added Binh" is what happened, even after An is called something
   else — the same reason a bank statement does not rewrite the payee when a company rebrands.
-- The app's copy is English-only (see CLAUDE.md). Localisation would change this answer, and it is
-  the one thing that would.
 
 **System messages never count as unread.** This falls out of the existing SQL rather than being
 special-cased: the unread query counts messages where `authorId <> $viewer`, and `null <> $viewer` is

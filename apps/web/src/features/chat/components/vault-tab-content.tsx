@@ -3,6 +3,7 @@ import type { RefObject } from "react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/button";
 import { MONTH_HEADING_CLASS, type VaultTab } from "../constants/vault";
+import { getAttachmentPreviewUrl } from "../utils";
 import { formatLinkSource, formatVaultDate, groupVaultByMonth } from "../utils/vault";
 import { AttachmentLightbox } from "./attachment-lightbox";
 import { MessageFileCard } from "./message-file-card";
@@ -86,7 +87,7 @@ export function VaultTabContent({
 										className="aspect-square overflow-hidden rounded-sm p-0"
 									>
 										<img
-											src={attachment.thumbUrl ?? attachment.url}
+											src={getAttachmentPreviewUrl(attachment)}
 											alt={`Shared by ${attachment.authorName ?? "Deleted account"}`}
 											className="size-full object-cover transition duration-200 hover:scale-[1.02]"
 										/>

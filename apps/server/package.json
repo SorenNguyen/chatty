@@ -1,14 +1,15 @@
 {
 	"name": "@chatty/server",
-	"version": "0.1.0",
+	"version": "0.2.0-rc.1",
 	"private": true,
 	"type": "module",
 	"scripts": {
 		"dev": "tsx watch src/server.ts",
 		"build": "tsc -p tsconfig.build.json",
 		"start": "node dist/server.js",
-		"typecheck": "tsc --noEmit",
+		"typecheck": "tsc --noEmit --incremental --tsBuildInfoFile ../../node_modules/.chatty-server-typecheck.tsbuildinfo",
 		"test": "vitest run",
+		"test:changed": "vitest run --changed --passWithNoTests",
 		"db:migrate": "prisma migrate dev",
 		"db:generate": "prisma generate",
 		"db:seed": "prisma db seed",
@@ -20,8 +21,10 @@
 	"dependencies": {
 		"@chatty/shared-types": "*",
 		"@prisma/client": "^5.22.0",
+		"@prometheus-io/client": "^0.16.1",
 		"@socket.io/redis-adapter": "^8.3.0",
 		"bcrypt": "^6.0.0",
+		"compression": "^1.8.1",
 		"cookie-parser": "^1.4.7",
 		"cors": "^2.8.5",
 		"dotenv": "^16.4.5",
@@ -43,6 +46,7 @@
 	},
 	"devDependencies": {
 		"@types/bcrypt": "^6.0.0",
+		"@types/compression": "^1.8.1",
 		"@types/cookie-parser": "^1.4.10",
 		"@types/cors": "^2.8.17",
 		"@types/express": "^5.0.0",

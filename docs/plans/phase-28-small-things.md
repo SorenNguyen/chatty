@@ -136,7 +136,7 @@ tap for the list. No new endpoint, no new column: this is rendering data the cli
 
 ## Cheap, and deliberately refused
 
-- **Message translation, scheduled send, polls, threads** — each is a phase.
+- **Scheduled send, polls and threads** — each is a phase.
 - **Read receipts per message in large groups** — the stack in item 119 is the affordable version.
 - **Multi-select messages for bulk delete/forward** — a selection mode is a second interaction model
   over the whole thread; worth doing when one of forward or delete is being used enough to ask for it.

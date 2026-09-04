@@ -3,7 +3,7 @@
 What is built, what is next, and why in this order. Update this file **in the same commit** as the
 work it describes — a roadmap that lags behind the code is worse than none, because it is believed.
 
-Status: `done` · `next` · `planned`
+Status: `done` · `next` · `planned` · `blocked` · `dropped`
 
 ---
 
@@ -489,11 +489,9 @@ and a 404 would leave the UI unable to explain itself.
 
 Known, deliberately deferred rather than missed:
 
-- No manual hand-over: an owner cannot promote someone while staying in the group. One endpoint and
-  one button when it is wanted; the check it needs already exists.
-- No second admin and no demotion. A second tier needs a rule for what an admin may do to another
-  admin, and nothing has asked that question yet.
-- Still no confirmation dialog before a kick or a leave, in line with the rest of the app.
+- ~~No manual hand-over.~~ Closed in phase 13.
+- ~~No second admin, demotion or invite policy.~~ Closed in phase 42; ADR 0018 defines the hierarchy.
+- ~~No confirmation dialog before a kick or leave.~~ Closed in phase 30.
 
 ## Phase 7 — Security and consistency under concurrency — `done`
 
@@ -1229,17 +1227,13 @@ under-describes what works is the same class of lie as one that over-describes i
   down.
 - **A system line does not follow a later rename.** "An added Binh" is stored as text when it
   happens, so it keeps the names people had at the time. Deliberate — see
-  [ADR 0009](adr/0009-system-messages.md) — and recorded here so it is not "fixed" by accident. It is
-  also the one thing localisation would change.
+  [ADR 0009](adr/0009-system-messages.md) — and recorded here so it is not "fixed" by accident.
 - **Nothing prunes system lines,** and nobody can delete one by hand either — the phase 8 check
   constraint makes them immutable on purpose (ADR 0009). A group with a lot of churn accumulates them
   in its history the same way it accumulates messages.
-- **There is still no second admin and no demotion.** An owner can now hand the group to somebody
-  else (phase 13), which is the half that was missing; what remains is that the role is a single seat
-  rather than a set, so there is nobody to cover for an owner who has gone quiet without them acting
-  first. See [ADR 0008](adr/0008-group-owner-role.md).
-- **Any member can still add a stranger to a group.** Deliberate (inviting is how a group grows), and
-  the owner can undo it. Every add is now named in the log, which is what makes that acceptable.
+- ~~There is still no second admin/demotion or invite restriction.~~ Closed in phase 42: the owner
+  may appoint admins, admins operate on ordinary members but not one another, and the owner chooses
+  open or manager-only invitations. See [ADR 0018](adr/0018-group-admins-and-invite-policy.md).
 - **Blocking does not reach into a group.** Phase 32 added blocking for direct conversations; a group
   both people are in is deliberately untouched, which is the line WhatsApp, Messenger and Telegram
   draw. Combined with the item above, it means a member can add somebody you have blocked to a group
@@ -1551,7 +1545,6 @@ not adopted; the array is bounded instead. See phase 29, item 94.
 | # | Item | Status |
 | --- | --- | --- |
 | 77 | Accent-insensitive search: `hen gap` finds `hẹn gặp` | Done |
-| 78 | UI copy localisation | `planned` — only if the real audience needs it; it is a large item and English copy is a stated convention |
 
 ### A deferral that expired rather than being overturned
 
@@ -1594,9 +1587,9 @@ pins it so it is a decision rather than a surprise.
 | --- | --- | --- |
 | 79 | Refresh tokens: short-lived access, revocable sessions, a logout that means it | Done |
 | 80 | Conversation list pagination | **Done in phase 33** — see below for why it stayed open for twelve phases |
-| 81 | Object storage for uploads | `blocked` — needs the host chosen; ADRs 0004/0007 already isolate the swap to two modules |
-| 82 | Mail provider, verified domain, SPF/DKIM/DMARC | `blocked` — paperwork, not code |
-| 83 | Error tracking / observability provider | `blocked` — needs an account and a DSN, same class as item 82 |
+| 81 | Object storage for uploads | `planned` only at the scale boundary — local shared storage is the chosen single-host design; ADRs 0004/0007 isolate the later swap |
+| 82 | Mail provider, verified domain, SPF/DKIM/DMARC | `blocked` — requires the planned domain purchase, a free Resend account, DNS verification and SMTP credentials |
+| 83 | Error tracking / observability provider | `dropped` — a paid/external provider is not a prerequisite; replaced by provider-free metrics in item 126 |
 
 ### Item 79: sign out used to be a lie
 
@@ -2806,6 +2799,188 @@ The suite now runs in **1,304 seconds** — still one file at a time against one
 database (`vitest.config.ts`'s `fileParallelism: false`, a deliberate trade for fixture isolation, not
 touched here) — with every test passing.
 
+## Phase 39 — bandwidth follows attention — `done`
+
+This phase adapts the part of Messenger's published architecture that fits Chatty's actual scale. It
+does not copy infrastructure built for billions of accounts: the useful principle is snapshot plus
+deltas, media outside the message payload, and no byte sent before the reader needs it.
+
+| # | Item | Status |
+| --- | --- | --- |
+| 120 | Resize/encode image uploads on-device, without weakening server validation | Done |
+| 121 | Use 480px derivatives in the thread and compress large HTTP JSON responses | Done |
+| 122 | Record the scale path and the condition that justifies each next subsystem | Done — [ADR 0016](adr/0016-bandwidth-first-message-delivery.md) |
+
+### Item 120: not “keep 25%”, but keep only useful pixels
+
+A percentage has no stable meaning across a flat screenshot, a noisy night photo and an already
+compressed WebP. The browser now uses the same 1600px longest edge the server stores and tries WebP at
+quality 0.86, one image at a time. It keeps the result only when it is smaller and falls back to the
+original on any unsupported codec or decode failure. The optimistic bubble is inserted first, so this
+work delays bytes rather than feedback.
+
+The server still decodes and re-encodes the upload. That is not duplicate optimisation accidentally
+left behind: only the server pass can be trusted to enforce the pixel ceiling, remove EXIF/GPS data
+and ensure something served as an image really is one.
+
+### Item 121: a preview does not earn the original
+
+Phase 26 created 480px derivatives for the vault but the main message gallery still requested the
+1600px signed URL into a box at most 380×460. Threads and album cards now use the derivative, falling
+back for legacy rows; the viewer and save action keep the full image. JSON pages above 1KB negotiate
+Brotli/gzip/deflate at the Express boundary. Already compressed images are not transformed by that
+middleware.
+
+Socket compression is intentionally unchanged. Socket.IO disables `permessage-deflate` by default and
+warns about its CPU/memory overhead; the socket already sends individual deltas. ADR 0016 makes a load
+test, payload distribution and CPU/memory measurement the prerequisite rather than assuming fewer
+bytes always means a faster system.
+
+### Item 122: where Facebook's design becomes relevant
+
+Chatty already has the small-scale equivalents of the published Messenger ideas: WebSocket deltas,
+keyset snapshots, optimistic ids, bounded client history, Redis-backed cross-instance rooms, and
+media stored outside message rows. The missing distributed pieces are written as thresholds rather
+than theatre: object storage when instances stop sharing a host, a durable event cursor when reconnect
+gaps exceed the repair window/offline becomes a requirement, and a delivery queue when storage latency
+is measured on the critical path. Phase 40 chooses the free launch topology and states the remaining
+external conditions; phase 41 supplies the provider-free measurements for those thresholds.
+
+## Phase 40 — one product, with a zero-cost launch boundary — `done`
+
+The constraint is now explicit: the first public version may buy a domain, but it does not acquire a
+monthly infrastructure bill. “Borrow the best of social platforms” is also a selection rule rather
+than a feature pile: daily value, trust, network fit, zero-cost operation, bounded complexity and a
+recognisable Chatty interface decide what enters the roadmap.
+
+| # | Item | Status |
+| --- | --- | --- |
+| 123 | Product contract, platform-value map, UI rules and feature rubric | Done — [PRODUCT-DIRECTION.md](PRODUCT-DIRECTION.md) |
+| 124 | Put both API instances behind one free internal Caddy gateway | Done |
+| 125 | Add the optional Cloudflare Tunnel edge and choose the $0/month launch topology | Done in code — external launch conditions remain below |
+
+`docker-compose.prod.yml` now exposes only loopback ports and routes API traffic through Caddy. The
+Socket.IO client has used WebSocket-only transport since phase 11, so one upgraded connection stays
+on one upstream without a sticky cookie; Redis keeps rooms and rate limits coherent across both API
+processes. `docker-compose.tunnel.yml` joins that same network and publishes the web/API origins over
+an outbound-only connection after a tunnel token exists.
+
+The chosen host order is an existing always-on machine for private alpha, then Oracle Always Free for
+public alpha, with a paid VPS only after measured usage makes a recurring bill intentional. Uploads
+remain on the shared local volume until instances stop sharing a host or storage/recovery thresholds
+are crossed; Cloudflare R2's free allowance is the first candidate then, not a dependency now.
+
+### External conditions, stated precisely
+
+- **Public TLS/DNS is blocked** until a domain is bought, added to a free Cloudflare account and a
+  named tunnel token is created. The compose definition already exists.
+- **Production password-reset mail is blocked** until that domain is verified with a free Resend
+  account, SPF/DKIM/DMARC records are published, and `SMTP_URL`/`MAIL_FROM` are set.
+- **A public launch is blocked on recoverability** until an off-host backup destination and retention
+  are selected and the locally proven database/uploads restore drill is repeated against that
+  deployment. This need not add a bill, but code cannot decide which user-owned disk or free
+  object-store allowance holds the off-host copy.
+- **Object storage is not blocked.** It is unnecessary in the chosen topology and becomes work only
+  when API instances no longer share a host, the volume nears its budget, or restore time misses its
+  target.
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for commands, quotas, caveats and primary sources.
+
+## Phase 41 — measure without renting a dashboard — `done`
+
+| # | Item | Status |
+| --- | --- | --- |
+| 126 | Protected Prometheus-compatible application metrics without a SaaS dependency | Done |
+
+`GET /metrics` now exposes process health, bounded HTTP route groups/statuses, declared request bytes,
+message send latency and upload bytes, server image-normalisation time and input/output bytes, Prisma
+query latency by its finite model/action names, and per-process socket connection/setup state. A
+dedicated bearer token is at least 32 characters and mandatory in production; it is never accepted in
+the query string, and the response is `no-store`.
+
+No label contains a URL, conversation id, user id, handle or error message. This matters as much as
+the authentication: a series per user-controlled value would make the monitoring process consume
+memory in proportion to traffic and leak those values into operational data. Each API process owns
+its counters, so Prometheus should scrape `api-1:4000/metrics` and `api-2:4000/metrics` separately and
+aggregate them, rather than scrape through the balancing gateway and see a different half each time.
+
+This closes old item 83 without a Sentry account or DSN. Pino remains the structured error/event
+record; Prometheus calculates p50/p95/p99 from histograms, and Grafana OSS is optional rather than
+part of the hot path.
+
+## Phase 42 — become local-first and strengthen groups — `done`
+
+| # | Item | Status |
+| --- | --- | --- |
+| 127 | Durable IndexedDB snapshot and idempotent offline outbox | Done — [ADR 0017](adr/0017-durable-local-message-outbox.md) |
+| 128 | Second group admin, demotion rules and owner-selectable invite permissions | Done — [ADR 0018](adr/0018-group-admins-and-invite-policy.md) |
+| 129 | E2EE protocol and multi-device recovery decision | Done — MLS target and explicit browser-library/review gate in [ADR 0020](adr/0020-e2ee-readiness-boundary.md); the decision is not an E2EE claim |
+
+Item 127 carries over the useful part of Telegram/Messenger-like local behaviour without adding a
+service: recent sidebar/thread snapshots paint from IndexedDB, the current profile can restore only
+on a true network failure, and unsent text/images survive a reload. Each draft id is persisted on the
+server under a per-author partial unique index, so retries and two-tab races return one row and emit
+one event. Expiring signed media URLs are deliberately not persisted; offline snapshots retain their
+layout/metadata with an inert placeholder until HTTP supplies fresh URLs.
+
+Item 128 adds an optional admin tier without weakening the single-owner invariant. Owner/admin can
+rename and remove ordinary members; only the owner manages admins, ownership and the open versus
+manager-only invite policy. Owner departure prefers a trusted admin as successor. Every real change
+is transactional, logged in the conversation and broadcast in the shared DTO/event.
+
+Item 129 resolves the design without pretending an unsafe implementation is progress. MLS is the
+target; device verification, new-device history, encrypted media/recovery and the independent-review
+plan are explicit. The maintained Signal TypeScript bridge is Node-native, OpenMLS does not yet list
+WASM as a tested platform, and Matrix's browser crypto owns Matrix protocol state. Therefore Chatty
+ships no cryptographic dependency or E2EE badge until ADR 0020's browser-library gates are met.
+
+## Phase 43 — fast proof and recoverable operations — `done`
+
+| # | Item | Status |
+| --- | --- | --- |
+| 130 | Changed-file local verification with incremental/cached static checks | Done — [ADR 0019](adr/0019-two-speed-verification.md) |
+| 131 | Complete CI gate split into isolated database shards, web/static jobs and cached parallel image builds | Done |
+| 132 | Encrypted database/upload backup and guarded restore commands | Done — encrypted local backup/mutation/restore drill passed; off-host destination remains a deployment choice |
+
+The local gate now optimizes feedback rather than deleting coverage. `npm run verify` keeps full
+typechecking, cached lint/format and the audit, while Vitest selects tests related to uncommitted
+files. Global package/config/schema/migration/setup changes widen automatically. CI still runs every
+test; two PostgreSQL-backed shards halve the serial bottleneck without letting test files truncate
+one another's fixtures.
+
+`npm run backup:prod` snapshots PostgreSQL and uploads together, hashes both and encrypts the bundle
+to an age recipient before it leaves the host. Restore verifies those hashes, requires an explicit
+destructive confirmation, stops writers and restores PostgreSQL in one transaction. Source code can
+provide that mechanism. The local drill restored a four-user snapshot after a fifth user was written
+and caught a dump portability bug in `immutable_unaccent`; the wrapper is now schema-qualified so a
+restore's intentionally empty PostgreSQL search path is safe. The operator still has to choose an
+off-host path and retention, then repeat the proven drill on deployed infrastructure.
+
+## Phase 44 — realistic long-conversation demo data — `done`
+
+| # | Item | Status |
+| --- | --- | --- |
+| 133 | Reusable API-seeded accounts and long mixed-media conversations | Done — `npm run seed:demo` |
+
+The demo data is created through the same public HTTP routes as a real client. It therefore exercises
+authentication, the conversation transaction, idempotent message keys, image normalisation and
+thumbnails, voice transcoding, file storage, replies, mentions, links, pins and saved messages. The
+two long threads exceed both the UI's 50-message page and the API's 100-message maximum page, so a
+successful seed also proves that older-page cursors are needed and work. Fixed `clientId` values and
+conversation matching make reruns converge instead of multiplying messages.
+
+## Phase 45 — release governance and delivery — `done`
+
+| # | Item | Status |
+| --- | --- | --- |
+| 134 | Lockstep SemVer, changelog, immutable tags and gated GHCR/GitHub release delivery | Done — `v0.2.0-rc.1` |
+
+Normal pushes retain the parallel complete CI gate without paying for a browser installation. A version
+tag calls that same gate, adds real-browser E2E, then publishes version-addressed amd64/arm64 server and web
+images plus a GitHub Release. Deployment is intentionally not automatic: the public host, domain and
+off-host recovery destination are external operator choices, and a source tag must never guess where
+live user data belongs. See [release conventions](conventions/releases.md).
+
 ## Verification bar
 
 Nothing is "done" here until this passes, **and** an end-to-end run against the real API exercises the
@@ -2815,9 +2990,11 @@ actual behaviour — not just the types:
 npm run verify
 ```
 
-It chains typecheck → lint → format:check → test → audit, stops at the first failure, and fails on an
-audit hit. Run it on **Node 22 or newer**: on Node 20 the web suite does not fail a test, it fails to
-start, inside jsdom, with an error that looks nothing like a version problem.
+It chains cached whole-project typecheck/lint/format checks, changed-file tests and the audit, stopping
+at the first failure. `npm run verify:full` replaces changed-file selection with every server and web
+test. Use the full command for releases, security/auth, migrations and dependency changes; CI always
+runs its equivalent in parallel. Both need **Node 22 or newer**: on Node 20 the web suite does not fail
+a test, it fails to start inside jsdom with an error that looks nothing like a version problem.
 
 The second half of that sentence is not optional. Phase 2 shipped an avatar endpoint that returned
 500 for every request with all 75 server tests green — see CLAUDE.md, "Definition of done".

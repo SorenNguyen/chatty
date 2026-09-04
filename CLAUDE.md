@@ -6,10 +6,12 @@ Read this before writing any code. It is the entry point: the conventions block 
 | Where | What it covers |
 | --- | --- |
 | **[docs/ROADMAP.md](docs/ROADMAP.md)** | **What is done, what is next, and why in that order. Read this first when picking up the project.** |
+| [docs/PRODUCT-DIRECTION.md](docs/PRODUCT-DIRECTION.md) | Which social-product ideas fit Chatty, the free-first constraint, and how future features are selected |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the system fits together and why |
 | [docs/conventions/frontend.md](docs/conventions/frontend.md) | React / TypeScript rules for `apps/web` |
 | [docs/conventions/backend.md](docs/conventions/backend.md) | Node / Express / Prisma rules for `apps/server` |
 | [docs/conventions/git-and-workflow.md](docs/conventions/git-and-workflow.md) | Commits, why work goes straight to `main`, the pre-push checklist, agent boundaries |
+| [docs/conventions/releases.md](docs/conventions/releases.md) | SemVer, lockstep workspace versions, tags, release gates and artifacts |
 | [docs/adr/](docs/adr/) | Why each major technical decision was made |
 
 ---
@@ -104,14 +106,17 @@ old wording before saying you are done.** When unsure, ask rather than guess.
 
 # Definition of done
 
-Before saying a piece of work is finished, run **one command**:
+Before saying a piece of work is finished, run the fast local gate:
 
 ```bash
-npm run verify     # typecheck → lint → format:check → test → audit (as a gate)
+npm run verify     # cached typecheck/lint/format → tests related to changes → audit
 ```
 
-It needs **Node 22+** (`engines` says so). On Node 20 the web suite does not fail a test, it fails to
-start, with an error from inside undici that looks nothing like a version problem.
+It needs **Node 22+** (`engines` says so). The full suite is `npm run verify:full`; run it for a
+release, security/auth work, migrations, dependency upgrades, or whenever changed-file selection is
+in doubt. Package/config/schema/global-setup changes automatically widen the relevant quick suite.
+CI always runs every test in parallel shards, so fast local feedback never becomes reduced coverage
+at the acceptance boundary. See ADR 0019.
 
 Two things `verify` does **not** do, and you are responsible for both:
 
@@ -150,6 +155,7 @@ hand. A 0-hit audit is evidence, not proof.
 # Workflow
 
 - **Never commit or push unprompted.** Wait for an explicit instruction in the same turn.
-- The agent **may** run `verify` and any part of it on its own — cheap, and catches breakage before handover.
+- The agent **may** run `verify` and any part of it on its own. Use `verify:full` only at the risk
+  boundaries above instead of paying its cost after every local edit.
 - Report failures with the actual output. Never describe unverified code as working.
 - When the code is done, say so and let the user decide the next step.

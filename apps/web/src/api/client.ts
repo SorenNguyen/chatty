@@ -30,6 +30,8 @@ import type {
 	ResetPasswordRequest,
 	StickerDTO,
 	SavedMessagePageDTO,
+	SetGroupInvitePolicyRequest,
+	SetParticipantRoleRequest,
 	ConversationVaultSummaryDTO,
 	ToggleReactionRequest,
 	TransferOwnershipRequest,
@@ -44,6 +46,14 @@ import type {
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 const TOKEN_STORAGE_KEY = "chatty:token";
 const SESSION_EXPIRED_KEY = "chatty:session-expired";
+
+/** A request that never reached an HTTP response, so the local session is still valid. */
+export class NetworkUnavailableError extends Error {
+	constructor(message = "The network is unavailable") {
+		super(message);
+		this.name = "NetworkUnavailableError";
+	}
+}
 
 export function getStoredToken(): string | null {
 	return localStorage.getItem(TOKEN_STORAGE_KEY);
@@ -181,19 +191,26 @@ async function request<T>(path: string, options: RequestInit = {}, hasRetried = 
 	// multipart boundary the browser generated. Declaring JSON over the top of it
 	// makes the body unparseable on the server.
 	const isFormData = options.body instanceof FormData;
-	const response = await fetch(`${API_URL}${path}`, {
-		...options,
-		// The refresh-token cookie is `path: "/auth"` and `HttpOnly`, so this is
-		// what lets the browser attach it on `/auth/refresh` and `/auth/logout`
-		// and store the one a login or a refresh sends back — every other request
-		// simply has no matching cookie to send.
-		credentials: "include",
-		headers: {
-			...(isFormData ? {} : { "Content-Type": "application/json" }),
-			...(token ? { Authorization: `Bearer ${token}` } : {}),
-			...options.headers,
-		},
-	});
+	let response: Response;
+	try {
+		response = await fetch(`${API_URL}${path}`, {
+			...options,
+			// The refresh-token cookie is `path: "/auth"` and `HttpOnly`, so this is
+			// what lets the browser attach it on `/auth/refresh` and `/auth/logout`
+			// and store the one a login or a refresh sends back — every other request
+			// simply has no matching cookie to send.
+			credentials: "include",
+			headers: {
+				...(isFormData ? {} : { "Content-Type": "application/json" }),
+				...(token ? { Authorization: `Bearer ${token}` } : {}),
+				...options.headers,
+			},
+		});
+	} catch {
+		// No status means there was no server answer. Keeping this distinct from a
+		// 401 lets startup use a local snapshot without accepting an invalid token.
+		throw new NetworkUnavailableError();
+	}
 
 	if (!response.ok) {
 		const method = options.method ?? "GET";
@@ -260,7 +277,7 @@ function uploadMessage(
 			const errorBody = JSON.parse(upload.responseText || "{}") as { message?: string };
 			reject(new Error(errorBody.message ?? `Request to ${path} failed with ${upload.status}`));
 		});
-		upload.addEventListener("error", () => reject(new Error(interruptedMessage)));
+		upload.addEventListener("error", () => reject(new NetworkUnavailableError(interruptedMessage)));
 		upload.send(body);
 	});
 }
@@ -565,7 +582,9 @@ export const api = {
 				const errorBody = JSON.parse(upload.responseText || "{}") as { message?: string };
 				reject(new Error(errorBody.message ?? `Request to ${path} failed with ${upload.status}`));
 			});
-			upload.addEventListener("error", () => reject(new Error("The image upload was interrupted")));
+			upload.addEventListener("error", () =>
+				reject(new NetworkUnavailableError("The image upload was interrupted")),
+			);
 			upload.send(body);
 		});
 	},
@@ -787,6 +806,31 @@ export const api = {
 		const body: TransferOwnershipRequest = { userId };
 
 		return request<ConversationDTO>(`/conversations/${conversationId}/owner`, {
+			method: "PUT",
+			body: JSON.stringify(body),
+		});
+	},
+
+	setParticipantRole(
+		conversationId: string,
+		userId: string,
+		role: SetParticipantRoleRequest["role"],
+	): Promise<ConversationDTO> {
+		const body: SetParticipantRoleRequest = { role };
+
+		return request<ConversationDTO>(`/conversations/${conversationId}/members/${userId}/role`, {
+			method: "PUT",
+			body: JSON.stringify(body),
+		});
+	},
+
+	setGroupInvitePolicy(
+		conversationId: string,
+		invitePolicy: SetGroupInvitePolicyRequest["invitePolicy"],
+	): Promise<ConversationDTO> {
+		const body: SetGroupInvitePolicyRequest = { invitePolicy };
+
+		return request<ConversationDTO>(`/conversations/${conversationId}/invite-policy`, {
 			method: "PUT",
 			body: JSON.stringify(body),
 		});

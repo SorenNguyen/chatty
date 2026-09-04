@@ -27,9 +27,23 @@ export default defineConfig({
 			// cannot accidentally reach a network — an `smtp` value here would mean
 			// a mistake in a test opens a socket to whatever the URL pointed at.
 			MAIL_TRANSPORT: "console",
+			METRICS_TOKEN: "test-metrics-token-at-least-32-characters",
 		},
 		globalSetup: ["./tests/global-setup.ts"],
 		setupFiles: ["./tests/setup.ts"],
+		// Changed-file mode follows static imports. These files shape every test
+		// without necessarily appearing in that graph, so touching one deliberately
+		// escalates the fast local check to the complete server suite.
+		forceRerunTriggers: [
+			"**/package-lock.json",
+			"**/package.json",
+			"**/tsconfig*.json",
+			"**/vitest.config.*",
+			"**/prisma/schema.prisma",
+			"**/prisma/migrations/**",
+			"**/tests/global-setup.ts",
+			"**/tests/setup.ts",
+		],
 		// One shared database: parallel test files would truncate each other's
 		// fixtures mid-run. Tests within a file still run in order.
 		fileParallelism: false,

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { MessageContextDTO, MessageDTO, MessageEditDTO, PinnedMessageDTO } from "@chatty/shared-types";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import {
 	deleteAttachment,
 	findAttachmentPath,
@@ -48,7 +48,7 @@ export interface SendMessageArgs {
 	replyToId?: string | undefined;
 	forwardOfMessageId?: string | undefined;
 	mentionedUserIds?: string[] | undefined;
-	/** Echoed to the room so the sender recognises its own optimistic copy. */
+	/** Stored as this sender's idempotency key and echoed for optimistic reconciliation. */
 	clientId?: string | undefined;
 }
 
@@ -82,6 +82,23 @@ export async function sendMessage(
 	// authority when a block commits concurrently.
 	if (await isDirectConversationBlocked(currentUserId, conversationId)) {
 		throw new ForbiddenError("This conversation is unavailable");
+	}
+
+	// Most retries never reach media processing. A response can disappear after
+	// the database commit, so the same device id must retrieve that committed row
+	// rather than decode/write an attachment and attempt another INSERT.
+	if (input.clientId) {
+		const previous = await prisma.message.findFirst({
+			where: { authorId: currentUserId, clientId: input.clientId },
+			select: messageSelect,
+		});
+		if (previous) {
+			if (previous.conversationId !== conversationId) {
+				throw new ValidationError("A message id cannot be reused in another conversation");
+			}
+
+			return { ...toMessageDTO(previous), clientId: input.clientId };
+		}
 	}
 	let content = input.content;
 	let forwardedSource:
@@ -253,97 +270,159 @@ export async function sendMessage(
 		}
 	}
 
-	const message = await prisma.$transaction(async (transaction) => {
-		// Membership changes take the same conversation lock. Re-checking after it
-		// means a send racing with a kick has one honest order: it either commits
-		// before the removal, or observes the removal and is refused afterwards.
-		await transaction.$queryRaw`
+	let result: { message: MessageRow; isReplay: boolean };
+	try {
+		result = await prisma.$transaction(async (transaction) => {
+			// Membership changes take the same conversation lock. Re-checking after it
+			// means a send racing with a kick has one honest order: it either commits
+			// before the removal, or observes the removal and is refused afterwards.
+			await transaction.$queryRaw`
 			SELECT id
 			FROM "Conversation"
 			WHERE id = ${conversationId}
 			FOR UPDATE
 		`;
 
-		await assertParticipant(currentUserId, conversationId, transaction);
+			await assertParticipant(currentUserId, conversationId, transaction);
 
-		// The half of the reply rule no foreign key can express. Scoping the lookup
-		// by `conversationId` rather than fetching the message and comparing is
-		// deliberate: it cannot be got wrong by a later edit, and it never reveals
-		// that an id exists somewhere the sender cannot see — a miss is a miss
-		// whether the message is in another conversation or in none.
-		//
-		// Inside the transaction, after the membership re-check, so a reply racing
-		// with a kick is refused on the same honest ordering the send itself is.
-		if (input.replyToId) {
-			const parent = await transaction.message.findFirst({
-				where: { id: input.replyToId, conversationId },
+			// The conversation lock serialises two tabs replaying the same send in the
+			// same thread. This second lookup closes the race after the cheap lookup
+			// above while keeping expensive image work outside the transaction.
+			if (input.clientId) {
+				const previous = await transaction.message.findFirst({
+					where: { authorId: currentUserId, clientId: input.clientId },
+					select: messageSelect,
+				});
+				if (previous) {
+					if (previous.conversationId !== conversationId) {
+						throw new ValidationError("A message id cannot be reused in another conversation");
+					}
+
+					return { message: previous, isReplay: true };
+				}
+			}
+
+			// The half of the reply rule no foreign key can express. Scoping the lookup
+			// by `conversationId` rather than fetching the message and comparing is
+			// deliberate: it cannot be got wrong by a later edit, and it never reveals
+			// that an id exists somewhere the sender cannot see — a miss is a miss
+			// whether the message is in another conversation or in none.
+			//
+			// Inside the transaction, after the membership re-check, so a reply racing
+			// with a kick is refused on the same honest ordering the send itself is.
+			if (input.replyToId) {
+				const parent = await transaction.message.findFirst({
+					where: { id: input.replyToId, conversationId },
+					select: { id: true },
+				});
+				if (!parent) throw new ValidationError("You can only reply to a message in this conversation");
+			}
+
+			const conversation = await transaction.conversation.findUniqueOrThrow({
+				where: { id: conversationId },
+				select: { isGroup: true, participants: { select: { userId: true } } },
+			});
+			const participantIds = new Set(conversation.participants.map((participant) => participant.userId));
+
+			// The check that actually enforces blocking. Refusing to *create* a direct
+			// conversation is not enough on its own: two people who have been talking
+			// for months already have one, so a block that only guarded creation would
+			// stop nothing. Inside the transaction, after the lock, for the same reason
+			// the membership re-check is — a send racing a block gets one honest order.
+			//
+			// Groups are exempt on purpose; see `blocks.service`.
+			if (!conversation.isGroup) {
+				const otherId = [...participantIds].find((id) => id !== currentUserId);
+				if (otherId) await assertDirectContactAvailable(currentUserId, otherId, transaction);
+			}
+
+			const mentionedUserIds = [...new Set(input.mentionedUserIds ?? [])];
+			if (mentionedUserIds.length > 0 && !conversation.isGroup) {
+				throw new ValidationError("Mentions are only available in group conversations");
+			}
+			if (mentionedUserIds.some((userId) => !participantIds.has(userId))) {
+				throw new ValidationError("You can only mention conversation participants");
+			}
+
+			const links = extractLinks(content);
+			const created = await transaction.message.create({
+				data: {
+					conversationId,
+					authorId: currentUserId,
+					...(input.clientId ? { clientId: input.clientId } : {}),
+					content,
+					...(input.replyToId ? { replyToId: input.replyToId } : {}),
+					...(input.stickerId || forwardedSource?.isSticker ? { isSticker: true } : {}),
+					...(input.forwardOfMessageId ? { isForwarded: true } : {}),
+					...(storedAttachments.length > 0
+						? { attachments: { createMany: { data: storedAttachments } } }
+						: {}),
+					...(links.length > 0
+						? {
+								links: {
+									createMany: {
+										data: links.map((url, position) => ({ conversationId, url, position })),
+									},
+								},
+							}
+						: {}),
+					...(mentionedUserIds.length > 0
+						? { mentions: { createMany: { data: mentionedUserIds.map((userId) => ({ userId })) } } }
+						: {}),
+				},
+				select: messageSelect,
+			});
+
+			// A conversation whose updatedAt disagrees with its newest message sorts
+			// wrongly in the conversation list forever after.
+			await transaction.conversation.update({
+				where: { id: conversationId },
+				data: { updatedAt: new Date() },
 				select: { id: true },
 			});
-			if (!parent) throw new ValidationError("You can only reply to a message in this conversation");
-		}
 
-		const conversation = await transaction.conversation.findUniqueOrThrow({
-			where: { id: conversationId },
-			select: { isGroup: true, participants: { select: { userId: true } } },
+			return { message: created, isReplay: false };
 		});
-		const participantIds = new Set(conversation.participants.map((participant) => participant.userId));
-
-		// The check that actually enforces blocking. Refusing to *create* a direct
-		// conversation is not enough on its own: two people who have been talking
-		// for months already have one, so a block that only guarded creation would
-		// stop nothing. Inside the transaction, after the lock, for the same reason
-		// the membership re-check is — a send racing a block gets one honest order.
-		//
-		// Groups are exempt on purpose; see `blocks.service`.
-		if (!conversation.isGroup) {
-			const otherId = [...participantIds].find((id) => id !== currentUserId);
-			if (otherId) await assertDirectContactAvailable(currentUserId, otherId, transaction);
+	} catch (error) {
+		// Different conversations use different row locks. The database's partial
+		// unique index is the final authority if two such requests race with one
+		// client id; recover the winner instead of surfacing a false failure.
+		if (input.clientId && error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+			const previous = await prisma.message.findFirst({
+				where: { authorId: currentUserId, clientId: input.clientId },
+				select: messageSelect,
+			});
+			if (previous) {
+				if (previous.conversationId !== conversationId) {
+					throw new ValidationError("A message id cannot be reused in another conversation");
+				}
+				result = { message: previous, isReplay: true };
+			} else {
+				throw error;
+			}
+		} else {
+			throw error;
 		}
+	}
 
-		const mentionedUserIds = [...new Set(input.mentionedUserIds ?? [])];
-		if (mentionedUserIds.length > 0 && !conversation.isGroup) {
-			throw new ValidationError("Mentions are only available in group conversations");
-		}
-		if (mentionedUserIds.some((userId) => !participantIds.has(userId))) {
-			throw new ValidationError("You can only mention conversation participants");
-		}
+	if (result.isReplay) {
+		// A concurrent request may have passed the first lookup and prepared files
+		// before the locked lookup found the winner. They have no rows and are safe
+		// to remove immediately instead of waiting for the orphan sweeper.
+		await Promise.all(
+			storedAttachments.map((attachment) =>
+				deleteAttachment(attachment.id).catch((error: unknown) => {
+					logger.error({ err: error, attachmentId: attachment.id }, "failed to clean up a replayed upload");
+				}),
+			),
+		);
 
-		const links = extractLinks(content);
-		const created = await transaction.message.create({
-			data: {
-				conversationId,
-				authorId: currentUserId,
-				content,
-				...(input.replyToId ? { replyToId: input.replyToId } : {}),
-				...(input.stickerId || forwardedSource?.isSticker ? { isSticker: true } : {}),
-				...(input.forwardOfMessageId ? { isForwarded: true } : {}),
-				...(storedAttachments.length > 0 ? { attachments: { createMany: { data: storedAttachments } } } : {}),
-				...(links.length > 0
-					? {
-							links: {
-								createMany: { data: links.map((url, position) => ({ conversationId, url, position })) },
-							},
-						}
-					: {}),
-				...(mentionedUserIds.length > 0
-					? { mentions: { createMany: { data: mentionedUserIds.map((userId) => ({ userId })) } } }
-					: {}),
-			},
-			select: messageSelect,
-		});
+		return input.clientId
+			? { ...toMessageDTO(result.message), clientId: input.clientId }
+			: toMessageDTO(result.message);
+	}
 
-		// A conversation whose updatedAt disagrees with its newest message sorts
-		// wrongly in the conversation list forever after.
-		await transaction.conversation.update({
-			where: { id: conversationId },
-			data: { updatedAt: new Date() },
-			select: { id: true },
-		});
-
-		return created;
-	});
-
-	const messageDTO = toMessageDTO(message);
+	const messageDTO = toMessageDTO(result.message);
 	// Carried on the broadcast, not just the response, and that is the whole
 	// point of it. The sender has drawn this message optimistically since phase
 	// 19, so it needs to recognise its own draft in an event that otherwise

@@ -34,6 +34,7 @@ const mailEnvSchema = z
 			.refine((value) => /^smtps?:\/\//.test(value), { message: "SMTP_URL must start with smtp:// or smtps://" })
 			.optional(),
 		MAIL_FROM: z.string().email().optional(),
+		METRICS_TOKEN: z.string().min(32).optional(),
 	})
 	.superRefine((value, context) => {
 		if (value.MAIL_TRANSPORT === "smtp") {
@@ -55,6 +56,14 @@ const mailEnvSchema = z
 				message:
 					"In production, set REDIS_URL so instances share rate limits and socket rooms — " +
 					'or set SINGLE_INSTANCE="true" to state that this deployment is one process.',
+			});
+		}
+
+		if (value.NODE_ENV === "production" && !value.METRICS_TOKEN) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["METRICS_TOKEN"],
+				message: "METRICS_TOKEN is required in production so operational data is not public",
 			});
 		}
 
@@ -129,7 +138,12 @@ describe("mail configuration", () => {
 });
 
 /** Everything below is `MAIL_TRANSPORT=smtp` plus its settings, kept out of the way. */
-const PRODUCTION = { NODE_ENV: "production", MAIL_TRANSPORT: "smtp", ...SMTP } as const;
+const PRODUCTION = {
+	NODE_ENV: "production",
+	MAIL_TRANSPORT: "smtp",
+	METRICS_TOKEN: "production-metrics-token-at-least-32-characters",
+	...SMTP,
+} as const;
 
 describe("shared-state configuration", () => {
 	it("refuses production with neither Redis nor a declaration", () => {
@@ -159,6 +173,28 @@ describe("shared-state configuration", () => {
 
 	it("leaves development alone", () => {
 		// `npm run dev:server` must not need a Redis container.
+		expect(() => mailEnvSchema.parse({ NODE_ENV: "development", MAIL_TRANSPORT: "console" })).not.toThrow();
+	});
+});
+
+describe("metrics configuration", () => {
+	it("refuses production without a metrics token", () => {
+		expect(() =>
+			mailEnvSchema.parse({ ...PRODUCTION, REDIS_URL: "redis://redis:6379", METRICS_TOKEN: undefined }),
+		).toThrow(/METRICS_TOKEN/);
+	});
+
+	it("refuses a weak metrics token", () => {
+		expect(() =>
+			mailEnvSchema.parse({
+				...PRODUCTION,
+				REDIS_URL: "redis://redis:6379",
+				METRICS_TOKEN: "too-short",
+			}),
+		).toThrow(/32/);
+	});
+
+	it("keeps the metrics endpoint optional outside production", () => {
 		expect(() => mailEnvSchema.parse({ NODE_ENV: "development", MAIL_TRANSPORT: "console" })).not.toThrow();
 	});
 });

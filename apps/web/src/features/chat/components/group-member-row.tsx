@@ -1,16 +1,19 @@
 import type { ParticipantDTO } from "@chatty/shared-types";
-import { Crown, UserMinus } from "lucide-react";
+import { Crown, ShieldMinus, ShieldPlus, UserMinus } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { Button } from "@/components/button";
 
 interface GroupMemberRowProps {
 	participant: ParticipantDTO;
 	isSelf: boolean;
-	/** Whether the *viewer* owns the group — the two management buttons hang off it. */
-	canManage: boolean;
+	canTransferOwnership: boolean;
+	canChangeAdmin: boolean;
+	canRemove: boolean;
 	isPromoting: boolean;
+	isChangingRole: boolean;
 	isRemoving: boolean;
 	onMakeOwner: () => void;
+	onToggleAdmin: () => void;
 	onRemove: () => void;
 }
 
@@ -24,10 +27,14 @@ interface GroupMemberRowProps {
 export function GroupMemberRow({
 	participant,
 	isSelf,
-	canManage,
+	canTransferOwnership,
+	canChangeAdmin,
+	canRemove,
 	isPromoting,
+	isChangingRole,
 	isRemoving,
 	onMakeOwner,
+	onToggleAdmin,
 	onRemove,
 }: GroupMemberRowProps) {
 	return (
@@ -44,6 +51,11 @@ export function GroupMemberRow({
 							Owner
 						</span>
 					)}
+					{participant.role === "admin" && (
+						<span className="eyebrow ml-2 rounded-badge border border-rule px-1.5 py-0.5 text-ink-faint">
+							Admin
+						</span>
+					)}
 				</span>
 				<span className="meta w-full truncate text-ink-faint">@{participant.handle}</span>
 			</span>
@@ -51,29 +63,48 @@ export function GroupMemberRow({
 			{/* No remove button on your own row — leaving has its own clearly-labelled
 			    action below the list, so a small × next to your own name cannot be
 			    clicked by accident. */}
-			{!isSelf && canManage && (
+			{!isSelf && (canTransferOwnership || canChangeAdmin || canRemove) && (
 				<>
 					{/* Handing the group over costs the person pressing it their own
 					    role, so it is spelled out in the label rather than left to the
 					    crown to imply. */}
-					<Button
-						variant="ghost"
-						onClick={onMakeOwner}
-						disabled={isPromoting}
-						aria-label={`Make ${participant.displayName} the group owner`}
-						className="size-8 p-0"
-					>
-						<Crown className="size-4" />
-					</Button>
-					<Button
-						variant="ghost"
-						onClick={onRemove}
-						disabled={isRemoving}
-						aria-label={`Remove ${participant.displayName} from the group`}
-						className="size-8 p-0"
-					>
-						<UserMinus className="size-4" />
-					</Button>
+					{canTransferOwnership && (
+						<Button
+							variant="ghost"
+							onClick={onMakeOwner}
+							disabled={isPromoting}
+							aria-label={`Make ${participant.displayName} the group owner`}
+							className="size-8 p-0"
+						>
+							<Crown className="size-4" />
+						</Button>
+					)}
+					{canChangeAdmin && (
+						<Button
+							variant="ghost"
+							onClick={onToggleAdmin}
+							disabled={isChangingRole}
+							aria-label={`${participant.role === "admin" ? "Remove" : "Make"} ${participant.displayName} ${participant.role === "admin" ? "from the admins" : "an admin"}`}
+							className="size-8 p-0"
+						>
+							{participant.role === "admin" ? (
+								<ShieldMinus className="size-4" />
+							) : (
+								<ShieldPlus className="size-4" />
+							)}
+						</Button>
+					)}
+					{canRemove && (
+						<Button
+							variant="ghost"
+							onClick={onRemove}
+							disabled={isRemoving}
+							aria-label={`Remove ${participant.displayName} from the group`}
+							className="size-8 p-0"
+						>
+							<UserMinus className="size-4" />
+						</Button>
+					)}
 				</>
 			)}
 		</li>

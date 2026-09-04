@@ -1,4 +1,5 @@
 export { getAttachmentPreviewText } from "./attachment-preview-text";
+export { getAttachmentPreviewUrl } from "./attachment-preview-url";
 export { getAttachmentDisplaySize } from "./attachment-size";
 export { getClusterPosition } from "./cluster-position";
 export { getConversationPreview } from "./conversation-preview";
@@ -11,6 +12,7 @@ export { formatMessageTime } from "./format-time";
 export { formatRemaining } from "./format-remaining";
 export { formatLastSeen } from "./format-last-seen";
 export { mergeReloadedMessages } from "./merge-messages";
+export { optimizeImagesForUpload } from "./optimize-image-upload";
 export { hasMessageTimeGap, isWithinMessageBurst } from "./message-spacing";
 export { buildDraftMessage, getNewestStoredMessage, isDraftId } from "./build-draft-message";
 export { toDraftAttachments } from "./draft-attachment";

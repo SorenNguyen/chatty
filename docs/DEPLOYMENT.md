@@ -1,126 +1,206 @@
 # Deployment
 
-What it costs to run this, which host was chosen and why, and the short list of things that cannot be
-done from a keyboard here.
+The launch constraint is a product decision: **no recurring infrastructure bill while Chatty is
+small**. The only planned purchase is a domain. A paid service may replace a free component later,
+but only after a measured limit is crossed; it is never a prerequisite chosen for convenience.
 
-**Nothing in this file is deployed yet.** It exists so the pricing research is not done twice, and so
-the work that *is* blocked is separated from the work that only looked blocked.
+**Nothing is deployed yet.** The repository now contains the production topology, but the external
+accounts, domain and backup destination cannot be created from source code.
 
 ---
 
-## The one thing that is actually blocked
+## Chosen topology
 
-Everything else in the deployment path is configuration and code. These are purchases:
+```text
+browser
+   |
+   | HTTPS / WebSocket
+   v
+Cloudflare edge + named Tunnel             $0
+   | outbound-only connection
+   +---- app.<domain> -> web (nginx)
+   `---- api.<domain> -> Caddy -> api-1 / api-2
+                                  |       |
+                                  +-- PostgreSQL
+                                  +-- Redis
+                                  `-- shared upload volume
+                                      one host
+```
 
-| # | What to buy | Roughly | Needed for |
+Everything below the tunnel runs in `docker-compose.prod.yml` on one machine. Caddy is an internal
+load balancer; the two API processes share Socket.IO rooms and rate limits through Redis, and share
+the upload volume because they are on the same host. `docker-compose.tunnel.yml` adds the public edge
+only after a domain and tunnel token exist.
+
+The default host order is:
+
+1. **An existing always-on computer** for a private alpha. This has no vendor bill, though electricity,
+   hardware wear and the owner's time are real costs.
+2. **Oracle Cloud Always Free** for a public alpha. Oracle currently includes up to two AMD micro VMs
+   and an Ampere A1 allowance equivalent to 2 OCPUs and 12 GB RAM for a free tenancy. Signup normally
+   requires a phone and card, capacity can be unavailable in the chosen home region, and free limits
+   can change.
+3. A paid VPS only after both options are unsuitable and real usage justifies recurring spend.
+
+Fly.io and a collection of separate managed Postgres/Redis services are deliberately not the default.
+They add a monthly bill or several independent free-tier ceilings while the existing single-host
+stack already has the right consistency boundary.
+
+### Why Cloudflare Tunnel
+
+A named tunnel is available on Cloudflare plans and connects outward from the host, so the host needs
+no public IP and opens no inbound port. Cloudflare also provides Universal SSL for domains on its DNS.
+The domain is required to publish stable application hostnames; a random Quick Tunnel is development
+only and has no availability promise.
+
+This topology does not make Cloudflare a media store. The current 10/16/25 MB upload limits are small,
+but Cloudflare's current service terms restrict serving video and other large files through proxied
+hostnames on Free/Pro/Business plans. Re-check those terms before increasing the limits. Cloudflare R2
+is the first object-store candidate if media outgrows the host because its Standard tier currently
+includes 10 GB-month storage, 1 million Class A operations, 10 million Class B operations and free
+Internet egress each month. It is a ceiling, not a promise that storage will always cost zero.
+
+---
+
+## What is free, and what is blocked
+
+| Part | Initial choice | Cost | State / condition |
 | --- | --- | --- | --- |
-| 1 | **A domain** | $10–15/year | TLS on a real hostname, and — the reason it is not optional — SPF, DKIM and DMARC records. Mail from a domain without them is accepted by the provider and filed as spam by the recipient, which looks exactly like mail that never sent. |
-| 2 | **A host** | $0–5/month | See the two options below. |
-| 3 | **An SMTP account** | free | Volume here is a handful of password resets. Every provider's free tier covers it. |
+| Compute | Existing machine, then Oracle Always Free | $0 vendor bill | External account/capacity is needed for Oracle; an existing machine can run now |
+| PostgreSQL, Redis, web, gateway | Official container images on the same host | $0 | Implemented in `docker-compose.prod.yml` |
+| TLS, DNS, public ingress | Cloudflare DNS + named Tunnel | $0 service cost | **Blocked until a domain is bought**, added to Cloudflare, and a tunnel token is created |
+| Transactional mail | Resend Free over the existing SMTP transport | $0 within 3,000 emails/month and 100/day | **Blocked until the domain exists**, is verified, and SPF/DKIM/DMARC plus SMTP credentials are configured |
+| Upload storage | Shared local volume | $0 | Ready for one host; object storage is deliberately deferred |
+| Logs | Existing structured Pino logs + bounded Docker log rotation | $0 | Implemented in the production Compose files |
+| Metrics | Protected Prometheus-compatible app metrics, then Grafana OSS if a dashboard is useful | $0 | Implemented; scrape both API containers separately with the bearer token |
+| Backups | Age-encrypted database/upload bundle to a user-owned disk or free object-store allowance | $0 initially | Tooling and local mutation/restore drill complete; choose the off-host destination/retention and repeat the drill there before public launch |
 
-That is the whole list. A domain is the only unavoidable cost.
+Resend is chosen because it speaks SMTP, so no provider SDK enters the application, and its free plan
+currently covers 3,000 transactional emails per month with a 100/day limit. A verified domain is still
+required. The provider can be replaced by changing `SMTP_URL` and `MAIL_FROM`, not application code.
 
-### One requirement the host must meet
+“$0” here means no recurring vendor invoice inside the published allowance. It does not mean infinite
+capacity, free electricity, free backups, or zero maintenance. Every external free tier gets a usage
+alert and a hard budget/limit where the provider supports it; Chatty does not silently cross into paid
+overage.
 
-The database must allow `CREATE EXTENSION unaccent`. It is a standard contrib module — it ships
-inside the official `postgres` image these compose files run, and every managed Postgres worth
-deploying to has it on the allow-list — but it is the one thing this app needs from a database
-beyond plain SQL, so it is written down here rather than met by luck.
+### Encrypted backup and restore
 
-Without it the phase 20 migration fails at deploy time and the app does not start, which is the
-correct failure: a search that silently stopped matching `hen gap` against `hẹn gặp` would be found
-by a user rather than by the deployment.
+Install the free `age` command and create an offline identity once. Keep the identity somewhere other
+than the application host; only its public recipient belongs in the backup job:
 
----
+```bash
+age-keygen -o /secure/chatty-backup-identity.txt
+age-keygen -y /secure/chatty-backup-identity.txt
+```
 
-## What it costs
+Point the command at a mounted external disk or synchronized off-host directory and choose retention:
 
-Checked August 2026. Prices move; re-check before committing.
+```bash
+export CHATTY_BACKUP_DIR=/mnt/off-host/chatty
+export CHATTY_BACKUP_RECIPIENT=age1...
+export CHATTY_BACKUP_RETENTION_DAYS=30
+npm run backup:prod
+```
 
-### Fly.io — **not free**
+The command briefly stops application writers so the PostgreSQL dump and upload volume describe the
+same point in time, then records SHA-256 hashes and encrypts the bundle before its atomic final rename.
+Schedule that command with the host's cron/systemd timer. A restore is deliberately harder to invoke:
 
-The free tier ended on 7 October 2024. New signups get a two-hour trial. The floor is the **Hobby
-plan at $5/month**, which includes $5 of usage credit.
+```bash
+export CHATTY_BACKUP_IDENTITY=/secure/chatty-backup-identity.txt
+export CHATTY_RESTORE_CONFIRM=replace-chatty-data
+npm run restore:prod -- /mnt/off-host/chatty/chatty-YYYYMMDDTHHMMSSZ.tar.gz.age
+```
 
-| Line | Cost |
-| --- | --- |
-| API machine (shared-cpu-1x, 256 MB, always on) | ~$1.94/mo |
-| Web machine (static nginx, same size) | ~$1.94/mo |
-| Compute total | ~$4/mo — inside the $5 credit |
-| Postgres | extra on Fly; free on Neon (0.5 GB, 100 CU-hours/mo) |
-| Redis | extra on Fly; free on Upstash (500 K commands/mo, 256 MB) |
-| **Realistic total** | **~$5/month** |
+Restore verifies both hashes before stopping application writers, restores PostgreSQL in a single
+transaction, replaces uploads and brings the services back. If mutation starts and a later step fails,
+writers remain stopped for inspection instead of serving a half-restored snapshot. First run it on a
+disposable deployment; the public launch gate closes only after that drill proves the chosen destination
+can actually be read.
 
-Watch the Upstash ceiling if that route is taken: the Socket.io Redis adapter publishes on every
-broadcast, so 500 K commands a month is roughly 16 K a day shared between rate limiting and every
-message fan-out. Fine for a handful of users, not a number to forget about.
-
-### A VPS — **free, and it uses what is already built**
-
-Oracle Cloud Always Free is still free with no expiry, but was **halved on 15 June 2026** from 4
-OCPU / 24 GB to **2 OCPU / 12 GB** on ARM. Still far more than this app needs.
-
-The point in its favour is not the price. On a VPS, `docker-compose.prod.yml` — which already
-declares two API instances, Postgres and Redis — runs as written, with Caddy in front for automatic
-TLS. Nothing new to buy, nothing new to learn, and **the object-storage problem below disappears**.
-
-The costs are real and are paid in attention: Postgres backups are yours to arrange and to *test*,
-OS patching is yours, and Oracle's ARM capacity is genuinely hard to get in some regions — Singapore
-in particular — with reports of idle instances being reclaimed.
-
-### Truly $0, and what it costs you
-
-A `*.fly.dev` hostname or a bare IP behind Cloudflare avoids the domain purchase. Mail is then
-crippled: SPF/DKIM/DMARC need DNS records on a domain you control, so sending falls back to the
-provider's sandbox domain, which usually only delivers to your own address. For an app whose
-password-reset flow was just finished, that is a poor trade.
+The repository-level drill has already proved encryption, checksums, database/upload restoration and
+rollback of data written after the snapshot. It also led to a schema-qualified `immutable_unaccent`
+wrapper: PostgreSQL restores with an empty search path, so dump portability must not depend on `public`
+being implicit. The launch drill repeats this against the actual off-host destination and host.
 
 ---
 
-## Decision
+## Launch procedure once the domain exists
 
-**Not yet made.** The two candidates are above. What tips it:
+1. Put the domain on Cloudflare's Free plan and create `app.<domain>` and `api.<domain>` as public
+   hostnames on one named Tunnel:
+   - `app.<domain>` -> `http://web:8080`
+   - `api.<domain>` -> `http://api-gateway:4000`
+2. Verify the domain with Resend and publish its SPF/DKIM records plus a DMARC policy. Obtain the SMTP
+   API key.
+3. Generate independent random database and JWT secrets. Set:
 
-- Want it live with the least fuss and $5/month is fine → **Fly.io**.
-- Want $0 infrastructure and the most to learn → **Oracle VPS**, falling back to Fly if ARM capacity
-  in Singapore is unavailable.
+   ```bash
+   export WEB_ORIGIN=https://app.example.com
+   export API_PUBLIC_URL=https://api.example.com
+   export POSTGRES_PASSWORD=<random-secret>
+   export JWT_SECRET=<at-least-32-random-bytes>
+   export SMTP_URL=smtps://resend:<api-key>@smtp.resend.com:465
+   export MAIL_FROM=no-reply@example.com
+   export METRICS_TOKEN=<at-least-32-independent-random-characters>
+   export TUNNEL_TOKEN=<cloudflare-tunnel-token>
+   ```
 
-Record the choice here when it is made, with a line on why.
+4. Start the stack and tunnel together:
+
+   ```bash
+   docker compose -f docker-compose.prod.yml -f docker-compose.tunnel.yml up -d --build
+   ```
+
+5. Run `scripts/smoke.sh https://api.example.com`, open the web app in a real browser, verify the CSP,
+   socket reconnect and image viewer, and send a password reset to an external inbox.
+6. Configure Prometheus to scrape `api-1:4000/metrics` and `api-2:4000/metrics` separately with
+   `Authorization: Bearer <METRICS_TOKEN>`. Scraping the gateway alternates between two independent
+   registries and produces an incomplete series.
+7. Configure `backup:prod`, then run `restore:prod` on a disposable deployment. A backup that has not
+   been restored is only a file.
+
+The production compose ports bind to `127.0.0.1`, so the on-host smoke test can reach them while the
+public network cannot bypass Cloudflare. The tunnel joins the same Compose network and reaches the
+services by container name.
+
+### Database requirement
+
+The database must allow `CREATE EXTENSION unaccent`. It ships in the official PostgreSQL image used
+here. Without it the phase 20 migration fails at deploy time, which is preferable to silently losing
+Vietnamese accent-insensitive search.
 
 ---
 
-## Why the host choice changes the plan
+## When the architecture is allowed to grow
 
-### Uploaded files, and the shape of "two instances"
+- Move uploads to S3-compatible object storage when API instances stop sharing one host, the local
+  volume approaches its capacity budget, or backup/restore time breaches the recovery target.
+- Add a durable client event cursor when reconnect repair regularly needs more than the newest page,
+  or offline reading/sending becomes a committed feature.
+- Split recent delivery from long-term storage only when measured database latency sits on the send
+  critical path or independent replay is required.
+- Replace a free tier with a paid service only when its alert is reached and the product has enough
+  usage or revenue to make the new recurring cost intentional.
 
-Avatars and attachments are written to a directory. `docker-compose.prod.yml` runs two API instances
-sharing one volume, and that is the only reason it works.
-
-- **On a VPS** both instances are on one machine and share the volume as written. Two instances work
-  immediately, and object storage is a later nicety rather than a prerequisite.
-- **On Fly** volumes attach to a single machine. Upload an avatar to machine A and machine B answers
-  404 for it. Scaling past one machine therefore *requires* S3-compatible object storage first.
-
-Nothing in the test suite can see either case: the suite runs one process. ADR 0004 anticipated the
-swap — no row stores a file path, only `avatarUpdatedAt`, and the URL is derived — so it is a change
-to two files rather than a migration.
-
-### Socket.io across two instances
-
-The Redis adapter shares rooms between processes. It does **not** provide session affinity, and
-Socket.io opens with HTTP long-polling before upgrading, so a handshake split across two instances
-fails. Either pin the client to the websocket transport or put affinity in the proxy. This is
-host-independent and is handled in the codebase rather than in deployment config.
+See [ADR 0016](adr/0016-bandwidth-first-message-delivery.md) for the message/media thresholds.
 
 ---
 
 ## Sources
 
-Checked August 2026:
+Checked September 2026; re-check limits immediately before launch.
 
-- [Fly.io pricing](https://costbench.com/software/cloud-infrastructure/fly-io/) ·
-  [Fly.io free tier](https://www.saaspricepulse.com/blog/flyio-free-tier-2026)
-- [Oracle free tier 2026 changes](https://terminalbytes.com/oracle-cloud-free-tier-changes-2026/) ·
-  [Oracle Cloud Free Tier docs](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier.htm)
-- [Neon free tier](https://agentdeals.dev/vendor/neon) ·
-  [Upstash free tier](https://agentdeals.dev/vendor/upstash)
+- [Oracle Cloud Free Tier](https://docs.oracle.com/iaas/Content/FreeTier/freetier.htm) and
+  [Always Free resources](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm)
+- [Cloudflare Tunnel](https://developers.cloudflare.com/tunnel/),
+  [Tunnel setup and domain requirement](https://developers.cloudflare.com/tunnel/setup/), and
+  [free Universal SSL](https://developers.cloudflare.com/fundamentals/manage-domains/)
+- [Cloudflare R2 pricing and free allowance](https://developers.cloudflare.com/r2/pricing/)
+- [Resend pricing](https://resend.com/pricing) and
+  [SMTP configuration](https://resend.com/docs/send-with-smtp)
+- [Caddy reverse proxy](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy)
+- [Prometheus overview](https://prometheus.io/docs/introduction/overview/) and
+  [Grafana OSS](https://grafana.com/oss/grafana/)
+- [age file encryption](https://github.com/FiloSottile/age)

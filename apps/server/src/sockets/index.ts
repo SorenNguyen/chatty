@@ -3,6 +3,7 @@ import { Server } from "socket.io";
 import { verifyAccessToken } from "../lib/access-token.js";
 import { env } from "../config/env.js";
 import { logger } from "../lib/logger.js";
+import { recordSocketConnected, recordSocketDisconnected, startSocketSetup } from "../lib/metrics.js";
 import { setIO, userRoom, type ChattyServer, type ChattySocket } from "../lib/socket-bus.js";
 import { listRealtimeConversationIds } from "../modules/blocks/blocks.service.js";
 import { announceConnected, announceDisconnected, conversationRoomsOf } from "./presence.js";
@@ -48,6 +49,8 @@ export function initSockets(httpServer: HttpServer): ChattyServer {
 
 	io.on("connection", (socket) => {
 		const { userId } = socket.data;
+		const stopSetupTimer = startSocketSetup();
+		recordSocketConnected();
 
 		// Rooms have to exist before either of the next two steps: typing checks
 		// membership against them, and presence uses them as its audience.
@@ -55,9 +58,11 @@ export function initSockets(httpServer: HttpServer): ChattyServer {
 			.then(async () => {
 				registerTypingHandlers(socket);
 				await announceConnected(io, socket);
+				stopSetupTimer("success");
 				logger.info({ userId, socketId: socket.id }, "socket connected");
 			})
 			.catch((error: unknown) => {
+				stopSetupTimer("error");
 				// Without rooms this socket receives nothing, so fail loudly rather
 				// than leaving the user silently staring at a chat that never updates.
 				logger.error({ err: error, userId }, "failed to set up socket");
@@ -71,7 +76,8 @@ export function initSockets(httpServer: HttpServer): ChattyServer {
 			roomsAtDisconnect = conversationRoomsOf(socket);
 		});
 
-		socket.on("disconnect", () => {
+		socket.on("disconnect", (reason) => {
+			recordSocketDisconnected(reason);
 			announceDisconnected(io, userId, roomsAtDisconnect)
 				.catch((error: unknown) => logger.error({ err: error, userId }, "failed to announce disconnect"))
 				.finally(() => logger.info({ userId, socketId: socket.id }, "socket disconnected"));

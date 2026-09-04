@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, setSessionExpiredHandler, storeSession, wasSessionExpired } from "@/api/client";
+import { api, NetworkUnavailableError, setSessionExpiredHandler, storeSession, wasSessionExpired } from "@/api/client";
 
 /**
  * A 401 means two different things depending on where it came from, and telling
@@ -111,5 +111,13 @@ describe("other failures", () => {
 		await expect(api.listConversations()).rejects.toThrow();
 
 		expect(onSessionExpired).not.toHaveBeenCalled();
+	});
+
+	it("identifies a missing network without expiring the session", async () => {
+		vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("offline")));
+
+		await expect(api.getCurrentUser()).rejects.toBeInstanceOf(NetworkUnavailableError);
+		expect(onSessionExpired).not.toHaveBeenCalled();
+		expect(wasSessionExpired()).toBe(false);
 	});
 });

@@ -2,9 +2,9 @@
 
 ## Status
 
-Accepted. Supersedes the decision in [ADR 0006](0006-flat-group-permissions.md); the rest of that
-record — leaving and being removed as one operation, groups allowed to reach zero participants —
-still stands.
+Superseded in part by [ADR 0018](0018-group-admins-and-invite-policy.md). This record superseded the
+decision in [ADR 0006](0006-flat-group-permissions.md); its single-owner invariant, leaving/removal
+shape and groups reaching zero participants still stand.
 
 ## Context
 
@@ -69,12 +69,9 @@ than being a state change that happens silently.
 
   Two hand-overs racing do not reach the constraint: the row lock orders them, and the second finds
   it is no longer the owner and gets the same 403 a non-owner gets.
-- **No second admin, and no demotion.** One owner, exactly, for as long as the group has anyone in
-  it. A second role tier would need a rule for what an admin may do to another admin, which is a
-  question this app has not yet had to answer.
-- **Griefing is narrowed, not eliminated.** Any member can still add strangers, and the owner can
-  still empty their own group. Both are visible in the log now, which is the difference that matters:
-  nothing happens to a group without a line saying who did it.
+- **Second admins and invite policy arrived in phase 42.** ADR 0018 answers the rule this record left
+  open: admins operate on ordinary members but not one another, and the owner chooses whether every
+  member or only managers may invite.
 - **Pre-existing groups needed a backfill.** They have no recorded creator, so the migration promotes
   the longest-standing participant of every group. Without it, every group created before this change
   would be permanently ownerless — unrenameable, unmoderatable, with no path in the app to grant the

@@ -1,0 +1,36 @@
+# Optional public edge for docker-compose.prod.yml. A named Cloudflare Tunnel
+# requires a domain and a free Cloudflare account; keep this file out of the
+# ordinary local production-shaped run until those exist.
+#
+# In the Cloudflare dashboard, route:
+#   app.<domain> -> http://web:8080
+#   api.<domain> -> http://api-gateway:4000
+#
+# Then run both files with TUNNEL_TOKEN in the environment. The token is passed
+# as an environment variable so it is not exposed in the process command line.
+
+name: chatty-prod
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:2026.8.3
+    restart: unless-stopped
+    logging: *default-logging
+    command: tunnel --no-autoupdate --metrics 0.0.0.0:2000 run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN from the Cloudflare Tunnel dashboard}
+    depends_on:
+      api-gateway: { condition: service_healthy }
+      web: { condition: service_started }
+    healthcheck:
+      test: ["CMD", "cloudflared", "tunnel", "--metrics", "localhost:2000", "ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

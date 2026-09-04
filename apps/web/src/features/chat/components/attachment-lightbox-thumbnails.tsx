@@ -2,6 +2,7 @@ import type { AttachmentDTO } from "@chatty/shared-types";
 import { Button } from "@/components/button";
 import { cn } from "@/utils/cn";
 import { LIGHTBOX_THUMBNAIL_CLASS } from "../constants/attachment";
+import { getAttachmentPreviewUrl } from "../utils";
 
 interface AttachmentLightboxThumbnailsProps {
 	attachments: AttachmentDTO[];
@@ -45,7 +46,7 @@ export function AttachmentLightboxThumbnails({
 						)}
 					>
 						<img
-							src={attachment.thumbUrl ?? attachment.url}
+							src={getAttachmentPreviewUrl(attachment)}
 							alt=""
 							loading="lazy"
 							className="size-full object-cover"
