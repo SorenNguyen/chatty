@@ -13,6 +13,7 @@ import { ChangePasswordForm } from "./change-password-form";
 import { DeleteAccountForm } from "./delete-account-form";
 import { NotificationSettings } from "./notification-settings";
 import { ProfileForm } from "./profile-form";
+import { RestrictedUsersSettings } from "./restricted-users-settings";
 import { SettingsNav } from "./settings-nav";
 
 interface SettingsModalProps {
@@ -92,6 +93,7 @@ export function SettingsModal({ user, onClose }: SettingsModalProps) {
 							</>
 						)}
 						{activeSection === "blocked" && <BlockedUsersSettings />}
+						{activeSection === "restricted" && <RestrictedUsersSettings />}
 						{activeSection === "appearance" && <AppearanceSettings />}
 						{activeSection === "email" && <ChangeEmailForm user={user} />}
 						{activeSection === "notifications" && <NotificationSettings />}

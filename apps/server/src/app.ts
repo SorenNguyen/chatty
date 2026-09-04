@@ -1,3 +1,4 @@
+import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
@@ -10,6 +11,7 @@ import { authRouter } from "./modules/auth/auth.routes.js";
 import { blocksRouter } from "./modules/blocks/blocks.routes.js";
 import { conversationsRouter } from "./modules/conversations/conversations.routes.js";
 import { messagesRouter } from "./modules/messages/messages.routes.js";
+import { restrictionsRouter } from "./modules/restrictions/restrictions.routes.js";
 import { searchRouter } from "./modules/search/search.routes.js";
 import { usersRouter } from "./modules/users/users.routes.js";
 import { conversationVaultRouter, personalVaultRouter } from "./modules/vault/vault.routes.js";
@@ -41,8 +43,13 @@ export function createApp() {
 			contentSecurityPolicy: false,
 		}),
 	);
-	app.use(cors({ origin: env.CORS_ORIGIN }));
+	// `credentials: true` is what lets the refresh-token cookie cross from the web
+	// app's origin to this one — without it the browser refuses to send or store
+	// it, no matter what the `Set-Cookie` response says. It requires `origin` to
+	// name an exact origin rather than "*", which `CORS_ORIGIN` already does.
+	app.use(cors({ origin: env.CORS_ORIGIN, credentials: true }));
 	app.use(express.json());
+	app.use(cookieParser());
 
 	/**
 	 * Liveness: this process is running and can answer. Deliberately checks
@@ -72,6 +79,7 @@ export function createApp() {
 	app.use("/users", usersRouter);
 	app.use("/search", searchRouter);
 	app.use("/blocks", blocksRouter);
+	app.use("/restrictions", restrictionsRouter);
 	app.use("/conversations", conversationsRouter);
 	app.use("/conversations/:conversationId", conversationVaultRouter);
 	app.use("/conversations/:conversationId/messages", messagesRouter);

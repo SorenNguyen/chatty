@@ -14,6 +14,7 @@ import {
 	useKeyboardShortcuts,
 	useMessageNotifications,
 	usePresence,
+	useRestrictedUsersSync,
 	useSocketConnection,
 	useTypingParticipants,
 } from "../hooks";
@@ -38,6 +39,7 @@ export function ChatPage() {
 	const [isShortcutHelpOpen, setIsShortcutHelpOpen] = useState(false);
 
 	const refreshBlockedUsers = useBlockedUsersSync();
+	const refreshRestrictedUsers = useRestrictedUsersSync();
 	const onlineUserIds = usePresence();
 	const { activeUserIds: typingUserIds, typingByConversation } = useTypingParticipants(selectedConversationId);
 	const hasOpenPanel =
@@ -112,7 +114,8 @@ export function ChatPage() {
 			refreshConversations();
 			resync();
 			void refreshBlockedUsers();
-		}, [refreshBlockedUsers, refreshConversations, resync]),
+			void refreshRestrictedUsers();
+		}, [refreshBlockedUsers, refreshConversations, refreshRestrictedUsers, resync]),
 	);
 
 	useEffect(() => {

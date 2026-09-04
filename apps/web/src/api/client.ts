@@ -36,31 +36,27 @@ import type {
 	UpdateProfileRequest,
 	BlockStatusDTO,
 	BlockedUsersPageDTO,
+	RestrictedUsersPageDTO,
+	RestrictionStatusDTO,
 	UserDTO,
 } from "@chatty/shared-types";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 const TOKEN_STORAGE_KEY = "chatty:token";
-const REFRESH_TOKEN_STORAGE_KEY = "chatty:refresh-token";
 const SESSION_EXPIRED_KEY = "chatty:session-expired";
 
 export function getStoredToken(): string | null {
 	return localStorage.getItem(TOKEN_STORAGE_KEY);
 }
 
-export function getStoredRefreshToken(): string | null {
-	return localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
-}
-
 /**
- * Stores the pair. Always both, never one: the access token expires in minutes
- * and is worthless without the refresh token that renews it, and a refresh
- * token stored beside a stale access token would be renewed on the first
- * request anyway. Keeping them together is what stops a half-written session.
+ * Stores the access token. Just the one now — the refresh token that renews it
+ * arrives as an `HttpOnly` cookie the server set alongside this response and
+ * this module never sees, which is the entire point: nothing here can read it,
+ * so nothing an attacker runs through an XSS bug can either.
  */
-export function storeSession(token: string, refreshToken: string): void {
+export function storeSession(token: string): void {
 	localStorage.setItem(TOKEN_STORAGE_KEY, token);
-	localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, refreshToken);
 	// There is a session again, so "your session ended" has stopped being true.
 	// Cleared here rather than when the notice is read — see `wasSessionExpired`.
 	sessionStorage.removeItem(SESSION_EXPIRED_KEY);
@@ -68,7 +64,6 @@ export function storeSession(token: string, refreshToken: string): void {
 
 export function clearStoredToken(): void {
 	localStorage.removeItem(TOKEN_STORAGE_KEY);
-	localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
 }
 
 /**
@@ -133,20 +128,20 @@ export function wasSessionExpired(): boolean {
 let refreshInFlight: Promise<boolean> | null = null;
 
 async function performRefresh(): Promise<boolean> {
-	const refreshToken = getStoredRefreshToken();
-	if (!refreshToken) return false;
-
 	try {
 		const response = await fetch(`${API_URL}/auth/refresh`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ refreshToken }),
+			// The credential: the refresh-token cookie set by the last login or
+			// refresh. There is no body any more — a stolen response could once be
+			// replayed by reading it out of client-side storage, and a cookie this
+			// module cannot read is not something it can leak by accident either.
+			credentials: "include",
 		});
 
 		if (!response.ok) return false;
 
 		const session = (await response.json()) as RefreshTokenResponse;
-		storeSession(session.token, session.refreshToken);
+		storeSession(session.token);
 
 		return true;
 	} catch {
@@ -188,6 +183,11 @@ async function request<T>(path: string, options: RequestInit = {}, hasRetried = 
 	const isFormData = options.body instanceof FormData;
 	const response = await fetch(`${API_URL}${path}`, {
 		...options,
+		// The refresh-token cookie is `path: "/auth"` and `HttpOnly`, so this is
+		// what lets the browser attach it on `/auth/refresh` and `/auth/logout`
+		// and store the one a login or a refresh sends back — every other request
+		// simply has no matching cookie to send.
+		credentials: "include",
 		headers: {
 			...(isFormData ? {} : { "Content-Type": "application/json" }),
 			...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -347,12 +347,12 @@ export const api = {
 	/**
 	 * Ends this session on the server.
 	 *
-	 * Unauthenticated by design — the refresh token in the body is the credential
-	 * — so it still works when the access token has already expired, which is
-	 * exactly when somebody closing a laptop needs it to.
+	 * Unauthenticated by design — the refresh-token cookie is the credential — so
+	 * it still works when the access token has already expired, which is exactly
+	 * when somebody closing a laptop needs it to.
 	 */
-	logout(refreshToken: string): Promise<void> {
-		return post<void>("/auth/logout", { refreshToken });
+	logout(): Promise<void> {
+		return request<void>("/auth/logout", { method: "POST" });
 	},
 
 	/**
@@ -406,6 +406,26 @@ export const api = {
 
 	unblockUser(userId: string): Promise<void> {
 		return request<void>(`/blocks/${userId}`, { method: "DELETE" });
+	},
+
+	/** A bounded page, walked by the Restricted people panel in account settings. */
+	listRestrictedUsers(before?: string): Promise<RestrictedUsersPageDTO> {
+		return get<RestrictedUsersPageDTO>(`/restrictions${before ? `?before=${encodeURIComponent(before)}` : ""}`);
+	},
+
+	/** Only the caller's own decision — the reverse direction remains private. */
+	getRestrictionStatus(userId: string): Promise<RestrictionStatusDTO> {
+		return get<RestrictionStatusDTO>(`/restrictions/${userId}/status`);
+	},
+
+	// PUT, so restricting somebody already restricted is the same request twice
+	// and answers the same way — the client never has to know which it is sending.
+	restrictUser(userId: string): Promise<void> {
+		return request<void>(`/restrictions/${userId}`, { method: "PUT" });
+	},
+
+	unrestrictUser(userId: string): Promise<void> {
+		return request<void>(`/restrictions/${userId}`, { method: "DELETE" });
 	},
 
 	/**

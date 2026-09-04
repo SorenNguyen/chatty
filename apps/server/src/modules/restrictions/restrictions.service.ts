@@ -1,5 +1,7 @@
 import type { RestrictedUsersPageDTO, RestrictionStatusDTO } from "@chatty/shared-types";
-import type { Prisma } from "@prisma/client";
+// A value import, not `import type`: `excludeRestrictedDirectRoomIds` calls
+// `Prisma.join` to build the room-id list's raw-SQL `IN (...)`.
+import { Prisma } from "@prisma/client";
 import { NotFoundError, ValidationError } from "../../lib/errors.js";
 import { prisma } from "../../lib/prisma.js";
 import { getOptionalIO, userRoom } from "../../lib/socket-bus.js";
@@ -9,13 +11,19 @@ import type { ListRestrictedUsersQuery } from "./restrictions.schema.js";
 type RestrictionReader = Pick<Prisma.TransactionClient, "userRestriction">;
 
 /**
- * Restricting, and the three things it changes.
+ * Restricting, and the two things it changes.
  *
  * A block refuses the write. A restriction refuses **nothing** — the message is
- * written, delivered and readable — and instead changes where it lands and what
- * it reveals: the conversation moves to Message requests, it stops counting
- * towards anything that could produce a notification, and this person stops
- * seeing your read receipts and your presence.
+ * written, delivered and readable, in the same conversation it always was — and
+ * instead changes what it reveals: it stops counting towards the restrictor's
+ * unread badge (see `countUnreadByConversation` in `conversations.service.ts`),
+ * and this person stops seeing the restrictor's read receipts
+ * (`markConversationRead`) and presence (`sockets/presence.ts`).
+ *
+ * A dedicated "Message requests" mailbox — moving the conversation itself
+ * somewhere else, the way Instagram/Messenger do — is deliberately not part of
+ * this: it needs its own schema state and its own inbox view, not just a filter
+ * on data that already exists. Left as a follow-up, not implied by anything here.
  *
  * The row is directed and, unlike a block, so is every effect. That asymmetry is
  * the feature: a block is a wall between two people, while a restriction is
@@ -180,4 +188,54 @@ export async function isDirectConversationRestricted(
 	const otherUserId = await findDirectPeerId(currentUserId, conversationId, database);
 
 	return otherUserId ? hasRestricted(currentUserId, otherUserId, database) : false;
+}
+
+/**
+ * Which of `roomIds` are direct conversations `currentUserId` should not
+ * broadcast presence into, because they restricted the other side.
+ *
+ * Presence goes out room-by-room (see `sockets/presence.ts`), and a direct
+ * conversation's room has exactly two members — the restrictor and the person
+ * they restricted — so withholding a room from the broadcast list withholds it
+ * from exactly the one audience the restriction is about. Bulk rather than one
+ * `isDirectConversationRestricted` call per room: presence fires on every
+ * connect and disconnect, and that is the wrong place for a query per
+ * conversation someone happens to be in.
+ */
+export async function excludeRestrictedDirectRoomIds(currentUserId: string, roomIds: string[]): Promise<string[]> {
+	if (roomIds.length === 0) return roomIds;
+
+	const restricted = await prisma.$queryRaw<{ conversationId: string }[]>`
+		SELECT DISTINCT cp."conversationId"
+		FROM "ConversationParticipant" cp
+		JOIN "Conversation" c ON c.id = cp."conversationId"
+		JOIN "UserRestriction" r ON r."restrictorId" = ${currentUserId} AND r."restrictedId" = cp."userId"
+		WHERE c."isGroup" = false
+			AND cp."conversationId" IN (${Prisma.join(roomIds)})
+			AND cp."userId" IS DISTINCT FROM ${currentUserId}
+	`;
+	const restrictedRoomIds = new Set(restricted.map((row) => row.conversationId));
+
+	return roomIds.filter((roomId) => !restrictedRoomIds.has(roomId));
+}
+
+/**
+ * Which of `candidateUserIds` have restricted `currentUserId`.
+ *
+ * The other half of presence hiding: `excludeRestrictedDirectRoomIds` stops a
+ * restrictor's own presence changes from reaching the person they restricted,
+ * but a freshly connected socket also asks once, up front, "who among my
+ * contacts is already online" (`announceConnected`'s snapshot). That list has
+ * to apply the same rule from the opposite side, or restricting someone would
+ * only hide the *next* update and not the picture they already have.
+ */
+export async function listRestrictorsAmong(currentUserId: string, candidateUserIds: string[]): Promise<Set<string>> {
+	if (candidateUserIds.length === 0) return new Set();
+
+	const rows = await prisma.userRestriction.findMany({
+		where: { restrictedId: currentUserId, restrictorId: { in: candidateUserIds } },
+		select: { restrictorId: true },
+	});
+
+	return new Set(rows.map((row) => row.restrictorId));
 }

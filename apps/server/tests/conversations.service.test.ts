@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { NotFoundError, ValidationError } from "../src/lib/errors.js";
 import { prisma } from "../src/lib/prisma.js";
 import { userRoom } from "../src/lib/socket-bus.js";
-import { register } from "../src/modules/auth/auth.service.js";
 import {
 	createConversation,
 	listConversationsForUser,
@@ -106,13 +105,22 @@ describe("per-participant conversation organisation", () => {
 });
 
 /** Creates a user and returns their id, so tests read as intent rather than setup. */
+/**
+ * Created directly with `prisma` rather than through `register()`: none of
+ * this file exercises authentication, and bcrypt's ~300ms per call adds up —
+ * one test here creates seven users, which was enough on its own to push that
+ * test past the 5s default `testTimeout` (see the warning in `tests/setup.ts`).
+ */
 async function createUser(name: string): Promise<string> {
-	const { user } = await register({
-		email: `${name}@chatty.test`,
-		password: "SuperSecret123",
-		// Suffixed so short names like "an" still clear the 3-character minimum.
-		handle: `${name}_test`,
-		displayName: name,
+	const user = await prisma.user.create({
+		data: {
+			email: `${name}@chatty.test`,
+			// Suffixed so short names like "an" still clear the 3-character minimum.
+			handle: `${name}_test`,
+			displayName: name,
+			passwordHash: "x",
+		},
+		select: { id: true },
 	});
 
 	return user.id;

@@ -5,5 +5,6 @@ export { ChangePasswordForm } from "./change-password-form";
 export { DeleteAccountForm } from "./delete-account-form";
 export { NotificationSettings } from "./notification-settings";
 export { ProfileForm } from "./profile-form";
+export { RestrictedUsersSettings } from "./restricted-users-settings";
 export { SettingsModal } from "./settings-modal";
 export { SettingsNav } from "./settings-nav";

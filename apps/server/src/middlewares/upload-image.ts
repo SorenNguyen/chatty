@@ -55,6 +55,24 @@ export const REFUSED_FILE_EXTENSIONS = new Set([
 	"reg",
 ]);
 
+/**
+ * Where a rejected file's reason waits between `fileFilter` and the wrapper
+ * that turns it into a response.
+ *
+ * `fileFilter` must reject through `next(null, false)`, never `next(error)`.
+ * Busboy's own stream for that part is only drained by Multer on the
+ * `false` path (`fileStream.resume()`); on the error path it is not, and
+ * because the callback never sees the field's stream — only Multer's
+ * internal `handleFile` closure holds it — there is no way to drain it from
+ * here either. A client sending a second, larger field after the rejected
+ * one then has its request stall for minutes waiting on backpressure that
+ * never clears, which was reproducing as an unrelated-looking timeout in
+ * whichever test or request happened to run next. Keying the reason here
+ * and re-throwing it once Multer's callback fires keeps the exact same
+ * error messages without ever leaving a part stream unconsumed.
+ */
+const fileRejection = new WeakMap<Request, ValidationError>();
+
 interface ImageUploadOptions {
 	/** Form field the file arrives under. The client must match this exactly. */
 	field: string;
@@ -77,12 +95,13 @@ function createImageUpload(options: ImageUploadOptions) {
 		// reaches disk here.
 		storage: multer.memoryStorage(),
 		limits: { fileSize: options.maxBytes, files: options.maxFiles },
-		fileFilter: (_req, file, next) => {
+		fileFilter: (req, file, next) => {
 			// A first pass only. The client picks this header, so it proves nothing
 			// — the real check is the re-encode in lib/*-storage.ts. This just stops
 			// ten megabytes of video being buffered before that happens.
 			if (!file.mimetype.startsWith("image/")) {
-				next(new ValidationError(`${options.label} must be an image`));
+				fileRejection.set(req, new ValidationError(`${options.label} must be an image`));
+				next(null, false);
 
 				return;
 			}
@@ -107,6 +126,12 @@ function createImageUpload(options: ImageUploadOptions) {
 				const message = describeMulterError(error, options);
 
 				next(new ValidationError(message));
+
+				return;
+			}
+
+			if (!error && fileRejection.has(req)) {
+				next(fileRejection.get(req));
 
 				return;
 			}
@@ -230,26 +255,30 @@ const messageUpload = multer({
 	fileFilter: (req, file, next) => {
 		const selectedField = selectedUploadShape.get(req);
 		if (selectedField && selectedField !== file.fieldname) {
-			next(new ValidationError("Send images, one file, or one voice message — not a mixture"));
+			fileRejection.set(req, new ValidationError("Send images, one file, or one voice message — not a mixture"));
+			next(null, false);
 
 			return;
 		}
 		selectedUploadShape.set(req, file.fieldname);
 
 		if (file.fieldname === "attachment" && !file.mimetype.startsWith("image/")) {
-			next(new ValidationError("Image must be an image"));
+			fileRejection.set(req, new ValidationError("Image must be an image"));
+			next(null, false);
 
 			return;
 		}
 
 		if (file.fieldname === "file" && REFUSED_FILE_EXTENSIONS.has(getExtension(file.originalname))) {
-			next(new ValidationError("Executable files cannot be sent"));
+			fileRejection.set(req, new ValidationError("Executable files cannot be sent"));
+			next(null, false);
 
 			return;
 		}
 
 		if (file.fieldname === "voice" && !file.mimetype.startsWith("audio/")) {
-			next(new ValidationError("Voice message must be audio"));
+			fileRejection.set(req, new ValidationError("Voice message must be audio"));
+			next(null, false);
 
 			return;
 		}
@@ -293,6 +322,12 @@ export function uploadMessageAttachments(req: Request, res: Response, next: Next
 			}
 
 			next(new ValidationError("Could not read the message upload"));
+
+			return;
+		}
+
+		if (!error && fileRejection.has(req)) {
+			next(fileRejection.get(req));
 
 			return;
 		}

@@ -1,7 +1,8 @@
 import type { CurrentUserDTO, RegisterRequest } from "@chatty/shared-types";
 import { create } from "zustand";
-import { api, clearStoredToken, getStoredRefreshToken, getStoredToken, storeSession } from "@/api/client";
+import { api, clearStoredToken, getStoredToken, storeSession } from "@/api/client";
 import { useBlockedUsers } from "@/hooks/use-blocked-users";
+import { useRestrictedUsers } from "@/hooks/use-restricted-users";
 import { closeSocket } from "@/lib/socket";
 
 interface AuthState {
@@ -52,16 +53,18 @@ export const useAuth = create<AuthState>((set) => ({
 	isRestoring: true,
 
 	async login(email, password) {
-		const { token, refreshToken } = await api.login({ email, password });
-		storeSession(token, refreshToken);
+		const { token } = await api.login({ email, password });
+		storeSession(token);
 		useBlockedUsers.getState().reset();
+		useRestrictedUsers.getState().reset();
 		set({ currentUser: await api.getCurrentUser() });
 	},
 
 	async register(input) {
-		const { token, refreshToken } = await api.register(input);
-		storeSession(token, refreshToken);
+		const { token } = await api.register(input);
+		storeSession(token);
 		useBlockedUsers.getState().reset();
+		useRestrictedUsers.getState().reset();
 		set({ currentUser: await api.getCurrentUser() });
 	},
 
@@ -70,8 +73,8 @@ export const useAuth = create<AuthState>((set) => ({
 	},
 
 	async changePassword(currentPassword, newPassword) {
-		const { token, refreshToken } = await api.changePassword({ currentPassword, newPassword });
-		storeSession(token, refreshToken);
+		const { token } = await api.changePassword({ currentPassword, newPassword });
+		storeSession(token);
 		// The old socket cannot be reused: the server closed it, and socket.io
 		// would reconnect with the token it captured when it was created — the one
 		// that no longer works. Dropping it makes the next getSocket() build one
@@ -88,6 +91,7 @@ export const useAuth = create<AuthState>((set) => ({
 		clearStoredToken();
 		closeSocket();
 		useBlockedUsers.getState().reset();
+		useRestrictedUsers.getState().reset();
 		set({ currentUser: null });
 	},
 
@@ -96,23 +100,27 @@ export const useAuth = create<AuthState>((set) => ({
 		// the network — a failed request would otherwise leave somebody looking at
 		// a chat they asked to leave — but before this call existed "sign out" only
 		// cleared this browser's copy and left the session itself alive for a week.
-		const refreshToken = getStoredRefreshToken();
-		if (refreshToken) void api.logout(refreshToken).catch(() => undefined);
+		// The credential is the refresh-token cookie, sent automatically.
+		void api.logout().catch(() => undefined);
 
 		clearStoredToken();
 		// The socket authenticated with the old token; leaving it open would keep
 		// pushing the previous user's messages into the next user's session.
 		closeSocket();
 		useBlockedUsers.getState().reset();
+		useRestrictedUsers.getState().reset();
 		set({ currentUser: null });
 	},
 
 	async restoreSession() {
 		// The access token expires in minutes, so on any reload after a coffee
-		// break there is a stored refresh token and a dead access token. That is a
-		// session to restore, not one to throw away — `request` renews it on the
-		// 401 this next call gets.
-		if (!getStoredToken() && !getStoredRefreshToken()) {
+		// break the stored one is dead. That is a session to restore, not one to
+		// throw away — `request` renews it on the 401 this next call gets, from the
+		// refresh-token cookie, which this module cannot read to check up front.
+		// A stored access token is the one signal available without a round trip;
+		// its absence is the ordinary "never signed in" case, and the rare one
+		// where it was cleared but the cookie survived costs one extra 401 here.
+		if (!getStoredToken()) {
 			set({ isRestoring: false });
 
 			return;
@@ -125,6 +133,7 @@ export const useAuth = create<AuthState>((set) => ({
 			// half-authenticated state where every request 401s.
 			clearStoredToken();
 			useBlockedUsers.getState().reset();
+			useRestrictedUsers.getState().reset();
 			set({ currentUser: null, isRestoring: false });
 		}
 	},

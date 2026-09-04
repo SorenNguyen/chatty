@@ -1,6 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import type { AuthResponse } from "@chatty/shared-types";
 // A value import, not `import type`: `confirmEmailChange` matches on
 // `Prisma.PrismaClientKnownRequestError` at runtime to turn a unique-violation
 // into a 409 rather than a 500.
@@ -26,10 +25,16 @@ import type {
 } from "./auth.schema.js";
 
 /**
- * Alias of the shared contract, so a change to what the client expects fails to
- * compile here rather than surfacing as a missing field at runtime.
+ * What `register` and `login` hand back internally. Not the shared `AuthResponse`
+ * any more: `refreshToken` here is exactly what the controller needs to set the
+ * `Set-Cookie` header, and it must never reach `res.json()` — see `AuthResponse`'s
+ * own comment for why a response body is the wrong place for it.
  */
-export type AuthResult = AuthResponse;
+export interface AuthResult {
+	token: string;
+	refreshToken: string;
+	user: { id: string; email: string; handle: string; displayName: string };
+}
 
 /**
  * Cost factor for bcrypt. Each +1 doubles the time to hash, which is the point:

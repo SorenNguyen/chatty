@@ -1,5 +1,6 @@
 import { userRoom, type ChattyServer, type ChattySocket } from "../lib/socket-bus.js";
 import { listContactIds } from "../modules/conversations/conversations.service.js";
+import { excludeRestrictedDirectRoomIds, listRestrictorsAmong } from "../modules/restrictions/restrictions.service.js";
 import { prisma } from "../lib/prisma.js";
 
 /**
@@ -81,18 +82,23 @@ export async function announceConnected(io: ChattyServer, socket: ChattySocket):
 	const connections = await countConnections(io, userId);
 
 	if (connections === 1) {
-		emitPresence(io, conversationRoomsOf(socket), userId, true, null);
+		const rooms = await excludeRestrictedDirectRoomIds(userId, conversationRoomsOf(socket));
+		emitPresence(io, rooms, userId, true, null);
 	}
 
 	// Sent to every connection, not just the first: a second tab needs the
 	// picture as much as the first one did, and it has no other way to learn who
 	// was already online before it opened.
 	const [contactIds, onlineUserIds] = await Promise.all([listContactIds(userId), listOnlineUserIds(io)]);
+	const onlineContactIds = contactIds.filter((contactId) => onlineUserIds.has(contactId));
+	// The connect-time counterpart of the exclusion above: anyone who has
+	// restricted this user is online exactly as far as they are concerned.
+	const restrictors = await listRestrictorsAmong(userId, onlineContactIds);
 
 	socket.emit("presence:snapshot", {
 		// Filtered to people this user shares a conversation with. The unfiltered
 		// list would tell every account who else is signed in, including strangers.
-		onlineUserIds: contactIds.filter((contactId) => onlineUserIds.has(contactId)),
+		onlineUserIds: onlineContactIds.filter((contactId) => !restrictors.has(contactId)),
 	});
 }
 
@@ -122,5 +128,12 @@ export async function announceDisconnected(io: ChattyServer, userId: string, roo
 	if (!user) return;
 	await prisma.user.updateMany({ where: { id: userId }, data: { lastSeenAt } });
 
-	emitPresence(io, rooms, userId, false, user.presenceVisibility === "NOBODY" ? null : lastSeenAt.toISOString());
+	const audibleRooms = await excludeRestrictedDirectRoomIds(userId, rooms);
+	emitPresence(
+		io,
+		audibleRooms,
+		userId,
+		false,
+		user.presenceVisibility === "NOBODY" ? null : lastSeenAt.toISOString(),
+	);
 }

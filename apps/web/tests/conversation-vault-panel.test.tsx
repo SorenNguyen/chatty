@@ -14,6 +14,8 @@ vi.mock("@/api/client", () => ({
 		removeSavedMessage: vi.fn(),
 		listBlockedUsers: vi.fn(),
 		getBlockStatus: vi.fn(),
+		listRestrictedUsers: vi.fn(),
+		getRestrictionStatus: vi.fn(),
 	},
 }));
 
@@ -34,8 +36,10 @@ beforeEach(() => {
 	vi.mocked(api.listConversationLinks).mockReset().mockResolvedValue({ items: [], hasMore: false });
 	vi.mocked(api.listSavedMessages).mockReset().mockResolvedValue({ results: [], hasMore: false });
 	vi.mocked(api.removeSavedMessage).mockReset().mockResolvedValue(undefined);
-	// Block state is looked up only when a person is actionable, not for every row.
+	// Block and restriction state are looked up only when a person is
+	// actionable, not for every row.
 	vi.mocked(api.getBlockStatus).mockReset().mockResolvedValue({ isBlocked: false });
+	vi.mocked(api.getRestrictionStatus).mockReset().mockResolvedValue({ isRestricted: false });
 });
 
 function renderPanel(overrides: { isGroup?: boolean } = {}) {

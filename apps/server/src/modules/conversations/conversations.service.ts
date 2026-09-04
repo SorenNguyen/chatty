@@ -13,6 +13,7 @@ import { prisma } from "../../lib/prisma.js";
 import { getIO, userRoom } from "../../lib/socket-bus.js";
 import { messageSelect, toMessageDTO, type MessageRow } from "../messages/messages.mapper.js";
 import { assertDirectContactAvailable, isDirectConversationBlockedInTransaction } from "../blocks/blocks.service.js";
+import { isDirectConversationRestricted } from "../restrictions/restrictions.service.js";
 import { toUserDTO, userSelect, type UserRow } from "../users/users.mapper.js";
 import type {
 	AddParticipantInput,
@@ -228,6 +229,10 @@ async function countUnreadByConversation(userId: string, conversationIds: string
 			AND NOT EXISTS (
 				SELECT 1 FROM "MessageHiddenFor" h
 				WHERE h."messageId" = m.id AND h."userId" = ${userId}
+			)
+			AND NOT EXISTS (
+				SELECT 1 FROM "UserRestriction" r
+				WHERE r."restrictorId" = ${userId} AND r."restrictedId" = m."authorId"
 			)
 			AND m."createdAt" >= p."joinedAt"
 			AND (marker.id IS NULL OR (m."createdAt", m.id) > (marker."createdAt", marker.id))
@@ -685,6 +690,10 @@ export async function markConversationRead(
 		// restored later, so the pair lock and policy check decide whether this
 		// read remains private.
 		const isBlocked = await isDirectConversationBlockedInTransaction(currentUserId, conversationId, transaction);
+		// A restriction is one-directional and silent: the restricted peer must
+		// not learn their messages were seen, but the restrictor's own private
+		// marker still advances below — their badge clears exactly as normal.
+		const isRestrictingPeer = await isDirectConversationRestricted(currentUserId, conversationId, transaction);
 
 		const message = await transaction.message.findUnique({
 			where: { id: input.messageId },
@@ -699,7 +708,7 @@ export async function markConversationRead(
 			where: { conversationId_userId: { conversationId, userId: currentUserId } },
 			select: { lastReadMessageId: true, user: { select: { readReceiptsEnabled: true } } },
 		});
-		const areReceiptsShared = participant.user.readReceiptsEnabled && !isBlocked;
+		const areReceiptsShared = participant.user.readReceiptsEnabled && !isBlocked && !isRestrictingPeer;
 
 		if (participant.lastReadMessageId) {
 			const currentMarker = await transaction.message.findUnique({
