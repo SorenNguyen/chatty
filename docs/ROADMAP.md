@@ -341,6 +341,11 @@ mechanisms fall back to process memory — correct for one instance, wrong for t
 `docker-compose.prod.yml` always sets it and the server logs a loud warning if it is missing in
 production.
 
+Each auth limiter has its own Redis namespace. They originally shared `chatty:rl:<identity>`, which
+made registration, login, refresh and recovery requests consume the same counter in production even
+though their windows and limits differ; the in-memory development stores were separate and hid the
+collision.
+
 **Verified by running two instances, not by reading the code.** Both pointed at one Redis:
 
 - The register limiter is 10/hour. Six calls to instance A then six to B: the eleventh request

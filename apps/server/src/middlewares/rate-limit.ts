@@ -34,6 +34,7 @@ const RATE_LIMIT_KEY_PREFIX = "chatty:rl:";
 // `sendCommand` runs, and it is right not to try.
 const rateLimitClient = redis?.rateLimit ?? null;
 function createAuthLimiter(options: {
+	bucket: string;
 	windowMs: number;
 	limit: number;
 	message: string;
@@ -46,7 +47,10 @@ function createAuthLimiter(options: {
 		...(rateLimitClient
 			? {
 					store: new RedisStore({
-						prefix: RATE_LIMIT_KEY_PREFIX,
+						// RedisStore keys by the generated identity, which is normally
+						// just an IP. A distinct prefix keeps traffic to one auth flow
+						// from consuming another flow's quota.
+						prefix: `${RATE_LIMIT_KEY_PREFIX}${options.bucket}:`,
 						sendCommand: (...args: string[]) => rateLimitClient.sendCommand(args),
 					}),
 				}
@@ -68,6 +72,7 @@ function createAuthLimiter(options: {
  * volume to learn anything.
  */
 export const registerRateLimiter = createAuthLimiter({
+	bucket: "register",
 	windowMs: 60 * 60 * 1000,
 	limit: 10,
 	message: "Too many accounts created from this address. Try again later.",
@@ -78,6 +83,7 @@ export const registerRateLimiter = createAuthLimiter({
  * enough that guessing passwords at scale is impractical.
  */
 export const loginRateLimiter = createAuthLimiter({
+	bucket: "login",
 	windowMs: 15 * 60 * 1000,
 	limit: 20,
 	message: "Too many sign-in attempts. Try again later.",
@@ -93,6 +99,7 @@ export const loginRateLimiter = createAuthLimiter({
  * guessing a 32-byte token is not a thing rate limiting is needed for.
  */
 export const refreshRateLimiter = createAuthLimiter({
+	bucket: "refresh",
 	windowMs: 15 * 60 * 1000,
 	limit: 120,
 	message: "Too many session refreshes. Try again later.",
@@ -109,6 +116,7 @@ export const refreshRateLimiter = createAuthLimiter({
  * whole office behind one NAT does not share one.
  */
 export const changePasswordRateLimiter = createAuthLimiter({
+	bucket: "change-password",
 	windowMs: 15 * 60 * 1000,
 	limit: 10,
 	message: "Too many password change attempts. Try again later.",
@@ -125,6 +133,7 @@ export const changePasswordRateLimiter = createAuthLimiter({
  * reputation dies. Keyed by IP, because the caller is not signed in.
  */
 export const passwordResetRequestRateLimiter = createAuthLimiter({
+	bucket: "password-reset-request",
 	windowMs: 60 * 60 * 1000,
 	limit: 10,
 	message: "Too many password reset requests. Try again later.",
@@ -139,6 +148,7 @@ export const passwordResetRequestRateLimiter = createAuthLimiter({
  * at a credential.
  */
 export const passwordResetConfirmRateLimiter = createAuthLimiter({
+	bucket: "password-reset-confirm",
 	windowMs: 15 * 60 * 1000,
 	limit: 20,
 	message: "Too many attempts. Try again later.",
@@ -158,6 +168,7 @@ export const passwordResetConfirmRateLimiter = createAuthLimiter({
  * address five times an hour.
  */
 export const emailChangeRateLimiter = createAuthLimiter({
+	bucket: "email-change",
 	windowMs: 60 * 60 * 1000,
 	limit: 5,
 	message: "Too many email change requests. Try again later.",
@@ -171,6 +182,7 @@ export const emailChangeRateLimiter = createAuthLimiter({
  * guesses at a token, and a legitimate user reaches it once.
  */
 export const emailChangeConfirmRateLimiter = createAuthLimiter({
+	bucket: "email-change-confirm",
 	windowMs: 15 * 60 * 1000,
 	limit: 20,
 	message: "Too many attempts. Try again later.",

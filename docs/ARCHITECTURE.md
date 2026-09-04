@@ -141,6 +141,11 @@ Setting `REDIS_URL` moves both into Redis: `rate-limit-redis` for the counters,
 session, uploads go to a directory both instances share, and presence is derived rather than stored,
 so there is no per-process state left to reconcile.
 
+Each auth flow owns a distinct Redis key namespace (`login`, `register`, `refresh`, and so on).
+Redis stores only the generated identity such as an IP or user id; without the flow namespace,
+otherwise unrelated requests from the same identity would consume one another's quota even though
+their limits and windows differ.
+
 It is optional rather than required so that `npm run verify` and a plain `npm run dev:server` need
 one container instead of two. `docker-compose.prod.yml` always sets it, runs two API instances to
 keep the single-instance assumptions from creeping back, and the server refuses to boot in production
