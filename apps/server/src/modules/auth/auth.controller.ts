@@ -1,9 +1,11 @@
 import type { Request, Response } from "express";
+import { env } from "../../config/env.js";
+import { UnauthorizedError } from "../../lib/errors.js";
+import { REFRESH_TOKEN_TTL_MS } from "./auth.sessions.js";
 import {
 	changePasswordSchema,
 	confirmEmailChangeSchema,
 	loginSchema,
-	refreshTokenSchema,
 	registerSchema,
 	requestEmailChangeSchema,
 	requestPasswordResetSchema,
@@ -17,16 +19,60 @@ import * as authService from "./auth.service.js";
  * `errorHandler` middleware (they're not try/caught here).
  */
 
+/**
+ * Name and shape of the cookie that carries the refresh token.
+ *
+ * `HttpOnly` so no script on the page can read it — the reason this migrated
+ * off `localStorage`, where an XSS bug anywhere in the app could walk out with
+ * a month-long credential. `path: "/auth"` scopes it to the two endpoints that
+ * ever read one (`refresh`, `logout`) rather than attaching it to every request
+ * this origin makes. `sameSite: "lax"` still crosses the web app's origin to
+ * this API's: browsers scope "site" to the registrable domain, not the full
+ * origin, so a different port in dev or a different subdomain in production is
+ * still the same site and still gets the cookie on a plain fetch. A deployment
+ * that puts the two on genuinely different domains needs `sameSite: "none"`
+ * instead, which then requires `secure: true` even in that deployment's own dev.
+ */
+const REFRESH_TOKEN_COOKIE = "chatty_refresh_token";
+const refreshTokenCookieOptions = {
+	httpOnly: true,
+	secure: env.NODE_ENV === "production",
+	sameSite: "lax" as const,
+	path: "/auth",
+};
+
+function setRefreshTokenCookie(res: Response, refreshToken: string): void {
+	res.cookie(REFRESH_TOKEN_COOKIE, refreshToken, { ...refreshTokenCookieOptions, maxAge: REFRESH_TOKEN_TTL_MS });
+}
+
+function clearRefreshTokenCookie(res: Response): void {
+	res.clearCookie(REFRESH_TOKEN_COOKIE, refreshTokenCookieOptions);
+}
+
+/** Reads the credential `/auth/refresh` and `/auth/logout` act on. Never a body field — see the cookie's own comment. */
+function readRefreshTokenCookie(req: Request): string {
+	// Absent, not empty, is the only shape `cookie-parser` needs (it stops the
+	// cast to `string`) — but any request to `path: "/auth"` without a cookie at
+	// all has nothing to refresh or sign out, which is the same "not signed in"
+	// answer as a fake token.
+	const token = (req.cookies as Record<string, string | undefined> | undefined)?.[REFRESH_TOKEN_COOKIE];
+	if (!token) throw new UnauthorizedError("No session to refresh");
+
+	return token;
+}
+
 export async function registerController(req: Request, res: Response): Promise<void> {
 	const input = registerSchema.parse(req.body);
 	const result = await authService.register(input);
-	res.status(201).json(result);
+	setRefreshTokenCookie(res, result.refreshToken);
+	res.status(201).json({ token: result.token, user: result.user });
 }
 
 export async function loginController(req: Request, res: Response): Promise<void> {
 	const input = loginSchema.parse(req.body);
 	const result = await authService.login(input);
-	res.status(200).json(result);
+	setRefreshTokenCookie(res, result.refreshToken);
+	res.status(200).json({ token: result.token, user: result.user });
 }
 
 export async function changePasswordController(req: Request, res: Response): Promise<void> {
@@ -35,7 +81,8 @@ export async function changePasswordController(req: Request, res: Response): Pro
 
 	// A replacement token, because the request that changed the password also
 	// invalidated the one it arrived with.
-	res.status(200).json(result);
+	setRefreshTokenCookie(res, result.refreshToken);
+	res.status(200).json({ token: result.token });
 }
 
 /**
@@ -43,13 +90,14 @@ export async function changePasswordController(req: Request, res: Response): Pro
  *
  * Unauthenticated on purpose: this is what a client calls precisely because its
  * access token has expired, so requiring one would make the endpoint useless at
- * the only moment it is needed. The refresh token in the body is the credential.
+ * the only moment it is needed. The refresh token is the credential, read from
+ * the cookie rather than a body field it arrived alongside.
  */
 export async function refreshSessionController(req: Request, res: Response): Promise<void> {
-	const input = refreshTokenSchema.parse(req.body);
-	const result = await authService.refreshSession(input.refreshToken);
+	const result = await authService.refreshSession(readRefreshTokenCookie(req));
 
-	res.status(200).json(result);
+	setRefreshTokenCookie(res, result.refreshToken);
+	res.status(200).json({ token: result.token });
 }
 
 /**
@@ -61,9 +109,13 @@ export async function refreshSessionController(req: Request, res: Response): Pro
  * holding a stolen one that it was worth having.
  */
 export async function logoutController(req: Request, res: Response): Promise<void> {
-	const input = refreshTokenSchema.parse(req.body);
-	await authService.logout(input.refreshToken);
+	const cookies = req.cookies as Record<string, string | undefined> | undefined;
+	const refreshToken = cookies?.[REFRESH_TOKEN_COOKIE];
+	// Unlike `refreshSessionController`, a missing cookie is not an error here —
+	// "already signed out" and "sign out" both end at the same 204.
+	if (refreshToken) await authService.logout(refreshToken);
 
+	clearRefreshTokenCookie(res);
 	res.status(204).send();
 }
 

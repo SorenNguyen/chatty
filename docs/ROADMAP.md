@@ -1625,8 +1625,9 @@ beaten to it.
 
 Both `/auth/refresh` and `/auth/logout` are **unauthenticated**, which is the point rather than an
 oversight: a client calls them precisely because its access token has expired, so requiring one would
-make them useless at the only moment they matter. The refresh token in the body is the credential,
-and it is checked against a row.
+make them useless at the only moment they matter. The refresh token is the credential, and it is
+checked against a row — originally sent as a body field, moved to an `HttpOnly` cookie in phase 38,
+item 118.
 
 Revocation is wired to everything that should end a session, each inside the transaction that makes
 the change: a password change, a password reset (a reset exists for "somebody else has my account",
@@ -2708,6 +2709,102 @@ the image instead of blanking the frame for as long as a megabyte takes to arriv
 itself fades in over 160ms, keyed on the attachment id, because a hard cut in a frame that does not
 move reads as a glitch rather than as a change. Both respect `prefers-reduced-motion` through the
 same block `popover-enter` already used.
+
+## Phase 38 — a half-built feature, a stolen-token risk, and a test suite that had stopped being trustworthy — `done`
+
+Not one item found by building something new. All three were found by reading what was already here
+against what it claimed to do, and each is a different way that gap had gone unnoticed: code with no
+caller, a wire contract nobody had revisited since it was designed, and a test run slow enough that
+nobody had actually watched it finish.
+
+| # | Item | Status |
+| --- | --- | --- |
+| 117 | Restrictions: enforced, and given a settings surface | Done |
+| 118 | The refresh token moves from `localStorage` to an `HttpOnly` cookie | Done |
+| 119 | The test suite stops lying about how long it takes and what is broken | Done |
+
+### Item 117: a table and a service with nothing calling either
+
+`f57db25` had shipped `restrictions.service.ts` in full — restrict, unrestrict, status, a paged list,
+`hasRestricted`, `isDirectConversationRestricted` — and mounted none of it. The router never reached
+`app.ts`, and the two helpers written for reuse were reused nowhere: not in the unread count, not in a
+read receipt, not in presence, and there was no frontend at all.
+
+Finishing it meant answering what the module's own doc comment had already promised and then wiring
+exactly that:
+
+- **The unread badge** (`countUnreadByConversation` in `conversations.service.ts`) now excludes
+  messages from someone the viewer has restricted, the same `NOT EXISTS` shape the row already used
+  for `MessageHiddenFor`.
+- **Read receipts** (`markConversationRead`) check `isDirectConversationRestricted` alongside the
+  existing block check — the restrictor's private marker still advances, but the shared one does not,
+  so the restricted person never sees "Seen".
+- **Presence** needed a new primitive, not a reused one: blocking removes room membership entirely,
+  which cannot be the answer here because messages must keep flowing. `excludeRestrictedDirectRoomIds`
+  filters a direct conversation out of the room list a presence update broadcasts to, and
+  `listRestrictorsAmong` does the same for the one-time snapshot a freshly connected socket asks for —
+  the two moments presence reaches a client.
+- **The frontend** mirrors blocking's own — `useRestrictedUsers`, `useRestrictedUsersSync`, a
+  `ConversationRestrictControl` beside `ConversationBlockControl`, and a "Restricted people" row in
+  account settings — because the shape (a session-cached status, resolved per person, a paged
+  settings list) is the same problem blocking already solved.
+
+**One promise from the doc comment did not ship: a "Message requests" mailbox.** Moving a restricted
+sender's conversation into a separate inbox is a real feature — its own schema state, its own list
+view — not a filter on data that already exists, and nothing in the schema or the frontend had ever
+been built toward it. The comment now says so instead of describing a mailbox that is not there;
+building one is a decision for later, not a gap to paper over.
+
+### Item 118: a month-long credential a script could read
+
+The refresh token — thirty days, and the only thing standing between an XSS bug anywhere in this app
+and a session an attacker could keep renewing — sat in `localStorage` beside the access token,
+readable by any script on the page. `AuthResponse`, `RefreshTokenResponse` and `ChangePasswordResponse`
+all carried it in the body, which meant it was in `response.json()` the instant the client read
+its own successful login, cookie or not — the body had to stop carrying it, not just the storage
+layer.
+
+It now arrives only as a `Set-Cookie`: `HttpOnly` so no script can read it back, `path: "/auth"` so it
+is attached only to the two endpoints that ever read one, `sameSite: "lax"` (crosses a different port
+in dev and a different subdomain in production, both still the same registrable domain), `secure` in
+production. `/auth/refresh` and `/auth/logout` read `req.cookies` instead of a body field; the access
+token is untouched, still fifteen minutes, still in `localStorage` — the risk it carries is a stolen
+copy worth minutes, which is the trade `RefreshToken` rows already made deliberately.
+
+The one place the old design is described as current — item 79's "the refresh token in the body is
+the credential" — no longer holds, and that sentence is corrected there rather than left standing next
+to this one.
+
+### Item 119: the test that took a hundred minutes was hiding three that took two seconds each
+
+`npm run test` took **7,860 seconds** and failed four tests in three unrelated files. The slowest
+single test — `attachment-endpoint.test.ts`'s mixed-field-upload case — took 93 minutes on its own,
+and `tests/setup.ts` already documented the exact failure shape this produces: a test that outruns
+Vitest's 5-second default leaves its request still running while the next test's `TRUNCATE` fires,
+and the resulting damage lands on whatever file happens to run next rather than on the slow one.
+
+The cause was in `middlewares/upload-image.ts`, not in any of the three failing files. Multer's
+`fileFilter` rejected a disallowed file by calling `next(error)`. Multer's own source
+(`abortWithError`) does not drain that file's Busboy stream on the error path — only the `next(null,
+false)` path calls `fileStream.resume()` — so a client sending a second, larger part after a rejected
+one left the request stalled on backpressure that never cleared. Every `fileFilter` in the file now
+rejects through `next(null, false)` and stashes the reason in a `WeakMap<Request, ValidationError>`
+keyed on the request, re-thrown once Multer's own callback fires. Same error messages, same status
+codes, and the part is drained the moment it is rejected instead of never.
+
+This was reachable from a real client, not only from a slow test — anyone sending a mixed upload, an
+oversized field after a rejected one, or an executable after an image would have stalled that request
+for minutes, holding a connection the whole time.
+
+One more test was its own, unrelated problem: `conversations.service.test.ts`'s six-user pinning test
+created every user through `register()`, and `tests/setup.ts` already named this trap — bcrypt at cost
+12 is roughly 300ms, and seven calls in one test is enough on its own to clear the 5-second default.
+Switched to creating rows directly with `prisma`, the same fix `blocks.service.test.ts` and
+`restrictions.service.test.ts` already use.
+
+The suite now runs in **1,304 seconds** — still one file at a time against one shared, truncated
+database (`vitest.config.ts`'s `fileParallelism: false`, a deliberate trade for fixture isolation, not
+touched here) — with every test passing.
 
 ## Verification bar
 

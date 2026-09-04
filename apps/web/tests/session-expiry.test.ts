@@ -25,7 +25,7 @@ beforeEach(() => {
 	onSessionExpired.mockReset();
 	setSessionExpiredHandler(onSessionExpired);
 	// Storing a session is also what clears the flag, so this resets both.
-	storeSession("a-token", "a-refresh-token");
+	storeSession("a-token");
 });
 
 afterEach(() => {
@@ -52,7 +52,7 @@ describe("a 401 on an ordinary request", () => {
 		expect(wasSessionExpired()).toBe(true);
 		expect(wasSessionExpired()).toBe(true);
 
-		storeSession("fresh-token", "fresh-refresh-token");
+		storeSession("fresh-token");
 
 		expect(wasSessionExpired()).toBe(false);
 	});

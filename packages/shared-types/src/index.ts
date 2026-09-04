@@ -486,33 +486,25 @@ export interface AuthResponse {
 	 * request and in the socket handshake.
 	 *
 	 * Minutes, not days. It is a JWT, so nothing can revoke it once signed —
-	 * which is exactly why it must not be the session. See `refreshToken`.
+	 * which is exactly why it must not be the session. The long-lived half that
+	 * can be revoked is the refresh token, and it never appears in a response
+	 * body: it arrives as a `Set-Cookie` the browser stores itself, `HttpOnly`
+	 * so no script on the page — including one smuggled in by an XSS bug — can
+	 * read it. A field here would hand it to exactly the script it is meant to
+	 * be safe from.
 	 */
 	token: string;
-	/**
-	 * The long-lived half, and the one that can actually be ended.
-	 *
-	 * Exchanged at `POST /auth/refresh` for a new access token *and* a
-	 * replacement refresh token — each one is single use, so a token copied out
-	 * of storage stops working the moment the real client refreshes.
-	 */
-	refreshToken: string;
 	user: Pick<CurrentUserDTO, "id" | "email" | "handle" | "displayName">;
 }
 
-/** Body of `POST /auth/refresh` and `POST /auth/logout`. */
-export interface RefreshTokenRequest {
-	refreshToken: string;
-}
-
 /**
- * What `POST /auth/refresh` answers with: a new pair, never just a new access
- * token. Rotation is what makes a stolen refresh token expire on first honest
- * use rather than lasting its full month.
+ * What `POST /auth/refresh` answers with: a new access token. The replacement
+ * refresh token is rotated the same way — single use, so a token copied out of
+ * the cookie jar stops working the moment the real client refreshes — but it
+ * travels the same `Set-Cookie` as everywhere else, never the body.
  */
 export interface RefreshTokenResponse {
 	token: string;
-	refreshToken: string;
 }
 
 /**
@@ -611,12 +603,6 @@ export interface ChangePasswordRequest {
  */
 export interface ChangePasswordResponse {
 	token: string;
-	/**
-	 * A replacement for the refresh token too, and it is not optional: changing
-	 * a password revokes every session row on the account, so the caller's old
-	 * refresh token is dead alongside their old access token.
-	 */
-	refreshToken: string;
 }
 
 /**

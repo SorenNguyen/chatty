@@ -7,6 +7,7 @@ import { useConversationVault } from "../hooks/use-conversation-vault";
 import { getDirectPeer } from "../utils";
 import { ConversationBlockControl } from "./conversation-block-control";
 import { ConversationDetailsIdentity } from "./conversation-details-identity";
+import { ConversationRestrictControl } from "./conversation-restrict-control";
 import { GroupMembersPanel } from "./group-members-panel";
 import { VaultCategoryList } from "./vault-category-list";
 import { VaultTabContent } from "./vault-tab-content";
@@ -133,6 +134,7 @@ export function ConversationVaultPanel({
 					</div>
 					{/* Last, not first. Direct conversations only: a block is between two
 					    people and deliberately does not reach into a group they share. */}
+					{blockablePeer && <ConversationRestrictControl peer={blockablePeer} />}
 					{blockablePeer && <ConversationBlockControl peer={blockablePeer} />}
 				</>
 			)}

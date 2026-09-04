@@ -13,10 +13,9 @@ vi.mock("@/api/client", () => ({
 	},
 	// `useAuth` reaches for these as well, and the form goes through the store
 	// rather than calling the API itself — because a password change replaces
-	// this session's *pair* of tokens and drops its socket.
-	storeSession: (token: string, refreshToken: string) => storeSession(token, refreshToken),
+	// this session's token and drops its socket.
+	storeSession: (token: string) => storeSession(token),
 	getStoredToken: () => null,
-	getStoredRefreshToken: () => null,
 	clearStoredToken: () => undefined,
 }));
 
@@ -25,7 +24,7 @@ vi.mock("@/lib/socket", () => ({
 }));
 
 beforeEach(() => {
-	changePassword.mockReset().mockResolvedValue({ token: "replacement-token", refreshToken: "replacement-refresh" });
+	changePassword.mockReset().mockResolvedValue({ token: "replacement-token" });
 	storeSession.mockReset();
 	closeSocket.mockReset();
 });
@@ -96,7 +95,7 @@ describe("ChangePasswordForm", () => {
 		await submit(typist, { current: "SuperSecret123", next: "BrandNewSecret456" });
 
 		expect(await screen.findByText(/password changed/i)).toBeInTheDocument();
-		expect(storeSession).toHaveBeenCalledWith("replacement-token", "replacement-refresh");
+		expect(storeSession).toHaveBeenCalledWith("replacement-token");
 		expect(closeSocket).toHaveBeenCalled();
 	});
 

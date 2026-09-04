@@ -19,7 +19,11 @@ import { prisma } from "../../lib/prisma.js";
  * one can be ended from the server the moment anybody asks. Trading an
  * unrevocable week for a revocable month is a straight improvement.
  */
-const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+// Exported so the cookie that carries this token (see `auth.controller.ts`)
+// expires client-side at the same moment the row does — a cookie that outlives
+// its row is inert but stale, a cookie that dies earlier logs someone out with
+// a valid session sitting unused in the database.
+export const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
  * 32 bytes from the CSPRNG, the same size the password-reset link uses.
