@@ -182,7 +182,10 @@ describe("AttachmentLightbox saving an image", () => {
 	});
 
 	it("fetches the bytes and hands them to a download rather than navigating to them", async () => {
-		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(new Blob(["picture"]))));
+		// Use bytes rather than jsdom's Blob: Node's native Response expects its
+		// own Blob implementation (with stream()), so mixing the two realms fails
+		// on CI before the component ever gets to exercise the download path.
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(new TextEncoder().encode("picture"))));
 		render(<AttachmentLightbox attachments={[makeAttachment()]} initialIndex={0} caption="" onClose={vi.fn()} />);
 
 		fireEvent.click(screen.getByRole("button", { name: "Save this image" }));
