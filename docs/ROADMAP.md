@@ -2972,7 +2972,9 @@ authentication, the conversation transaction, idempotent message keys, image nor
 thumbnails, voice transcoding, file storage, replies, mentions, links, pins and saved messages. The
 two long threads exceed both the UI's 50-message page and the API's 100-message maximum page, so a
 successful seed also proves that older-page cursors are needed and work. Fixed `clientId` values and
-conversation matching make reruns converge instead of multiplying messages.
+conversation matching make reruns converge instead of multiplying messages. The five reusable
+identities include `admin.demo@chatty.test`, whose explicit admin role in the managed group makes the
+permission boundary inspectable without guessing which ordinary-looking account was promoted.
 
 ## Phase 45 — release governance and delivery — `done`
 

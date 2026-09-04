@@ -68,11 +68,13 @@ For a UI/realtime stress dataset against the running Docker stack, use:
 npm run seed:demo
 ```
 
-This goes through the real HTTP API without wiping data. It creates four reusable accounts, a direct
+This goes through the real HTTP API without wiping data. It creates five reusable accounts, a direct
 thread and a managed group with hundreds of alternating messages, image/gallery thumbnails, voice,
 files, reply/forward/mention/link, pin and saved-message examples. Fixed message keys make reruns
 converge rather than duplicate the dataset. The credentials are printed after the script verifies the
-message counts and every attachment kind.
+message counts and every attachment kind. To exercise group administration directly, sign in as
+`admin.demo@chatty.test` with password `ChattyDemo123`; that account is an admin in
+`Chatty long-run lab`.
 
 ## Checks
 

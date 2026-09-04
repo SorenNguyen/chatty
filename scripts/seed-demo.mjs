@@ -17,6 +17,7 @@ const DEMO_ACCOUNTS = [
 	{ key: "minh", email: "minh.demo@chatty.test", handle: "minh_demo", displayName: "Minh" },
 	{ key: "mai", email: "mai.demo@chatty.test", handle: "mai_demo", displayName: "Mai" },
 	{ key: "bao", email: "bao.demo@chatty.test", handle: "bao_demo", displayName: "Bảo" },
+	{ key: "admin", email: "admin.demo@chatty.test", handle: "admin_demo", displayName: "Admin" },
 ];
 
 const DIRECT_LINES = [
@@ -118,8 +119,12 @@ async function ensureConversations(accounts) {
 	}
 
 	let group = page.payload.items.find((conversation) => conversation.isGroup && conversation.name === GROUP_NAME);
-	if (group && !sameParticipants(group, groupUserIds)) {
-		throw new Error(`A group named "${GROUP_NAME}" already exists with a different member set.`);
+	if (group) {
+		const expectedUserIds = new Set(groupUserIds);
+		const unexpectedParticipants = group.participants.filter((participant) => !expectedUserIds.has(participant.id));
+		if (unexpectedParticipants.length > 0) {
+			throw new Error(`A group named "${GROUP_NAME}" already exists with a different member set.`);
+		}
 	}
 	if (!group) {
 		group = (
@@ -133,11 +138,24 @@ async function ensureConversations(accounts) {
 			})
 		).payload;
 	}
-
-	const currentAdmin = group.participants.find((participant) => participant.id === accounts.mai.id);
-	if (currentAdmin?.role !== "admin") {
+	for (const account of Object.values(accounts)) {
+		if (group.participants.some((participant) => participant.id === account.id)) continue;
 		group = (
-			await request(`/conversations/${group.id}/members/${accounts.mai.id}/role`, {
+			await request(`/conversations/${group.id}/members`, {
+				method: "POST",
+				token: owner.token,
+				json: { userId: account.id },
+			})
+		).payload;
+	}
+
+	// Keep Mai's original role for existing demo users and give the explicitly
+	// named account the same permissions, so the seed can evolve in place.
+	for (const account of [accounts.mai, accounts.admin]) {
+		const participant = group.participants.find((candidate) => candidate.id === account.id);
+		if (participant?.role === "admin") continue;
+		group = (
+			await request(`/conversations/${group.id}/members/${account.id}/role`, {
 				method: "PUT",
 				token: owner.token,
 				json: { role: "admin" },
@@ -378,7 +396,10 @@ async function main() {
 	}
 
 	process.stdout.write("\nDemo accounts (same password for all):\n");
-	for (const account of authenticated) process.stdout.write(`  ${account.email}  @${account.handle}\n`);
+	for (const account of authenticated) {
+		const roleLabel = account.key === "admin" ? "  (admin in Chatty long-run lab)" : "";
+		process.stdout.write(`  ${account.email}  @${account.handle}${roleLabel}\n`);
+	}
 	process.stdout.write(`  password: ${DEMO_PASSWORD}\n\n`);
 	process.stdout.write(`Direct conversation: ${directSummary.messageCount} messages\n`);
 	process.stdout.write(
