@@ -39,7 +39,7 @@ interface MessageRowsProps {
 }
 
 /**
- * Memoised, and this is the one that pays for the whole phase-39 render work.
+ * Memoised, and this is the one that pays for the whole phase-46 render work.
  *
  * `ChatPage` holds presence and typing state, so a `typing:update` — 109 bytes,
  * several per sentence, per typist — re-rendered it and everything under it,
