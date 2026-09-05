@@ -2999,7 +2999,7 @@ implementation rather than an uncommitted synthetic frame estimate.
 | 135 | Preserve opaque download lengths and byte ranges | `done` |
 | 136 | Sign an attachment once per DTO | `done` — fewer signing operations, unchanged payload size |
 | 137 | Subscribe Redis nodes only to relevant public rooms | `done` — coordinated adapter transition required |
-| 138 | Skip thread renders for typing and unrelated presence changes | `done` — per-row memoisation remains deferred |
+| 138 | Skip thread renders for typing and unrelated presence changes | `done` — list and individual row memoisation |
 
 ### Item 135: preserve opaque download representations
 
@@ -3046,10 +3046,17 @@ unaffected conversation and its participants array, and preserves the full state
 Actual last-seen changes still update affected conversations, including a timestamp being withdrawn
 with `null`. Tests cover these updates and reference preservation.
 
-`MessageRow` memoisation remains deferred: the list builds inline handlers per row, so adding only
-`memo()` there would not help. Stabilising that boundary would reduce work when messages, reactions
-or edits actually change the thread; it is separate from skipping typing and unrelated presence renders.
-A last-seen change to a participant of the open conversation can still render its thread.
+`MessageRow` is also memoised. The list passes shared, unbound action callbacks; each row binds
+its own message and pin state only after React admits that row's update. The default shallow
+comparison includes callbacks and all display props, so replacing a handler cannot leave stale
+behavior behind. Existing action, editor, reaction and media components retain their contracts.
+
+Regression tests use 200 messages: copying the list without changing rows renders no bubbles;
+an edit or reaction renders the changed bubble; appending updates the previous tail and the new
+row; trimming updates the new head. Pin state, replaced callbacks, current forwarded content and
+moving read receipts are checked too. Neighbors still update when grouping changes, and participant
+or shared callback changes may legitimately update more rows. This is not a claim that every event
+always renders exactly one row.
 
 ### Local development entry point
 
