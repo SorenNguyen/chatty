@@ -2988,6 +2988,111 @@ images plus a GitHub Release. Deployment is intentionally not automatic: the pub
 off-host recovery destination are external operator choices, and a source tag must never guess where
 live user data belongs. See [release conventions](conventions/releases.md).
 
+## Phase 46 — three places the bytes and the frames were still wasted — `done`
+
+[ADR 0016](adr/0016-bandwidth-first-message-delivery.md) made bytes follow attention and settled the
+big questions: HTTP compression on, `permessage-deflate` off, JSON stays, media takes its own path.
+This phase is three leftovers that measurement finds underneath those decisions, plus one place
+where ADR 0016's own claim was not quite true of this codebase.
+
+The numbers below were taken by rebuilding the current `MessageDTO` and byte-counting the Socket.IO
+frame, not estimated: a 60-character text message is **659 B**, one image **1,309 B**, ten images
+**7,708 B**, a `typing:update` **109 B**. Inside those, `url` + `thumbUrl` are **517 B of the 710 B**
+of an `AttachmentDTO` — 73% signature.
+
+| # | Item | Status |
+| --- | --- | --- |
+| 135 | Stop compressing file downloads | `done` |
+| 136 | Sign an attachment once, not twice | `done` |
+| 137 | Publish socket broadcasts per room | `done` |
+| 138 | Stop typing and presence redrawing the thread | `done` — one half deliberately left |
+
+### Item 135: the one media type the default filter does not protect
+
+ADR 0016 says "Images and other already compressed media are unaffected", and for `image/*` and
+`audio/mp4` that is exactly right — `compressible` marks both incompressible, so `compression()`
+skips them. It is not right for the media type this API invents. `lib/file-attachment.ts` demotes
+every browser-interpretable upload to `application/octet-stream`, which `compressible` marks
+**compressible**, so every FILE download was being gzipped on the way out.
+
+That costs two things and buys none. `Content-Length` disappears, because a compressed body's length
+is not known when the headers go out — so a download loses its progress bar and its `Range` support,
+which is what a resumed download asks for. And the CPU is spent deflating bytes that are usually a
+JPEG, a zip or an MP4 already.
+
+The filter now extends the default rather than replacing it, so Brotli/gzip/deflate negotiation and
+the 1 KB threshold are untouched and only `octet-stream` is excluded. The regression test is in
+`attachment-endpoint.test.ts`, beside the test that already asserted the demotion — which is the
+test that could have caught this and did not, because it only ever looked at `Content-Type`.
+
+### Item 136: the same claim, signed twice
+
+`buildAttachmentUrl` mints a token per call, and the mapper calls it twice per attachment — once for
+`url`, once for `thumbUrl`. The token's only claim is the attachment id, so those were one claim
+paying for two 192-byte signatures: roughly **5.2 KB of JWT on a ten-image message**.
+
+`buildAttachmentUrls(id, hasThumbnail)` signs once and shares it. This weakens nothing — the token's
+scope is the attachment, which is what both URLs address, so anyone holding the thumbnail's token
+could already fetch the full image with the other one in the same payload. `buildAttachmentUrl`
+stays for the reply quote, which genuinely needs one URL.
+
+The test pins `thumbUrl === url + "&size=thumb"`, and it is worth having even though the old code
+usually passed it too — that is the point. Signing twice meant two signatures that matched whenever
+both landed in the same second and differed when they straddled one, because a JWT's `iat` has
+one-second resolution. A broken thumbnail once every few thousand renders, at a boundary no test
+would reliably hit. Now there is one token by construction.
+
+### Item 137: every node heard every broadcast
+
+`createAdapter` publishes each emit to one Redis channel that every node subscribes to and then
+filters locally. At two instances that is invisible; at twenty it is one message crossing Redis
+twenty times so nineteen nodes can discard it.
+
+`createShardedAdapter` uses Redis 7's sharded Pub/Sub to publish per room, waking only the nodes
+holding a member of that conversation. No dependency and no infrastructure moved:
+`@socket.io/redis-adapter@8.3` and `redis@6` both support it, and both compose files already pin
+`redis:7-alpine` — the version `SSUBSCRIBE` arrived in.
+
+The default `subscriptionMode: "dynamic"` is left implicit and is the right one: it opens a channel
+per *public* room, and every room this app uses — a conversation id, `user:<id>` — is public.
+`fetchSockets()` is unaffected, because broadcast-with-ack needs `serverCount()` across every node
+and the adapter routes it over the static channel regardless of mode. Presence keeps seeing everyone.
+
+This does not move the single-host boundary ADR 0016 draws. It removes a cost that would otherwise
+be paid on the first day past it.
+
+### Item 138: a keystroke redrew two hundred rows
+
+`ChatPage` holds presence and typing state, so every `typing:update` — 109 bytes, several per
+sentence, per typist — re-rendered it and everything under it, down to `MAX_RETAINED_MESSAGES` (200)
+`MessageRow`s that have nothing to do with either. A busy group reconciled its whole thread several
+times a second because somebody was holding down a key.
+
+`MAX_RETAINED_MESSAGES` already bounds how *long* the array is, and the reasoning in
+`constants/pagination.ts` for preferring that to windowing still holds — but a bound on length says
+nothing about how *often* the list is walked, and that was the cost.
+
+`MessageRows` is now `memo()`d, and the rest of the item is what makes that memo actually hold:
+`readReceipt` became a `useMemo`, `cancelEdit` a `useCallback`, and the three conversation-scoped
+handlers moved into `useMessageListHandlers`. A memo whose props always differ costs a comparison
+and saves nothing. **Adding an inline `onSomething={() => …}` at any of those call sites silently
+turns this back off** — still correct, and quietly back to the old cost.
+
+**`MessageRow` itself is deliberately not memoised**, and that is a decision rather than an
+omission. `MessageRows` builds about twelve inline closures *per row*
+(`onReply={() => onReplyToMessage(message)}` and friends), so a `memo()` there would compare twelve
+always-different props and never once bail out. Making it work means moving those closures down
+through fifteen props across five components, and it buys something narrower than it looks: only the
+case where the thread genuinely changes — a message arriving, an edit, a reaction — where today
+every row redraws and one needs to. It does nothing for the typing case, which is the frequent one
+and is what this item fixes.
+
+Two files crossed the 300-line audit rule while this was done and were split rather than
+grandfathered, per the precedent in phase 2: `ScrollToLatestButton` out of `MessageList`, and
+`useMessageListHandlers` out of `ChatPage`. One split was owed anyway — the same
+`getElementById(\`message-…\`)` lookup had been written three times, and `utils/scroll-to-message.ts`
+is now the one copy.
+
 ## Verification bar
 
 Nothing is "done" here until this passes, **and** an end-to-end run against the real API exercises the

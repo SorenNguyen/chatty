@@ -6,7 +6,7 @@ import type {
 	SavedMessagePageDTO,
 } from "@chatty/shared-types";
 import { Prisma } from "@prisma/client";
-import { buildAttachmentUrl } from "../../lib/attachment-storage.js";
+import { buildAttachmentUrls } from "../../lib/attachment-storage.js";
 import { NotFoundError } from "../../lib/errors.js";
 import { prisma } from "../../lib/prisma.js";
 import { assertParticipant } from "../conversations/conversations.service.js";
@@ -81,8 +81,7 @@ export async function listConversationMedia(
 						: row.kind === "FILE"
 							? ("file" as const)
 							: ("audio" as const),
-				url: buildAttachmentUrl(row.id),
-				thumbUrl: row.kind === "IMAGE" && row.hasThumbnail ? buildAttachmentUrl(row.id, "thumb") : null,
+				...buildAttachmentUrls(row.id, row.kind === "IMAGE" && row.hasThumbnail),
 				width: row.width,
 				height: row.height,
 				byteSize: row.byteSize,

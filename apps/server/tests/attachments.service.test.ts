@@ -1,7 +1,7 @@
 import { rm } from "node:fs/promises";
 import sharp from "sharp";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { findAttachmentPath } from "../src/lib/attachment-storage.js";
+import { buildAttachmentUrls, findAttachmentPath } from "../src/lib/attachment-storage.js";
 import { isValidAttachmentToken, signAttachmentToken } from "../src/lib/attachment-token.js";
 import { ValidationError } from "../src/lib/errors.js";
 import { prisma } from "../src/lib/prisma.js";
@@ -273,6 +273,29 @@ describe("attachment tokens", () => {
 
 	it("refuses a token that is not a token", () => {
 		expect(isValidAttachmentToken("nonsense", "attachment-1")).toBe(false);
+	});
+});
+
+describe("buildAttachmentUrls", () => {
+	it("derives the thumbnail URL from the full-size one, so both carry one signature", () => {
+		// The guarantee phase 39 introduced, and it is worth pinning even though
+		// the previous code usually passed this too: it signed twice, and a JWT's
+		// `iat` has one-second resolution, so the two signatures were identical
+		// whenever both landed in the same second and different when they
+		// straddled one. "Usually the same" is the worst kind of contract — the
+		// failure is a broken thumbnail once every few thousand renders, at a
+		// boundary no test would reliably hit. Now there is one token by
+		// construction.
+		const { url, thumbUrl } = buildAttachmentUrls("attachment-1", true);
+
+		expect(thumbUrl).toBe(`${url}&size=thumb`);
+		expect(isValidAttachmentToken(new URL(url).searchParams.get("token")!, "attachment-1")).toBe(true);
+	});
+
+	it("has no thumbnail URL when there is no thumbnail", () => {
+		// A file and a voice note reach this with `false`, and a null is what tells
+		// the gallery to render an icon rather than fetch a picture that is not there.
+		expect(buildAttachmentUrls("attachment-1", false).thumbUrl).toBeNull();
 	});
 });
 

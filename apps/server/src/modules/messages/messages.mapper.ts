@@ -1,6 +1,6 @@
 import type { MessageDTO, MessageReplyDTO, ReactionDTO, ReactionEmoji } from "@chatty/shared-types";
 import type { AttachmentKind as PrismaAttachmentKind, MessageKind } from "@prisma/client";
-import { buildAttachmentUrl } from "../../lib/attachment-storage.js";
+import { buildAttachmentUrl, buildAttachmentUrls } from "../../lib/attachment-storage.js";
 import { toUserDTO, userSelect, type UserRow } from "../users/users.mapper.js";
 import { MESSAGE_AUTHOR_ACTION_WINDOW_MS } from "./messages.constants.js";
 
@@ -191,11 +191,7 @@ export function toMessageDTO(row: MessageRow): MessageDTO {
 		attachments: row.attachments.map((attachment) => ({
 			id: attachment.id,
 			kind: attachment.kind === "IMAGE" ? "image" : attachment.kind === "FILE" ? "file" : "audio",
-			url: buildAttachmentUrl(attachment.id),
-			thumbUrl:
-				attachment.kind === "IMAGE" && attachment.hasThumbnail
-					? buildAttachmentUrl(attachment.id, "thumb")
-					: null,
+			...buildAttachmentUrls(attachment.id, attachment.kind === "IMAGE" && attachment.hasThumbnail),
 			width: attachment.width,
 			height: attachment.height,
 			byteSize: attachment.byteSize,

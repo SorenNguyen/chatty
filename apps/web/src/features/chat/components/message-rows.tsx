@@ -1,8 +1,8 @@
 import type { ParticipantDTO, ReactionEmoji } from "@chatty/shared-types";
-import { Fragment } from "react";
+import { Fragment, memo } from "react";
 import type { ThreadMessage } from "../types/thread-message";
 import type { ReadReceipt } from "../utils/read-receipt";
-import { getClusterPosition, hasMessageTimeGap, isNewDay, isWithinMessageBurst } from "../utils";
+import { getClusterPosition, hasMessageTimeGap, isNewDay, isWithinMessageBurst, scrollToMessage } from "../utils";
 import { DaySeparator } from "./day-separator";
 import { MessageRow } from "./message-row";
 import { MessageTimeSeparator } from "./message-time-separator";
@@ -38,7 +38,28 @@ interface MessageRowsProps {
 	onJumpToMessage: (messageId: string) => void;
 }
 
-export function MessageRows({
+/**
+ * Memoised, and this is the one that pays for the whole phase-39 render work.
+ *
+ * `ChatPage` holds presence and typing state, so a `typing:update` — 109 bytes,
+ * several per sentence, per typist — re-rendered it and everything under it,
+ * down to `MAX_RETAINED_MESSAGES` message rows that had nothing to do with
+ * either. A busy group reconciled its entire thread several times a second
+ * because somebody was holding down a key.
+ *
+ * `MAX_RETAINED_MESSAGES` already bounds how *long* this array is, and the
+ * reasoning in `constants/pagination.ts` for preferring that to windowing still
+ * holds — but a bound on length says nothing about how *often* the list is
+ * walked, and that was the cost.
+ *
+ * The memo only works while every prop below is referentially stable, which is
+ * why `readReceipt` is a `useMemo` in `MessageList`, `cancelEdit` a `useCallback`
+ * in `useMessageEditing`, and the handlers in `ChatPage` are wrapped rather than
+ * written inline. Adding an inline `onSomething={() => ...}` at any of those call
+ * sites silently turns this back off — it will still be correct, and it will
+ * quietly cost what it cost before.
+ */
+export const MessageRows = memo(function MessageRows({
 	messages,
 	currentUserId,
 	participants,
@@ -148,13 +169,10 @@ export function MessageRows({
 					onTogglePin={() => onTogglePinMessage(message.id, isPinned)}
 					onJumpToReplyOriginal={() => {
 						const originalId = message.replyTo?.id;
-						if (!originalId) return;
-						const original = document.getElementById(`message-${originalId}`);
-						if (original) original.scrollIntoView({ block: "center", behavior: "smooth" });
-						else onJumpToMessage(originalId);
+						if (originalId && !scrollToMessage(originalId)) onJumpToMessage(originalId);
 					}}
 				/>
 			</Fragment>
 		);
 	});
-}
+});

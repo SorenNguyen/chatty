@@ -50,7 +50,29 @@ export function createApp() {
 	// Conversation pages repeat keys, authors and signed URL structure, which
 	// makes their JSON especially compressible. Keep the default 1KB threshold:
 	// compressing tiny health/error bodies spends CPU to save almost nothing.
-	app.use(compression());
+	//
+	// The filter extends the default rather than replacing it, to close one hole
+	// ADR 0016 assumed was already closed. "Images and other already compressed
+	// media are unaffected" is true of `image/*` and `audio/mp4`, which
+	// `compressible` marks incompressible — but not of the one media type this API
+	// invents. `lib/file-attachment.ts` demotes every browser-interpretable upload
+	// to `application/octet-stream`, and `compressible` marks *that* compressible,
+	// so every FILE download was being gzipped on the way out:
+	//
+	// - **`Content-Length` disappears.** A compressed body's length is not known
+	//   when the headers go out, so a download loses its progress bar and its
+	//   `Range` support — which is what a resumed download asks for.
+	// - **It spends CPU to add bytes.** What is behind `octet-stream` here is an
+	//   arbitrary upload, usually a JPEG, a zip or an MP4 that is already
+	//   compressed.
+	//
+	// Everything else still negotiates Brotli, gzip or deflate exactly as before.
+	app.use(
+		compression({
+			filter: (req, res) =>
+				res.getHeader("Content-Type") !== "application/octet-stream" && compression.filter(req, res),
+		}),
+	);
 	// `credentials: true` is what lets the refresh-token cookie cross from the web
 	// app's origin to this one — without it the browser refuses to send or store
 	// it, no matter what the `Set-Cookie` response says. It requires `origin` to
