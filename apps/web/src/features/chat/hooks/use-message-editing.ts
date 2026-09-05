@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ThreadMessage } from "../types/thread-message";
 
 interface UseMessageEditingOptions {
@@ -70,9 +70,16 @@ export function useMessageEditing({
 
 	useEffect(() => onEditingStateChange(Boolean(editingMessageId)), [editingMessageId, onEditingStateChange]);
 
+	// Wrapped rather than written inline in the returned object, because it is a
+	// prop of the memoised `MessageRows`: a fresh closure per render is a fresh
+	// prop per render, and a memoised subtree whose props always differ is a
+	// `memo()` that costs a comparison and never saves a render. `startEdit` needs
+	// no wrapper — a `useState` setter is already stable.
+	const cancelEdit = useCallback(() => setEditingMessageId(null), []);
+
 	return {
 		editingMessageId,
 		startEdit: setEditingMessageId,
-		cancelEdit: () => setEditingMessageId(null),
+		cancelEdit,
 	};
 }

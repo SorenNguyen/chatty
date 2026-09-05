@@ -20,6 +20,7 @@ export { downloadAttachment } from "./download-attachment";
 export { countJumboEmoji } from "./emoji-only";
 export { searchEmoji } from "./search-emoji";
 export { getReadReceipt } from "./read-receipt";
+export { scrollToMessage } from "./scroll-to-message";
 export { toReplyQuote } from "./reply-quote";
 export { findMyReaction, groupReactors } from "./reaction-groups";
 export { getReactionSummary } from "./reaction-summary";

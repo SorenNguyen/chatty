@@ -8,6 +8,7 @@ export { useDocumentTitle } from "./use-document-title";
 export { useMarkRead } from "./use-mark-read";
 export { useKeyboardShortcuts } from "./use-keyboard-shortcuts";
 export { useMessageActions } from "./use-message-actions";
+export { useMessageListHandlers } from "./use-message-list-handlers";
 export { useMessageEditing } from "./use-message-editing";
 export { useMessageNotifications } from "./use-message-notifications";
 export { useMessageScroll } from "./use-message-scroll";

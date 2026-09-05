@@ -1,14 +1,14 @@
 import type { MessageDTO, ParticipantDTO, ReactionEmoji } from "@chatty/shared-types";
-import { useEffect, useState } from "react";
-import { ArrowDown } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/button";
 import type { ThreadMessage } from "../types/thread-message";
 import { MAX_RETAINED_MESSAGES } from "../constants/pagination";
 import { useMessageEditing, useMessageScroll, useUnreadDivider } from "../hooks";
-import { getReadReceipt } from "../utils";
+import { getReadReceipt, scrollToMessage } from "../utils";
 import { MessageEditHistory } from "./message-edit-history";
 import { MessageRows } from "./message-rows";
 import { ReactionDetailsPanel } from "./reaction-details-panel";
+import { ScrollToLatestButton } from "./scroll-to-latest-button";
 
 interface MessageListProps {
 	conversationId: string;
@@ -121,7 +121,14 @@ export function MessageList({
 		isLoadingOlder,
 		onLoadOlder,
 	});
-	const readReceipt = getReadReceipt(messages, participants, currentUserId, areReceiptsShared);
+	// Memoised because it is a prop of the memoised `MessageRows`, and it is an
+	// object: recomputed per render it would be a new reference every time and
+	// would defeat the memo on its own. It also walks the whole thread, so not
+	// redoing it on an unrelated render is worth something by itself.
+	const readReceipt = useMemo(
+		() => getReadReceipt(messages, participants, currentUserId, areReceiptsShared),
+		[messages, participants, currentUserId, areReceiptsShared],
+	);
 	const { editingMessageId, startEdit, cancelEdit } = useMessageEditing({
 		messages,
 		currentUserId,
@@ -144,7 +151,7 @@ export function MessageList({
 	useEffect(() => {
 		if (!targetMessageId) return;
 
-		document.getElementById(`message-${targetMessageId}`)?.scrollIntoView({ block: "center" });
+		scrollToMessage(targetMessageId, "auto");
 	}, [targetMessageId, messages]);
 
 	/*
@@ -170,10 +177,13 @@ export function MessageList({
 		? messages.find((message) => message.id === reactionsMessageId)
 		: undefined;
 
-	function handleSaveEdit(messageId: string, content: string) {
-		cancelEdit();
-		onEditMessage(messageId, content);
-	}
+	const handleSaveEdit = useCallback(
+		(messageId: string, content: string) => {
+			cancelEdit();
+			onEditMessage(messageId, content);
+		},
+		[cancelEdit, onEditMessage],
+	);
 
 	return (
 		<div className="relative h-full">
@@ -257,18 +267,10 @@ export function MessageList({
 			</div>
 
 			{isFarFromBottom && (
-				<Button
-					aria-label="Jump to latest messages"
+				<ScrollToLatestButton
+					unreadCount={unreadCount}
 					onClick={hasMoreNewer && onReturnToLatest ? onReturnToLatest : scrollToLatest}
-					className="absolute bottom-4 right-4 z-20 size-10 rounded-full p-0 shadow-lift"
-				>
-					<ArrowDown className="size-4" />
-					{unreadCount > 0 && (
-						<span className="absolute -right-1 -top-1 min-w-5 rounded-badge bg-signal px-1 text-[10px] text-paper">
-							{unreadCount > 99 ? "99+" : unreadCount}
-						</span>
-					)}
-				</Button>
+				/>
 			)}
 
 			{historyMessageId && messages[0] && (

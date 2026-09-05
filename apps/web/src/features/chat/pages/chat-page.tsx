@@ -1,6 +1,5 @@
 import type { MessageDTO } from "@chatty/shared-types";
 import { useCallback, useEffect, useState } from "react";
-import { api } from "@/api/client";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/utils/cn";
 import { ConnectionBanner, ChatConversationPane, ConversationSidebar, KeyboardShortcutsPanel } from "../components";
@@ -12,6 +11,7 @@ import {
 	useDocumentTitle,
 	useMarkRead,
 	useKeyboardShortcuts,
+	useMessageListHandlers,
 	useMessageNotifications,
 	usePresence,
 	useRestrictedUsersSync,
@@ -19,7 +19,7 @@ import {
 	useTypingParticipants,
 } from "../hooks";
 import type { MessageSearchSession } from "../types/message-search";
-import { getNewestStoredMessage } from "../utils";
+import { getNewestStoredMessage, scrollToMessage } from "../utils";
 
 export function ChatPage() {
 	const currentUser = useAuth((state) => state.currentUser);
@@ -136,6 +136,15 @@ export function ChatPage() {
 	const newestStoredMessageId = getNewestStoredMessage(messages)?.id;
 	useMarkRead(selectedConversationId, newestStoredMessageId);
 
+	const selectedConversation = conversations.find((conversation) => conversation.id === selectedConversationId);
+
+	// Stable identities, which is what keeps the memo on `MessageRows` working
+	// while this component re-renders on every typing and presence event.
+	const { pinnedMessageIds, onSaveMessage, onTogglePinMessage } = useMessageListHandlers(
+		selectedConversationId,
+		selectedConversation?.pinnedMessages,
+	);
+
 	function handleConversationStarted(conversationId: string) {
 		refreshConversations();
 		setIsConversationSearchOpen(false);
@@ -157,23 +166,19 @@ export function ChatPage() {
 		setRequestedMessageId(result.message.id);
 	}
 
-	function closeMessageSearch() {
+	const closeMessageSearch = useCallback(() => {
 		setIsConversationSearchOpen(false);
 		setRequestedMessageId(null);
-	}
+	}, []);
 
-	function jumpToMessage(messageId: string) {
-		const element = document.getElementById(`message-${messageId}`);
-		if (element) {
-			element.scrollIntoView({ block: "center", behavior: "smooth" });
+	// A miss means the message is outside what the thread currently holds, so the
+	// search panel closes and the list is asked to load the page around it.
+	const jumpToMessage = useCallback((messageId: string) => {
+		if (scrollToMessage(messageId)) return;
 
-			return;
-		}
 		setIsConversationSearchOpen(false);
 		setRequestedMessageId(messageId);
-	}
-
-	const selectedConversation = conversations.find((conversation) => conversation.id === selectedConversationId);
+	}, []);
 
 	if (!currentUser) return null;
 
@@ -254,15 +259,9 @@ export function ChatPage() {
 								onToggleReaction: toggleReaction,
 								onReplyToMessage: setReplyTo,
 								onForwardMessage: setForwardingMessage,
-								onSaveMessage: (messageId) => {
-									void api.saveMessage(selectedConversation.id, messageId);
-								},
-								onTogglePinMessage: (messageId, isPinned) => {
-									void (isPinned
-										? api.unpinMessage(selectedConversation.id, messageId)
-										: api.pinMessage(selectedConversation.id, messageId));
-								},
-								pinnedMessageIds: selectedConversation.pinnedMessages.map((pin) => pin.messageId),
+								onSaveMessage,
+								onTogglePinMessage,
+								pinnedMessageIds,
 								onJumpToMessage: jumpToMessage,
 								onTrimHistory: trimHistory,
 								requestEditLast: editLastRequest,
