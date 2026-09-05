@@ -261,6 +261,40 @@ export function buildAttachmentUrl(attachmentId: string, size?: "thumb"): string
 	return `${env.PUBLIC_URL}/attachments/${attachmentId}?${params.toString()}`;
 }
 
+/** The full-size and thumbnail URLs of one attachment, sharing one signature. */
+export interface AttachmentUrls {
+	url: string;
+	/** Null when the attachment has no thumbnail — a file, a voice note, an image too small to need one. */
+	thumbUrl: string | null;
+}
+
+/**
+ * Both of an attachment's URLs, signed once.
+ *
+ * `buildAttachmentUrl` mints a token per call, and every caller that renders an
+ * `AttachmentDTO` calls it twice for the same attachment — once for `url`, once
+ * for `thumbUrl`. The token's only claim is the attachment id, so those two
+ * signatures were identical in meaning and 192 bytes each: on a ten-image
+ * message, 5.2 KB of JWT saying ten things the payload had already said. That
+ * is 73% of an `AttachmentDTO` spent on a signature it did not need twice.
+ *
+ * Sharing the token weakens nothing. Its scope is the attachment, which is what
+ * both URLs address — anyone holding the thumbnail's token could already fetch
+ * the full image with the other one in the same payload. Expiry, the `typ`
+ * claim that stops an attachment token authenticating as a bearer token, and the
+ * 404-not-401 answer to a bad one are all unchanged; see ADR 0007 and ADR 0016.
+ *
+ * `buildAttachmentUrl` stays for the one caller that genuinely needs a single
+ * URL — a reply quote shows a thumbnail and never a gallery — because routing it
+ * through here would sign a `thumbUrl` only to discard it.
+ */
+export function buildAttachmentUrls(attachmentId: string, hasThumbnail: boolean): AttachmentUrls {
+	const token = signAttachmentToken(attachmentId);
+	const base = `${env.PUBLIC_URL}/attachments/${attachmentId}?${new URLSearchParams({ token }).toString()}`;
+
+	return { url: base, thumbUrl: hasThumbnail ? `${base}&size=thumb` : null };
+}
+
 /**
  * The same scheme for a sticker, pointing at the route that actually serves one.
  *
