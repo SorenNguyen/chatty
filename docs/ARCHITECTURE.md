@@ -141,6 +141,13 @@ Setting `REDIS_URL` moves both into Redis: `rate-limit-redis` for the counters,
 session, uploads go to a directory both instances share, and presence is derived rather than stored,
 so there is no per-process state left to reconcile.
 
+The adapter is the **sharded** one (phase 46). `createAdapter` publishes every emit to a single
+channel that every node subscribes to and then filters locally, so at twenty instances one message
+crosses Redis twenty times for nineteen nodes to discard it. `createShardedAdapter` uses Redis 7's
+sharded Pub/Sub to publish per room, waking only the nodes holding a member of that conversation.
+`fetchSockets()` is unaffected — broadcast-with-ack needs a count across every node, so the adapter
+routes it over the static channel regardless of mode.
+
 Each auth flow owns a distinct Redis key namespace (`login`, `register`, `refresh`, and so on).
 Redis stores only the generated identity such as an IP or user id; without the flow namespace,
 otherwise unrelated requests from the same identity would consume one another's quota even though
